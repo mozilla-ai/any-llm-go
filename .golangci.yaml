@@ -1,0 +1,39 @@
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # Struct layout must match OpenAI API for JSON compatibility
+  gci:
+    sections:
+      - standard
+      - default
+      - prefix(github.com/mozilla-ai/any-llm-go)
+      - blank
+      - dot
+      - localmodule
+  gofumpt:
+    extra-rules: true
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+  disable:
+    - tagliatelle  # Disabled: OpenAI API uses snake_case JSON tags
+
+run:
+  timeout: 5m
+  tests: true
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
