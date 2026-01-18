@@ -97,8 +97,8 @@ func main() {
 				Location string `json:"location"`
 				Unit     string `json:"unit"`
 			}
-			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				log.Fatal(err)
+			if unmarshalErr := json.Unmarshal([]byte(tc.Function.Arguments), &args); unmarshalErr != nil {
+				log.Fatal(unmarshalErr)
 			}
 
 			// Execute the function

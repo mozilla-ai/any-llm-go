@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	anyllmplatform "github.com/mozilla-ai/any-llm-platform-client-go"
 
 	anyllm "github.com/mozilla-ai/any-llm-go"
-	anyllmplatform "github.com/mozilla-ai/any-llm-platform-client-go"
 )
 
 const (
@@ -425,10 +425,10 @@ func (p *Provider) postUsageEvent(ctx context.Context, completion *anyllm.ChatCo
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
 
-	// Drain the response body to allow connection reuse
+	// Drain and close the response body to allow connection reuse
 	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
 }
 
 // init registers the platform provider.

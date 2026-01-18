@@ -113,7 +113,7 @@ func (p *Provider) CompletionStream(ctx context.Context, params anyllm.Completio
 			contentBuilder   strings.Builder
 			reasoningBuilder strings.Builder
 			toolCalls        []anyllm.ToolCall
-			currentToolIdx   int = -1
+			currentToolIdx   = -1
 			inputUsage       int64
 		)
 
