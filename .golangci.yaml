@@ -8,14 +8,14 @@ linters:
     - staticcheck
     - unused
   disable:
-    - tagliatelle  # Disabled: OpenAI API uses snake_case JSON tags
+    - tagliatelle  # Disabled: OpenAI API uses snake_case JSON tags.
   settings:
     errcheck:
       check-type-assertions: true
     govet:
       enable-all: true
       disable:
-        - fieldalignment  # Struct layout must match OpenAI API for JSON compatibility
+        - fieldalignment  # Struct layout must match OpenAI API for JSON compatibility.
 
 formatters:
   enable:
@@ -35,11 +35,22 @@ formatters:
     gofumpt:
       extra-rules: true
 
+issues:
+  fix: true
+
+output:
+  formats:
+    text:
+      path: stderr
+  sort-order:
+    - severity
+    - file
+    - linter
+
 run:
   timeout: 5m
   tests: true
-
-issues:
-  exclude-use-default: false
-  max-issues-per-linter: 0
-  max-same-issues: 0
+  relative-path-mode: gomod
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+  allow-serial-runners: true
