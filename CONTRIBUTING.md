@@ -46,7 +46,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 ```
 any-llm-go/
-├── anyllm.go           # Public API convenience functions
+├── llm.go           # Public API convenience functions
 ├── types.go            # Core type definitions
 ├── provider.go         # Provider interface and helpers
 ├── options.go          # Configuration options
@@ -114,7 +114,7 @@ package newprovider
 import (
     "context"
 
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
 )
 
 const (
@@ -124,22 +124,22 @@ const (
 
 type Provider struct {
     client *sdk.Client
-    config *anyllm.Config
+    config *llm.Config
 }
 
 // Ensure interface compliance
 var (
-    _ anyllm.Provider           = (*Provider)(nil)
-    _ anyllm.CapabilityProvider = (*Provider)(nil)
+    _ llm.Provider           = (*Provider)(nil)
+    _ llm.CapabilityProvider = (*Provider)(nil)
 )
 
-func New(opts ...anyllm.Option) (*Provider, error) {
-    cfg := anyllm.DefaultConfig()
+func New(opts ...llm.Option) (*Provider, error) {
+    cfg := llm.DefaultConfig()
     cfg.ApplyOptions(opts...)
 
     apiKey := cfg.GetAPIKeyFromEnv(envAPIKey)
     if apiKey == "" {
-        return nil, anyllm.NewMissingAPIKeyError(providerName, envAPIKey)
+        return nil, llm.NewMissingAPIKeyError(providerName, envAPIKey)
     }
 
     // Initialize the official SDK client
@@ -155,28 +155,28 @@ func (p *Provider) Name() string {
     return providerName
 }
 
-func (p *Provider) Capabilities() anyllm.ProviderCapabilities {
-    return anyllm.ProviderCapabilities{
+func (p *Provider) Capabilities() llm.ProviderCapabilities {
+    return llm.ProviderCapabilities{
         Completion:          true,
         CompletionStreaming: true,
         // ... other capabilities
     }
 }
 
-func (p *Provider) Completion(ctx context.Context, params anyllm.CompletionParams) (*anyllm.ChatCompletion, error) {
+func (p *Provider) Completion(ctx context.Context, params llm.CompletionParams) (*llm.ChatCompletion, error) {
     // Convert params to provider format
     // Make API call
     // Convert response to anyllm format
-    // Handle errors with anyllm.ConvertError()
+    // Handle errors with llm.ConvertError()
 }
 
-func (p *Provider) CompletionStream(ctx context.Context, params anyllm.CompletionParams) (<-chan anyllm.ChatCompletionChunk, <-chan error) {
+func (p *Provider) CompletionStream(ctx context.Context, params llm.CompletionParams) (<-chan llm.ChatCompletionChunk, <-chan error) {
     // Implement streaming
 }
 
 // Register the provider
 func init() {
-    anyllm.Register(providerName, func(opts ...anyllm.Option) (anyllm.Provider, error) {
+    llm.Register(providerName, func(opts ...llm.Option) (llm.Provider, error) {
         return New(opts...)
     })
 }
@@ -193,13 +193,13 @@ import (
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
 
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     "github.com/mozilla-ai/any-llm-go/internal/testutil"
 )
 
 func TestNew(t *testing.T) {
     t.Run("creates provider with API key", func(t *testing.T) {
-        provider, err := New(anyllm.WithAPIKey("test-key"))
+        provider, err := New(llm.WithAPIKey("test-key"))
         require.NoError(t, err)
         assert.NotNil(t, provider)
     })
@@ -237,7 +237,7 @@ func TestIntegrationCompletion(t *testing.T) {
 - [ ] Implements `Provider` interface
 - [ ] Implements `CapabilityProvider` interface
 - [ ] Normalizes responses to OpenAI format
-- [ ] Normalizes errors using `anyllm.ConvertError()`
+- [ ] Normalizes errors using `llm.ConvertError()`
 - [ ] Registers provider in `init()`
 - [ ] Has unit tests with >80% coverage
 - [ ] Has integration tests (skipped when no API key)

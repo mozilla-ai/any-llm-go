@@ -8,13 +8,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	llm "github.com/mozilla-ai/any-llm-go"
 	"github.com/mozilla-ai/any-llm-go/internal/testutil"
 )
 
 func TestNew(t *testing.T) {
 	t.Run("creates provider with API key", func(t *testing.T) {
-		provider, err := New(anyllm.WithAPIKey("test-api-key"))
+		provider, err := New(llm.WithAPIKey("test-api-key"))
 		require.NoError(t, err)
 		assert.NotNil(t, provider)
 		assert.Equal(t, "anthropic", provider.Name())
@@ -35,7 +35,7 @@ func TestNew(t *testing.T) {
 		assert.Nil(t, provider)
 		assert.Error(t, err)
 
-		var missingKeyErr *anyllm.MissingAPIKeyError
+		var missingKeyErr *llm.MissingAPIKeyError
 		assert.ErrorAs(t, err, &missingKeyErr)
 		assert.Equal(t, "anthropic", missingKeyErr.Provider)
 		assert.Equal(t, "ANTHROPIC_API_KEY", missingKeyErr.EnvVar)
@@ -43,7 +43,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestCapabilities(t *testing.T) {
-	provider, err := New(anyllm.WithAPIKey("test-key"))
+	provider, err := New(llm.WithAPIKey("test-key"))
 	require.NoError(t, err)
 
 	caps := provider.Capabilities()
@@ -59,9 +59,9 @@ func TestCapabilities(t *testing.T) {
 
 func TestConvertMessages(t *testing.T) {
 	t.Run("extracts system message", func(t *testing.T) {
-		messages := []anyllm.Message{
-			{Role: anyllm.RoleSystem, Content: "You are a helpful assistant."},
-			{Role: anyllm.RoleUser, Content: "Hello"},
+		messages := []llm.Message{
+			{Role: llm.RoleSystem, Content: "You are a helpful assistant."},
+			{Role: llm.RoleUser, Content: "Hello"},
 		}
 
 		result, system := convertMessages(messages)
@@ -71,10 +71,10 @@ func TestConvertMessages(t *testing.T) {
 	})
 
 	t.Run("concatenates multiple system messages", func(t *testing.T) {
-		messages := []anyllm.Message{
-			{Role: anyllm.RoleSystem, Content: "First part."},
-			{Role: anyllm.RoleSystem, Content: "Second part."},
-			{Role: anyllm.RoleUser, Content: "Hello"},
+		messages := []llm.Message{
+			{Role: llm.RoleSystem, Content: "First part."},
+			{Role: llm.RoleSystem, Content: "Second part."},
+			{Role: llm.RoleUser, Content: "Hello"},
 		}
 
 		result, system := convertMessages(messages)
@@ -84,8 +84,8 @@ func TestConvertMessages(t *testing.T) {
 	})
 
 	t.Run("converts user message", func(t *testing.T) {
-		messages := []anyllm.Message{
-			{Role: anyllm.RoleUser, Content: "Hello"},
+		messages := []llm.Message{
+			{Role: llm.RoleUser, Content: "Hello"},
 		}
 
 		result, system := convertMessages(messages)
@@ -95,9 +95,9 @@ func TestConvertMessages(t *testing.T) {
 	})
 
 	t.Run("converts assistant message", func(t *testing.T) {
-		messages := []anyllm.Message{
-			{Role: anyllm.RoleUser, Content: "Hello"},
-			{Role: anyllm.RoleAssistant, Content: "Hi there!"},
+		messages := []llm.Message{
+			{Role: llm.RoleUser, Content: "Hello"},
+			{Role: llm.RoleAssistant, Content: "Hi there!"},
 		}
 
 		result, system := convertMessages(messages)
@@ -107,16 +107,16 @@ func TestConvertMessages(t *testing.T) {
 	})
 
 	t.Run("converts assistant message with tool calls", func(t *testing.T) {
-		messages := []anyllm.Message{
-			{Role: anyllm.RoleUser, Content: "What's the weather?"},
+		messages := []llm.Message{
+			{Role: llm.RoleUser, Content: "What's the weather?"},
 			{
-				Role:    anyllm.RoleAssistant,
+				Role:    llm.RoleAssistant,
 				Content: "",
-				ToolCalls: []anyllm.ToolCall{
+				ToolCalls: []llm.ToolCall{
 					{
 						ID:   "call_123",
 						Type: "function",
-						Function: anyllm.FunctionCall{
+						Function: llm.FunctionCall{
 							Name:      "get_weather",
 							Arguments: `{"location": "Paris"}`,
 						},
@@ -131,16 +131,16 @@ func TestConvertMessages(t *testing.T) {
 	})
 
 	t.Run("converts tool result to user message", func(t *testing.T) {
-		messages := []anyllm.Message{
-			{Role: anyllm.RoleUser, Content: "What's the weather?"},
+		messages := []llm.Message{
+			{Role: llm.RoleUser, Content: "What's the weather?"},
 			{
-				Role:    anyllm.RoleAssistant,
+				Role:    llm.RoleAssistant,
 				Content: "",
-				ToolCalls: []anyllm.ToolCall{
-					{ID: "call_123", Type: "function", Function: anyllm.FunctionCall{Name: "get_weather", Arguments: `{"location": "Paris"}`}},
+				ToolCalls: []llm.ToolCall{
+					{ID: "call_123", Type: "function", Function: llm.FunctionCall{Name: "get_weather", Arguments: `{"location": "Paris"}`}},
 				},
 			},
-			{Role: anyllm.RoleTool, Content: "sunny, 22°C", ToolCallID: "call_123"},
+			{Role: llm.RoleTool, Content: "sunny, 22°C", ToolCallID: "call_123"},
 		}
 
 		result, _ := convertMessages(messages)
@@ -151,13 +151,13 @@ func TestConvertMessages(t *testing.T) {
 
 func TestConvertImagePart(t *testing.T) {
 	t.Run("converts URL image", func(t *testing.T) {
-		img := &anyllm.ImageURL{URL: "https://example.com/image.png"}
+		img := &llm.ImageURL{URL: "https://example.com/image.png"}
 		result := convertImagePart(img)
 		assert.NotNil(t, result)
 	})
 
 	t.Run("converts base64 image", func(t *testing.T) {
-		img := &anyllm.ImageURL{URL: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}
+		img := &llm.ImageURL{URL: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}
 		result := convertImagePart(img)
 		assert.NotNil(t, result)
 	})
@@ -169,10 +169,10 @@ func TestConvertStopReason(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"end_turn", "end_turn", anyllm.FinishReasonStop},
-		{"max_tokens", "max_tokens", anyllm.FinishReasonLength},
-		{"tool_use", "tool_use", anyllm.FinishReasonToolCalls},
-		{"stop_sequence", "stop_sequence", anyllm.FinishReasonStop},
+		{"end_turn", "end_turn", llm.FinishReasonStop},
+		{"max_tokens", "max_tokens", llm.FinishReasonLength},
+		{"tool_use", "tool_use", llm.FinishReasonToolCalls},
+		{"stop_sequence", "stop_sequence", llm.FinishReasonStop},
 	}
 
 	for _, tt := range tests {
@@ -185,12 +185,12 @@ func TestConvertStopReason(t *testing.T) {
 
 func TestReasoningEffortToBudget(t *testing.T) {
 	tests := []struct {
-		effort   anyllm.ReasoningEffort
+		effort   llm.ReasoningEffort
 		expected int64
 	}{
-		{anyllm.ReasoningEffortLow, 1024},
-		{anyllm.ReasoningEffortMedium, 4096},
-		{anyllm.ReasoningEffortHigh, 16384},
+		{llm.ReasoningEffortLow, 1024},
+		{llm.ReasoningEffortMedium, 4096},
+		{llm.ReasoningEffortHigh, 16384},
 	}
 
 	for _, tt := range tests {
@@ -213,7 +213,7 @@ func TestIntegrationCompletion(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := anyllm.CompletionParams{
+	params := llm.CompletionParams{
 		Model:    testutil.GetTestModel("anthropic"),
 		Messages: testutil.SimpleMessages(),
 	}
@@ -225,7 +225,7 @@ func TestIntegrationCompletion(t *testing.T) {
 	assert.Equal(t, "chat.completion", resp.Object)
 	assert.Len(t, resp.Choices, 1)
 	assert.NotEmpty(t, resp.Choices[0].Message.Content)
-	assert.Equal(t, anyllm.RoleAssistant, resp.Choices[0].Message.Role)
+	assert.Equal(t, llm.RoleAssistant, resp.Choices[0].Message.Role)
 	assert.NotNil(t, resp.Usage)
 	assert.Greater(t, resp.Usage.TotalTokens, 0)
 }
@@ -239,7 +239,7 @@ func TestIntegrationCompletionWithSystemMessage(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := anyllm.CompletionParams{
+	params := llm.CompletionParams{
 		Model:    testutil.GetTestModel("anthropic"),
 		Messages: testutil.MessagesWithSystem(),
 	}
@@ -261,7 +261,7 @@ func TestIntegrationCompletionStream(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := anyllm.CompletionParams{
+	params := llm.CompletionParams{
 		Model:    testutil.GetTestModel("anthropic"),
 		Messages: testutil.SimpleMessages(),
 		Stream:   true,
@@ -296,10 +296,10 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := anyllm.CompletionParams{
+	params := llm.CompletionParams{
 		Model:      testutil.GetTestModel("anthropic"),
 		Messages:   testutil.ToolCallMessages(),
-		Tools:      []anyllm.Tool{testutil.WeatherTool()},
+		Tools:      []llm.Tool{testutil.WeatherTool()},
 		ToolChoice: "auto",
 	}
 
@@ -314,7 +314,7 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 		tc := resp.Choices[0].Message.ToolCalls[0]
 		assert.Equal(t, "get_weather", tc.Function.Name)
 		assert.Contains(t, strings.ToLower(tc.Function.Arguments), "paris")
-		assert.Equal(t, anyllm.FinishReasonToolCalls, resp.Choices[0].FinishReason)
+		assert.Equal(t, llm.FinishReasonToolCalls, resp.Choices[0].FinishReason)
 	}
 }
 
@@ -328,12 +328,12 @@ func TestIntegrationCompletionWithToolsParallelDisabled(t *testing.T) {
 
 	parallel := false
 	ctx := context.Background()
-	params := anyllm.CompletionParams{
+	params := llm.CompletionParams{
 		Model: testutil.GetTestModel("anthropic"),
-		Messages: []anyllm.Message{
-			{Role: anyllm.RoleUser, Content: "Get the weather in Paris and London"},
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "Get the weather in Paris and London"},
 		},
-		Tools:             []anyllm.Tool{testutil.WeatherTool()},
+		Tools:             []llm.Tool{testutil.WeatherTool()},
 		ToolChoice:        "auto",
 		ParallelToolCalls: &parallel,
 	}
@@ -354,7 +354,7 @@ func TestIntegrationCompletionConversation(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := anyllm.CompletionParams{
+	params := llm.CompletionParams{
 		Model:    testutil.GetTestModel("anthropic"),
 		Messages: testutil.ConversationMessages(),
 	}
@@ -385,12 +385,12 @@ func TestIntegrationCompletionReasoning(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := anyllm.CompletionParams{
+	params := llm.CompletionParams{
 		Model: model,
-		Messages: []anyllm.Message{
-			{Role: anyllm.RoleUser, Content: "Please say hello! Think very briefly before you respond."},
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "Please say hello! Think very briefly before you respond."},
 		},
-		ReasoningEffort: anyllm.ReasoningEffortLow,
+		ReasoningEffort: llm.ReasoningEffortLow,
 	}
 
 	resp, err := provider.Completion(ctx, params)
@@ -419,10 +419,10 @@ func TestIntegrationAgentLoop(t *testing.T) {
 	// Start with the agent loop messages (user asks, assistant calls tool, tool returns)
 	messages := testutil.AgentLoopMessages()
 
-	params := anyllm.CompletionParams{
+	params := llm.CompletionParams{
 		Model:    testutil.GetTestModel("anthropic"),
 		Messages: messages,
-		Tools:    []anyllm.Tool{testutil.WeatherTool()},
+		Tools:    []llm.Tool{testutil.WeatherTool()},
 	}
 
 	// The model should respond with the weather information
@@ -441,11 +441,11 @@ func TestIntegrationAgentLoop(t *testing.T) {
 }
 
 func TestIntegrationAuthenticationError(t *testing.T) {
-	provider, err := New(anyllm.WithAPIKey("invalid-api-key"))
+	provider, err := New(llm.WithAPIKey("invalid-api-key"))
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := anyllm.CompletionParams{
+	params := llm.CompletionParams{
 		Model:    "claude-3-5-haiku-latest",
 		Messages: testutil.SimpleMessages(),
 	}
@@ -454,6 +454,6 @@ func TestIntegrationAuthenticationError(t *testing.T) {
 	assert.Error(t, err)
 
 	// Check that it's converted to an authentication error
-	var authErr *anyllm.AuthenticationError
+	var authErr *llm.AuthenticationError
 	assert.ErrorAs(t, err, &authErr)
 }

@@ -17,7 +17,7 @@
 //	for chunk := range chunks {
 //	    fmt.Print(chunk.Choices[0].Delta.Content)
 //	}
-package anyllm
+package llm
 
 import (
 	"context"

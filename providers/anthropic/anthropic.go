@@ -9,7 +9,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	llm "github.com/mozilla-ai/any-llm-go"
 )
 
 const (
@@ -19,32 +19,32 @@ const (
 )
 
 // Reasoning effort to thinking budget tokens mapping.
-var reasoningEffortToBudget = map[anyllm.ReasoningEffort]int64{
-	anyllm.ReasoningEffortLow:    1024,
-	anyllm.ReasoningEffortMedium: 4096,
-	anyllm.ReasoningEffortHigh:   16384,
+var reasoningEffortToBudget = map[llm.ReasoningEffort]int64{
+	llm.ReasoningEffortLow:    1024,
+	llm.ReasoningEffortMedium: 4096,
+	llm.ReasoningEffortHigh:   16384,
 }
 
-// Provider implements the anyllm.Provider interface for Anthropic.
+// Provider implements the llm.Provider interface for Anthropic.
 type Provider struct {
 	client *anthropic.Client
-	config *anyllm.Config
+	config *llm.Config
 }
 
 // Ensure Provider implements the required interfaces.
 var (
-	_ anyllm.Provider           = (*Provider)(nil)
-	_ anyllm.CapabilityProvider = (*Provider)(nil)
+	_ llm.Provider           = (*Provider)(nil)
+	_ llm.CapabilityProvider = (*Provider)(nil)
 )
 
 // New creates a new Anthropic provider.
-func New(opts ...anyllm.Option) (*Provider, error) {
-	cfg := anyllm.DefaultConfig()
+func New(opts ...llm.Option) (*Provider, error) {
+	cfg := llm.DefaultConfig()
 	cfg.ApplyOptions(opts...)
 
 	apiKey := cfg.GetAPIKeyFromEnv(envAPIKey)
 	if apiKey == "" {
-		return nil, anyllm.NewMissingAPIKeyError(providerName, envAPIKey)
+		return nil, llm.NewMissingAPIKeyError(providerName, envAPIKey)
 	}
 
 	clientOpts := []option.RequestOption{
@@ -69,8 +69,8 @@ func (p *Provider) Name() string {
 }
 
 // Capabilities returns the provider's capabilities.
-func (p *Provider) Capabilities() anyllm.ProviderCapabilities {
-	return anyllm.ProviderCapabilities{
+func (p *Provider) Capabilities() llm.ProviderCapabilities {
+	return llm.ProviderCapabilities{
 		Completion:          true,
 		CompletionStreaming: true,
 		CompletionReasoning: true,
@@ -82,20 +82,20 @@ func (p *Provider) Capabilities() anyllm.ProviderCapabilities {
 }
 
 // Completion performs a chat completion request.
-func (p *Provider) Completion(ctx context.Context, params anyllm.CompletionParams) (*anyllm.ChatCompletion, error) {
+func (p *Provider) Completion(ctx context.Context, params llm.CompletionParams) (*llm.ChatCompletion, error) {
 	req := p.convertParams(params)
 
 	resp, err := p.client.Messages.New(ctx, req)
 	if err != nil {
-		return nil, anyllm.ConvertError(providerName, err)
+		return nil, llm.ConvertError(providerName, err)
 	}
 
 	return convertResponse(resp), nil
 }
 
 // CompletionStream performs a streaming chat completion request.
-func (p *Provider) CompletionStream(ctx context.Context, params anyllm.CompletionParams) (<-chan anyllm.ChatCompletionChunk, <-chan error) {
-	chunks := make(chan anyllm.ChatCompletionChunk)
+func (p *Provider) CompletionStream(ctx context.Context, params llm.CompletionParams) (<-chan llm.ChatCompletionChunk, <-chan error) {
+	chunks := make(chan llm.ChatCompletionChunk)
 	errs := make(chan error, 1)
 
 	go func() {
@@ -112,7 +112,7 @@ func (p *Provider) CompletionStream(ctx context.Context, params anyllm.Completio
 			model            string
 			contentBuilder   strings.Builder
 			reasoningBuilder strings.Builder
-			toolCalls        []anyllm.ToolCall
+			toolCalls        []llm.ToolCall
 			currentToolIdx   = -1
 			inputUsage       int64
 		)
@@ -128,14 +128,14 @@ func (p *Provider) CompletionStream(ctx context.Context, params anyllm.Completio
 				inputUsage = e.Message.Usage.InputTokens
 
 				// Send initial chunk
-				chunks <- anyllm.ChatCompletionChunk{
+				chunks <- llm.ChatCompletionChunk{
 					ID:     messageID,
 					Object: "chat.completion.chunk",
 					Model:  model,
-					Choices: []anyllm.ChunkChoice{{
+					Choices: []llm.ChunkChoice{{
 						Index: 0,
-						Delta: anyllm.ChunkDelta{
-							Role: anyllm.RoleAssistant,
+						Delta: llm.ChunkDelta{
+							Role: llm.RoleAssistant,
 						},
 					}},
 				}
@@ -147,10 +147,10 @@ func (p *Provider) CompletionStream(ctx context.Context, params anyllm.Completio
 					// Reasoning block started
 				case "tool_use":
 					currentToolIdx++
-					toolCalls = append(toolCalls, anyllm.ToolCall{
+					toolCalls = append(toolCalls, llm.ToolCall{
 						ID:   e.ContentBlock.ID,
 						Type: "function",
-						Function: anyllm.FunctionCall{
+						Function: llm.FunctionCall{
 							Name: e.ContentBlock.Name,
 						},
 					})
@@ -162,13 +162,13 @@ func (p *Provider) CompletionStream(ctx context.Context, params anyllm.Completio
 				case "text_delta":
 					text := e.Delta.Text
 					contentBuilder.WriteString(text)
-					chunks <- anyllm.ChatCompletionChunk{
+					chunks <- llm.ChatCompletionChunk{
 						ID:     messageID,
 						Object: "chat.completion.chunk",
 						Model:  model,
-						Choices: []anyllm.ChunkChoice{{
+						Choices: []llm.ChunkChoice{{
 							Index: 0,
-							Delta: anyllm.ChunkDelta{
+							Delta: llm.ChunkDelta{
 								Content: text,
 							},
 						}},
@@ -177,14 +177,14 @@ func (p *Provider) CompletionStream(ctx context.Context, params anyllm.Completio
 				case "thinking_delta":
 					thinking := e.Delta.Thinking
 					reasoningBuilder.WriteString(thinking)
-					chunks <- anyllm.ChatCompletionChunk{
+					chunks <- llm.ChatCompletionChunk{
 						ID:     messageID,
 						Object: "chat.completion.chunk",
 						Model:  model,
-						Choices: []anyllm.ChunkChoice{{
+						Choices: []llm.ChunkChoice{{
 							Index: 0,
-							Delta: anyllm.ChunkDelta{
-								Reasoning: &anyllm.Reasoning{
+							Delta: llm.ChunkDelta{
+								Reasoning: &llm.Reasoning{
 									Content: thinking,
 								},
 							},
@@ -194,14 +194,14 @@ func (p *Provider) CompletionStream(ctx context.Context, params anyllm.Completio
 				case "input_json_delta":
 					if currentToolIdx >= 0 && currentToolIdx < len(toolCalls) {
 						toolCalls[currentToolIdx].Function.Arguments += e.Delta.PartialJSON
-						chunks <- anyllm.ChatCompletionChunk{
+						chunks <- llm.ChatCompletionChunk{
 							ID:     messageID,
 							Object: "chat.completion.chunk",
 							Model:  model,
-							Choices: []anyllm.ChunkChoice{{
+							Choices: []llm.ChunkChoice{{
 								Index: 0,
-								Delta: anyllm.ChunkDelta{
-									ToolCalls: []anyllm.ToolCall{toolCalls[currentToolIdx]},
+								Delta: llm.ChunkDelta{
+									ToolCalls: []llm.ToolCall{toolCalls[currentToolIdx]},
 								},
 							}},
 						}
@@ -211,15 +211,15 @@ func (p *Provider) CompletionStream(ctx context.Context, params anyllm.Completio
 			case "message_delta":
 				e := event.AsMessageDelta()
 				finishReason := convertStopReason(string(e.Delta.StopReason))
-				chunks <- anyllm.ChatCompletionChunk{
+				chunks <- llm.ChatCompletionChunk{
 					ID:     messageID,
 					Object: "chat.completion.chunk",
 					Model:  model,
-					Choices: []anyllm.ChunkChoice{{
+					Choices: []llm.ChunkChoice{{
 						Index:        0,
 						FinishReason: finishReason,
 					}},
-					Usage: &anyllm.Usage{
+					Usage: &llm.Usage{
 						PromptTokens:     int(inputUsage),
 						CompletionTokens: int(e.Usage.OutputTokens),
 						TotalTokens:      int(inputUsage + e.Usage.OutputTokens),
@@ -229,15 +229,15 @@ func (p *Provider) CompletionStream(ctx context.Context, params anyllm.Completio
 		}
 
 		if err := stream.Err(); err != nil {
-			errs <- anyllm.ConvertError(providerName, err)
+			errs <- llm.ConvertError(providerName, err)
 		}
 	}()
 
 	return chunks, errs
 }
 
-// convertParams converts anyllm.CompletionParams to Anthropic request parameters.
-func (p *Provider) convertParams(params anyllm.CompletionParams) anthropic.MessageNewParams {
+// convertParams converts llm.CompletionParams to Anthropic request parameters.
+func (p *Provider) convertParams(params llm.CompletionParams) anthropic.MessageNewParams {
 	messages, system := convertMessages(params.Messages)
 
 	maxTokens := int64(defaultMaxTokens)
@@ -282,7 +282,7 @@ func (p *Provider) convertParams(params anyllm.CompletionParams) anthropic.Messa
 	}
 
 	// Handle reasoning/thinking
-	if params.ReasoningEffort != "" && params.ReasoningEffort != anyllm.ReasoningEffortNone {
+	if params.ReasoningEffort != "" && params.ReasoningEffort != llm.ReasoningEffortNone {
 		if budget, ok := reasoningEffortToBudget[params.ReasoningEffort]; ok {
 			req.Thinking = anthropic.ThinkingConfigParamOfEnabled(budget)
 			// Increase max tokens to accommodate thinking
@@ -297,16 +297,16 @@ func (p *Provider) convertParams(params anyllm.CompletionParams) anthropic.Messa
 
 // convertMessages converts anyllm messages to Anthropic format.
 // Returns the messages and the combined system message.
-func convertMessages(messages []anyllm.Message) ([]anthropic.MessageParam, string) {
+func convertMessages(messages []llm.Message) ([]anthropic.MessageParam, string) {
 	result := make([]anthropic.MessageParam, 0, len(messages))
 	var systemParts []string
 
 	for _, msg := range messages {
 		switch msg.Role {
-		case anyllm.RoleSystem:
+		case llm.RoleSystem:
 			systemParts = append(systemParts, msg.GetContentString())
 
-		case anyllm.RoleUser:
+		case llm.RoleUser:
 			if msg.IsMultiModal() {
 				content := make([]anthropic.ContentBlockParamUnion, 0)
 				for _, part := range msg.GetContentParts() {
@@ -323,7 +323,7 @@ func convertMessages(messages []anyllm.Message) ([]anthropic.MessageParam, strin
 				))
 			}
 
-		case anyllm.RoleAssistant:
+		case llm.RoleAssistant:
 			if len(msg.ToolCalls) > 0 {
 				content := make([]anthropic.ContentBlockParamUnion, 0)
 				if msg.GetContentString() != "" {
@@ -349,7 +349,7 @@ func convertMessages(messages []anyllm.Message) ([]anthropic.MessageParam, strin
 				))
 			}
 
-		case anyllm.RoleTool:
+		case llm.RoleTool:
 			result = append(result, anthropic.NewUserMessage(
 				anthropic.NewToolResultBlock(msg.ToolCallID, msg.GetContentString(), false),
 			))
@@ -360,7 +360,7 @@ func convertMessages(messages []anyllm.Message) ([]anthropic.MessageParam, strin
 }
 
 // convertImagePart converts an image URL to Anthropic format.
-func convertImagePart(img *anyllm.ImageURL) anthropic.ContentBlockParamUnion {
+func convertImagePart(img *llm.ImageURL) anthropic.ContentBlockParamUnion {
 	url := img.URL
 
 	// Check if it's a base64 data URL
@@ -381,8 +381,8 @@ func convertImagePart(img *anyllm.ImageURL) anthropic.ContentBlockParamUnion {
 	return anthropic.NewImageBlock(anthropic.URLImageSourceParam{URL: url})
 }
 
-// convertTool converts an anyllm.Tool to Anthropic format.
-func convertTool(tool anyllm.Tool) anthropic.ToolUnionParam {
+// convertTool converts an llm.Tool to Anthropic format.
+func convertTool(tool llm.Tool) anthropic.ToolUnionParam {
 	inputSchema := anthropic.ToolInputSchemaParam{
 		Type: "object",
 	}
@@ -435,7 +435,7 @@ func convertToolChoice(choice any, parallelToolCalls *bool) anthropic.ToolChoice
 				},
 			}
 		}
-	case anyllm.ToolChoice:
+	case llm.ToolChoice:
 		if v.Function != nil {
 			return anthropic.ToolChoiceUnionParam{
 				OfTool: &anthropic.ToolChoiceToolParam{
@@ -454,17 +454,17 @@ func convertToolChoice(choice any, parallelToolCalls *bool) anthropic.ToolChoice
 }
 
 // convertResponse converts an Anthropic response to anyllm format.
-func convertResponse(resp *anthropic.Message) *anyllm.ChatCompletion {
+func convertResponse(resp *anthropic.Message) *llm.ChatCompletion {
 	var content string
-	var reasoning *anyllm.Reasoning
-	var toolCalls []anyllm.ToolCall
+	var reasoning *llm.Reasoning
+	var toolCalls []llm.ToolCall
 
 	for _, block := range resp.Content {
 		switch block.Type {
 		case "text":
 			content += block.Text
 		case "thinking":
-			reasoning = &anyllm.Reasoning{
+			reasoning = &llm.Reasoning{
 				Content: block.Thinking,
 			}
 		case "tool_use":
@@ -474,10 +474,10 @@ func convertResponse(resp *anthropic.Message) *anyllm.ChatCompletion {
 					inputJSON = string(inputBytes)
 				}
 			}
-			toolCalls = append(toolCalls, anyllm.ToolCall{
+			toolCalls = append(toolCalls, llm.ToolCall{
 				ID:   block.ID,
 				Type: "function",
-				Function: anyllm.FunctionCall{
+				Function: llm.FunctionCall{
 					Name:      block.Name,
 					Arguments: inputJSON,
 				},
@@ -485,8 +485,8 @@ func convertResponse(resp *anthropic.Message) *anyllm.ChatCompletion {
 		}
 	}
 
-	message := anyllm.Message{
-		Role:      anyllm.RoleAssistant,
+	message := llm.Message{
+		Role:      llm.RoleAssistant,
 		Content:   content,
 		ToolCalls: toolCalls,
 		Reasoning: reasoning,
@@ -494,16 +494,16 @@ func convertResponse(resp *anthropic.Message) *anyllm.ChatCompletion {
 
 	finishReason := convertStopReason(string(resp.StopReason))
 
-	return &anyllm.ChatCompletion{
+	return &llm.ChatCompletion{
 		ID:     resp.ID,
 		Object: "chat.completion",
 		Model:  string(resp.Model),
-		Choices: []anyllm.Choice{{
+		Choices: []llm.Choice{{
 			Index:        0,
 			Message:      message,
 			FinishReason: finishReason,
 		}},
-		Usage: &anyllm.Usage{
+		Usage: &llm.Usage{
 			PromptTokens:     int(resp.Usage.InputTokens),
 			CompletionTokens: int(resp.Usage.OutputTokens),
 			TotalTokens:      int(resp.Usage.InputTokens + resp.Usage.OutputTokens),
@@ -515,21 +515,21 @@ func convertResponse(resp *anthropic.Message) *anyllm.ChatCompletion {
 func convertStopReason(reason string) string {
 	switch reason {
 	case "end_turn":
-		return anyllm.FinishReasonStop
+		return llm.FinishReasonStop
 	case "max_tokens":
-		return anyllm.FinishReasonLength
+		return llm.FinishReasonLength
 	case "tool_use":
-		return anyllm.FinishReasonToolCalls
+		return llm.FinishReasonToolCalls
 	case "stop_sequence":
-		return anyllm.FinishReasonStop
+		return llm.FinishReasonStop
 	default:
-		return anyllm.FinishReasonStop
+		return llm.FinishReasonStop
 	}
 }
 
 // init registers the Anthropic provider.
 func init() {
-	anyllm.Register(providerName, func(opts ...anyllm.Option) (anyllm.Provider, error) {
+	llm.Register(providerName, func(opts ...llm.Option) (llm.Provider, error) {
 		return New(opts...)
 	})
 }

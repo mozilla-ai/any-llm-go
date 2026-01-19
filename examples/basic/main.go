@@ -13,16 +13,16 @@ import (
 	"fmt"
 	"log"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
-	_ "github.com/mozilla-ai/any-llm-go/providers/openai" // Register provider
+	llm "github.com/mozilla-ai/any-llm-go"
+	_ "github.com/mozilla-ai/any-llm-go/providers/openai" // Register provider.
 )
 
 func main() {
 	ctx := context.Background()
 
 	// Simple completion using the convenience function
-	response, err := anyllm.Completion(ctx, "openai:gpt-4o-mini", []anyllm.Message{
-		{Role: anyllm.RoleUser, Content: "What is the capital of France? Reply in one word."},
+	response, err := llm.Completion(ctx, "openai:gpt-4o-mini", []llm.Message{
+		{Role: llm.RoleUser, Content: "What is the capital of France? Reply in one word."},
 	})
 	if err != nil {
 		log.Fatal(err)

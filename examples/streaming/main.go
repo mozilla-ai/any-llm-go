@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"log"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	llm "github.com/mozilla-ai/any-llm-go"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
@@ -27,10 +27,10 @@ func main() {
 	ctx := context.Background()
 
 	// Request a streaming completion
-	chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
+	chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
 		Model: "gpt-4o-mini",
-		Messages: []anyllm.Message{
-			{Role: anyllm.RoleUser, Content: "Write a short poem about programming in Go."},
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "Write a short poem about programming in Go."},
 		},
 		Stream: true,
 	})

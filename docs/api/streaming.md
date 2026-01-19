@@ -5,10 +5,10 @@ Streaming allows you to receive partial responses as they're generated, enabling
 ## Quick Start
 
 ```go
-chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
+chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
     Model: "gpt-4o-mini",
-    Messages: []anyllm.Message{
-        {Role: anyllm.RoleUser, Content: "Write a short story."},
+    Messages: []llm.Message{
+        {Role: llm.RoleUser, Content: "Write a short story."},
     },
     Stream: true,
 })
@@ -153,14 +153,14 @@ fmt.Printf("Finish reason: %s\n", finishReason)
 ### Streaming with Tool Calls
 
 ```go
-chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
+chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
     Model:    "gpt-4o-mini",
     Messages: messages,
     Tools:    tools,
     Stream:   true,
 })
 
-var toolCalls []anyllm.ToolCall
+var toolCalls []llm.ToolCall
 toolCallArgs := make(map[int]strings.Builder)
 
 for chunk := range chunks {
@@ -201,10 +201,10 @@ for i, tc := range toolCalls {
 ### Streaming with Reasoning (Claude)
 
 ```go
-chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
+chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
     Model:           "claude-sonnet-4-20250514",
     Messages:        messages,
-    ReasoningEffort: anyllm.ReasoningEffortMedium,
+    ReasoningEffort: llm.ReasoningEffortMedium,
     Stream:          true,
 })
 

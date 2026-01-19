@@ -24,7 +24,7 @@ any-llm-go supports multiple LLM providers through a unified interface. Each pro
 
 ```go
 import (
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
@@ -32,12 +32,12 @@ import (
 provider, err := openai.New()
 
 // Or with explicit API key
-provider, err := openai.New(anyllm.WithAPIKey("sk-..."))
+provider, err := openai.New(llm.WithAPIKey("sk-..."))
 
 // Or with custom base URL (for Azure, proxies, etc.)
 provider, err := openai.New(
-    anyllm.WithAPIKey("your-key"),
-    anyllm.WithBaseURL("https://your-endpoint.openai.azure.com"),
+    llm.WithAPIKey("your-key"),
+    llm.WithBaseURL("https://your-endpoint.openai.azure.com"),
 )
 ```
 
@@ -58,7 +58,7 @@ provider, err := openai.New(
 
 ```go
 import (
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     "github.com/mozilla-ai/any-llm-go/providers/anthropic"
 )
 
@@ -66,7 +66,7 @@ import (
 provider, err := anthropic.New()
 
 // Or with explicit API key
-provider, err := anthropic.New(anyllm.WithAPIKey("sk-ant-..."))
+provider, err := anthropic.New(llm.WithAPIKey("sk-ant-..."))
 ```
 
 **Environment Variable:** `ANTHROPIC_API_KEY`
@@ -82,10 +82,10 @@ provider, err := anthropic.New(anyllm.WithAPIKey("sk-ant-..."))
 Anthropic's Claude models support extended thinking for complex reasoning tasks:
 
 ```go
-response, err := provider.Completion(ctx, anyllm.CompletionParams{
+response, err := provider.Completion(ctx, llm.CompletionParams{
     Model: "claude-sonnet-4-20250514",
     Messages: messages,
-    ReasoningEffort: anyllm.ReasoningEffortMedium, // low, medium, or high
+    ReasoningEffort: llm.ReasoningEffortMedium, // low, medium, or high
 })
 
 // Access the thinking content

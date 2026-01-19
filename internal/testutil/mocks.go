@@ -3,123 +3,123 @@ package testutil
 import (
 	"context"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	llm "github.com/mozilla-ai/any-llm-go"
 )
 
 // MockProvider is a mock implementation of the Provider interface for testing.
 type MockProvider struct {
 	NameFunc             func() string
-	CompletionFunc       func(ctx context.Context, params anyllm.CompletionParams) (*anyllm.ChatCompletion, error)
-	CompletionStreamFunc func(ctx context.Context, params anyllm.CompletionParams) (<-chan anyllm.ChatCompletionChunk, <-chan error)
-	EmbeddingFunc        func(ctx context.Context, params anyllm.EmbeddingParams) (*anyllm.EmbeddingResponse, error)
-	ListModelsFunc       func(ctx context.Context) (*anyllm.ModelsResponse, error)
-	CapabilitiesFunc     func() anyllm.ProviderCapabilities
+	CompletionFunc       func(ctx context.Context, params llm.CompletionParams) (*llm.ChatCompletion, error)
+	CompletionStreamFunc func(ctx context.Context, params llm.CompletionParams) (<-chan llm.ChatCompletionChunk, <-chan error)
+	EmbeddingFunc        func(ctx context.Context, params llm.EmbeddingParams) (*llm.EmbeddingResponse, error)
+	ListModelsFunc       func(ctx context.Context) (*llm.ModelsResponse, error)
+	CapabilitiesFunc     func() llm.ProviderCapabilities
 
 	// Track calls for assertions
-	CompletionCalls       []anyllm.CompletionParams
-	CompletionStreamCalls []anyllm.CompletionParams
-	EmbeddingCalls        []anyllm.EmbeddingParams
+	CompletionCalls       []llm.CompletionParams
+	CompletionStreamCalls []llm.CompletionParams
+	EmbeddingCalls        []llm.EmbeddingParams
 	ListModelsCalls       int
 }
 
 // Ensure MockProvider implements all interfaces.
 var (
-	_ anyllm.Provider           = (*MockProvider)(nil)
-	_ anyllm.EmbeddingProvider  = (*MockProvider)(nil)
-	_ anyllm.ModelLister        = (*MockProvider)(nil)
-	_ anyllm.CapabilityProvider = (*MockProvider)(nil)
+	_ llm.Provider           = (*MockProvider)(nil)
+	_ llm.EmbeddingProvider  = (*MockProvider)(nil)
+	_ llm.ModelLister        = (*MockProvider)(nil)
+	_ llm.CapabilityProvider = (*MockProvider)(nil)
 )
 
 // NewMockProvider creates a new MockProvider with default implementations.
 func NewMockProvider() *MockProvider {
 	return &MockProvider{
 		NameFunc: func() string { return "mock" },
-		CompletionFunc: func(ctx context.Context, params anyllm.CompletionParams) (*anyllm.ChatCompletion, error) {
-			return &anyllm.ChatCompletion{
+		CompletionFunc: func(ctx context.Context, params llm.CompletionParams) (*llm.ChatCompletion, error) {
+			return &llm.ChatCompletion{
 				ID:     "mock-completion-id",
 				Object: "chat.completion",
 				Model:  params.Model,
-				Choices: []anyllm.Choice{
+				Choices: []llm.Choice{
 					{
 						Index: 0,
-						Message: anyllm.Message{
-							Role:    anyllm.RoleAssistant,
+						Message: llm.Message{
+							Role:    llm.RoleAssistant,
 							Content: "Hello World",
 						},
-						FinishReason: anyllm.FinishReasonStop,
+						FinishReason: llm.FinishReasonStop,
 					},
 				},
-				Usage: &anyllm.Usage{
+				Usage: &llm.Usage{
 					PromptTokens:     10,
 					CompletionTokens: 5,
 					TotalTokens:      15,
 				},
 			}, nil
 		},
-		CompletionStreamFunc: func(ctx context.Context, params anyllm.CompletionParams) (<-chan anyllm.ChatCompletionChunk, <-chan error) {
-			chunks := make(chan anyllm.ChatCompletionChunk, 3)
+		CompletionStreamFunc: func(ctx context.Context, params llm.CompletionParams) (<-chan llm.ChatCompletionChunk, <-chan error) {
+			chunks := make(chan llm.ChatCompletionChunk, 3)
 			errs := make(chan error, 1)
 
 			go func() {
 				defer close(chunks)
 				defer close(errs)
 
-				chunks <- anyllm.ChatCompletionChunk{
+				chunks <- llm.ChatCompletionChunk{
 					ID:     "mock-chunk-id",
 					Object: "chat.completion.chunk",
 					Model:  params.Model,
-					Choices: []anyllm.ChunkChoice{
-						{Index: 0, Delta: anyllm.ChunkDelta{Role: anyllm.RoleAssistant}},
+					Choices: []llm.ChunkChoice{
+						{Index: 0, Delta: llm.ChunkDelta{Role: llm.RoleAssistant}},
 					},
 				}
-				chunks <- anyllm.ChatCompletionChunk{
+				chunks <- llm.ChatCompletionChunk{
 					ID:     "mock-chunk-id",
 					Object: "chat.completion.chunk",
 					Model:  params.Model,
-					Choices: []anyllm.ChunkChoice{
-						{Index: 0, Delta: anyllm.ChunkDelta{Content: "Hello World"}},
+					Choices: []llm.ChunkChoice{
+						{Index: 0, Delta: llm.ChunkDelta{Content: "Hello World"}},
 					},
 				}
-				chunks <- anyllm.ChatCompletionChunk{
+				chunks <- llm.ChatCompletionChunk{
 					ID:     "mock-chunk-id",
 					Object: "chat.completion.chunk",
 					Model:  params.Model,
-					Choices: []anyllm.ChunkChoice{
-						{Index: 0, FinishReason: anyllm.FinishReasonStop},
+					Choices: []llm.ChunkChoice{
+						{Index: 0, FinishReason: llm.FinishReasonStop},
 					},
 				}
 			}()
 
 			return chunks, errs
 		},
-		EmbeddingFunc: func(ctx context.Context, params anyllm.EmbeddingParams) (*anyllm.EmbeddingResponse, error) {
-			return &anyllm.EmbeddingResponse{
+		EmbeddingFunc: func(ctx context.Context, params llm.EmbeddingParams) (*llm.EmbeddingResponse, error) {
+			return &llm.EmbeddingResponse{
 				Object: "list",
 				Model:  params.Model,
-				Data: []anyllm.EmbeddingData{
+				Data: []llm.EmbeddingData{
 					{
 						Object:    "embedding",
 						Embedding: []float64{0.1, 0.2, 0.3},
 						Index:     0,
 					},
 				},
-				Usage: &anyllm.EmbeddingUsage{
+				Usage: &llm.EmbeddingUsage{
 					PromptTokens: 5,
 					TotalTokens:  5,
 				},
 			}, nil
 		},
-		ListModelsFunc: func(ctx context.Context) (*anyllm.ModelsResponse, error) {
-			return &anyllm.ModelsResponse{
+		ListModelsFunc: func(ctx context.Context) (*llm.ModelsResponse, error) {
+			return &llm.ModelsResponse{
 				Object: "list",
-				Data: []anyllm.Model{
+				Data: []llm.Model{
 					{ID: "model-1", Object: "model", OwnedBy: "mock"},
 					{ID: "model-2", Object: "model", OwnedBy: "mock"},
 				},
 			}, nil
 		},
-		CapabilitiesFunc: func() anyllm.ProviderCapabilities {
-			return anyllm.ProviderCapabilities{
+		CapabilitiesFunc: func() llm.ProviderCapabilities {
+			return llm.ProviderCapabilities{
 				Completion:          true,
 				CompletionStreaming: true,
 				Embedding:           true,
@@ -133,47 +133,47 @@ func (m *MockProvider) Name() string {
 	return m.NameFunc()
 }
 
-func (m *MockProvider) Completion(ctx context.Context, params anyllm.CompletionParams) (*anyllm.ChatCompletion, error) {
+func (m *MockProvider) Completion(ctx context.Context, params llm.CompletionParams) (*llm.ChatCompletion, error) {
 	m.CompletionCalls = append(m.CompletionCalls, params)
 	return m.CompletionFunc(ctx, params)
 }
 
-func (m *MockProvider) CompletionStream(ctx context.Context, params anyllm.CompletionParams) (<-chan anyllm.ChatCompletionChunk, <-chan error) {
+func (m *MockProvider) CompletionStream(ctx context.Context, params llm.CompletionParams) (<-chan llm.ChatCompletionChunk, <-chan error) {
 	m.CompletionStreamCalls = append(m.CompletionStreamCalls, params)
 	return m.CompletionStreamFunc(ctx, params)
 }
 
-func (m *MockProvider) Embedding(ctx context.Context, params anyllm.EmbeddingParams) (*anyllm.EmbeddingResponse, error) {
+func (m *MockProvider) Embedding(ctx context.Context, params llm.EmbeddingParams) (*llm.EmbeddingResponse, error) {
 	m.EmbeddingCalls = append(m.EmbeddingCalls, params)
 	return m.EmbeddingFunc(ctx, params)
 }
 
-func (m *MockProvider) ListModels(ctx context.Context) (*anyllm.ModelsResponse, error) {
+func (m *MockProvider) ListModels(ctx context.Context) (*llm.ModelsResponse, error) {
 	m.ListModelsCalls++
 	return m.ListModelsFunc(ctx)
 }
 
-func (m *MockProvider) Capabilities() anyllm.ProviderCapabilities {
+func (m *MockProvider) Capabilities() llm.ProviderCapabilities {
 	return m.CapabilitiesFunc()
 }
 
 // MockChatCompletion creates a mock ChatCompletion response.
-func MockChatCompletion(content string) *anyllm.ChatCompletion {
-	return &anyllm.ChatCompletion{
+func MockChatCompletion(content string) *llm.ChatCompletion {
+	return &llm.ChatCompletion{
 		ID:     "mock-id",
 		Object: "chat.completion",
 		Model:  "mock-model",
-		Choices: []anyllm.Choice{
+		Choices: []llm.Choice{
 			{
 				Index: 0,
-				Message: anyllm.Message{
-					Role:    anyllm.RoleAssistant,
+				Message: llm.Message{
+					Role:    llm.RoleAssistant,
 					Content: content,
 				},
-				FinishReason: anyllm.FinishReasonStop,
+				FinishReason: llm.FinishReasonStop,
 			},
 		},
-		Usage: &anyllm.Usage{
+		Usage: &llm.Usage{
 			PromptTokens:     10,
 			CompletionTokens: 5,
 			TotalTokens:      15,
@@ -182,23 +182,23 @@ func MockChatCompletion(content string) *anyllm.ChatCompletion {
 }
 
 // MockChatCompletionWithToolCalls creates a mock ChatCompletion with tool calls.
-func MockChatCompletionWithToolCalls(toolCalls []anyllm.ToolCall) *anyllm.ChatCompletion {
-	return &anyllm.ChatCompletion{
+func MockChatCompletionWithToolCalls(toolCalls []llm.ToolCall) *llm.ChatCompletion {
+	return &llm.ChatCompletion{
 		ID:     "mock-id",
 		Object: "chat.completion",
 		Model:  "mock-model",
-		Choices: []anyllm.Choice{
+		Choices: []llm.Choice{
 			{
 				Index: 0,
-				Message: anyllm.Message{
-					Role:      anyllm.RoleAssistant,
+				Message: llm.Message{
+					Role:      llm.RoleAssistant,
 					Content:   "",
 					ToolCalls: toolCalls,
 				},
-				FinishReason: anyllm.FinishReasonToolCalls,
+				FinishReason: llm.FinishReasonToolCalls,
 			},
 		},
-		Usage: &anyllm.Usage{
+		Usage: &llm.Usage{
 			PromptTokens:     10,
 			CompletionTokens: 20,
 			TotalTokens:      30,
@@ -207,25 +207,25 @@ func MockChatCompletionWithToolCalls(toolCalls []anyllm.ToolCall) *anyllm.ChatCo
 }
 
 // MockChatCompletionWithReasoning creates a mock ChatCompletion with reasoning.
-func MockChatCompletionWithReasoning(content, reasoning string) *anyllm.ChatCompletion {
-	return &anyllm.ChatCompletion{
+func MockChatCompletionWithReasoning(content, reasoning string) *llm.ChatCompletion {
+	return &llm.ChatCompletion{
 		ID:     "mock-id",
 		Object: "chat.completion",
 		Model:  "mock-model",
-		Choices: []anyllm.Choice{
+		Choices: []llm.Choice{
 			{
 				Index: 0,
-				Message: anyllm.Message{
-					Role:    anyllm.RoleAssistant,
+				Message: llm.Message{
+					Role:    llm.RoleAssistant,
 					Content: content,
-					Reasoning: &anyllm.Reasoning{
+					Reasoning: &llm.Reasoning{
 						Content: reasoning,
 					},
 				},
-				FinishReason: anyllm.FinishReasonStop,
+				FinishReason: llm.FinishReasonStop,
 			},
 		},
-		Usage: &anyllm.Usage{
+		Usage: &llm.Usage{
 			PromptTokens:     10,
 			CompletionTokens: 50,
 			TotalTokens:      60,

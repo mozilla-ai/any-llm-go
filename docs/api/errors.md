@@ -14,23 +14,23 @@ import "errors"
 response, err := provider.Completion(ctx, params)
 if err != nil {
     switch {
-    case errors.Is(err, anyllm.ErrRateLimit):
+    case errors.Is(err, llm.ErrRateLimit):
         // Rate limit exceeded - retry with backoff
-    case errors.Is(err, anyllm.ErrAuthentication):
+    case errors.Is(err, llm.ErrAuthentication):
         // Invalid API key
-    case errors.Is(err, anyllm.ErrInvalidRequest):
+    case errors.Is(err, llm.ErrInvalidRequest):
         // Malformed request
-    case errors.Is(err, anyllm.ErrContextLength):
+    case errors.Is(err, llm.ErrContextLength):
         // Input too long
-    case errors.Is(err, anyllm.ErrContentFilter):
+    case errors.Is(err, llm.ErrContentFilter):
         // Content blocked by safety filters
-    case errors.Is(err, anyllm.ErrModelNotFound):
+    case errors.Is(err, llm.ErrModelNotFound):
         // Model doesn't exist
-    case errors.Is(err, anyllm.ErrProvider):
+    case errors.Is(err, llm.ErrProvider):
         // General provider error
-    case errors.Is(err, anyllm.ErrMissingAPIKey):
+    case errors.Is(err, llm.ErrMissingAPIKey):
         // No API key provided
-    case errors.Is(err, anyllm.ErrUnsupportedProvider):
+    case errors.Is(err, llm.ErrUnsupportedProvider):
         // Provider not registered
     default:
         // Unknown error
@@ -60,7 +60,7 @@ For more details, use `errors.As()` to access structured error types:
 ### RateLimitError
 
 ```go
-var rateLimitErr *anyllm.RateLimitError
+var rateLimitErr *llm.RateLimitError
 if errors.As(err, &rateLimitErr) {
     fmt.Printf("Provider: %s\n", rateLimitErr.Provider)
     fmt.Printf("Message: %s\n", rateLimitErr.Message)
@@ -71,7 +71,7 @@ if errors.As(err, &rateLimitErr) {
 ### AuthenticationError
 
 ```go
-var authErr *anyllm.AuthenticationError
+var authErr *llm.AuthenticationError
 if errors.As(err, &authErr) {
     fmt.Printf("Provider: %s\n", authErr.Provider)
     fmt.Printf("Message: %s\n", authErr.Message)
@@ -81,7 +81,7 @@ if errors.As(err, &authErr) {
 ### ContextLengthError
 
 ```go
-var ctxErr *anyllm.ContextLengthError
+var ctxErr *llm.ContextLengthError
 if errors.As(err, &ctxErr) {
     fmt.Printf("Provider: %s\n", ctxErr.Provider)
     fmt.Printf("Message: %s\n", ctxErr.Message)
@@ -91,7 +91,7 @@ if errors.As(err, &ctxErr) {
 ### ProviderError
 
 ```go
-var providerErr *anyllm.ProviderError
+var providerErr *llm.ProviderError
 if errors.As(err, &providerErr) {
     fmt.Printf("Provider: %s\n", providerErr.Provider)
     fmt.Printf("Status code: %d\n", providerErr.StatusCode)
@@ -102,7 +102,7 @@ if errors.As(err, &providerErr) {
 ### MissingAPIKeyError
 
 ```go
-var keyErr *anyllm.MissingAPIKeyError
+var keyErr *llm.MissingAPIKeyError
 if errors.As(err, &keyErr) {
     fmt.Printf("Provider: %s\n", keyErr.Provider)
     fmt.Printf("Expected env var: %s\n", keyErr.EnvVar)
@@ -127,7 +127,7 @@ type BaseError struct {
 All any-llm errors wrap the original provider error:
 
 ```go
-var baseErr *anyllm.BaseError
+var baseErr *llm.BaseError
 if errors.As(err, &baseErr) {
     // Access the original provider error
     originalErr := baseErr.Err
@@ -140,7 +140,7 @@ if errors.As(err, &baseErr) {
 ### Retry with Backoff
 
 ```go
-func completionWithRetry(ctx context.Context, params anyllm.CompletionParams) (*anyllm.ChatCompletion, error) {
+func completionWithRetry(ctx context.Context, params llm.CompletionParams) (*llm.ChatCompletion, error) {
     maxRetries := 3
     backoff := time.Second
 
@@ -150,9 +150,9 @@ func completionWithRetry(ctx context.Context, params anyllm.CompletionParams) (*
             return response, nil
         }
 
-        if errors.Is(err, anyllm.ErrRateLimit) {
+        if errors.Is(err, llm.ErrRateLimit) {
             // Check for retry-after hint
-            var rateLimitErr *anyllm.RateLimitError
+            var rateLimitErr *llm.RateLimitError
             if errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
                 backoff = time.Duration(rateLimitErr.RetryAfter) * time.Second
             }
@@ -181,8 +181,8 @@ func getResponse(ctx context.Context, prompt string) (string, error) {
     providers := []string{"openai:gpt-4o", "anthropic:claude-3-5-haiku-latest"}
 
     for _, model := range providers {
-        response, err := anyllm.Completion(ctx, model, []anyllm.Message{
-            {Role: anyllm.RoleUser, Content: prompt},
+        response, err := llm.Completion(ctx, model, []llm.Message{
+            {Role: llm.RoleUser, Content: prompt},
         })
 
         if err == nil {
@@ -193,7 +193,7 @@ func getResponse(ctx context.Context, prompt string) (string, error) {
         log.Printf("Provider %s failed: %v", model, err)
 
         // Don't failover for certain errors
-        if errors.Is(err, anyllm.ErrContentFilter) {
+        if errors.Is(err, llm.ErrContentFilter) {
             return "", err // Content issue, not provider issue
         }
     }
@@ -207,15 +207,15 @@ func getResponse(ctx context.Context, prompt string) (string, error) {
 ```go
 func userFriendlyError(err error) string {
     switch {
-    case errors.Is(err, anyllm.ErrRateLimit):
+    case errors.Is(err, llm.ErrRateLimit):
         return "Too many requests. Please try again in a moment."
-    case errors.Is(err, anyllm.ErrAuthentication):
+    case errors.Is(err, llm.ErrAuthentication):
         return "Authentication failed. Please check your API configuration."
-    case errors.Is(err, anyllm.ErrContextLength):
+    case errors.Is(err, llm.ErrContextLength):
         return "Your message is too long. Please shorten it and try again."
-    case errors.Is(err, anyllm.ErrContentFilter):
+    case errors.Is(err, llm.ErrContentFilter):
         return "Your request was blocked by content filters."
-    case errors.Is(err, anyllm.ErrModelNotFound):
+    case errors.Is(err, llm.ErrModelNotFound):
         return "The requested model is not available."
     default:
         return "An error occurred. Please try again later."

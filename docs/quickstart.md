@@ -40,15 +40,15 @@ import (
     "fmt"
     "log"
 
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     _ "github.com/mozilla-ai/any-llm-go/providers/openai" // Register the provider
 )
 
 func main() {
     ctx := context.Background()
 
-    response, err := anyllm.Completion(ctx, "openai:gpt-4o-mini", []anyllm.Message{
-        {Role: anyllm.RoleUser, Content: "Say hello in three languages!"},
+    response, err := llm.Completion(ctx, "openai:gpt-4o-mini", []llm.Message{
+        {Role: llm.RoleUser, Content: "Say hello in three languages!"},
     })
     if err != nil {
         log.Fatal(err)
@@ -72,7 +72,7 @@ import (
     "fmt"
     "log"
 
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     "github.com/mozilla-ai/any-llm-go/providers/anthropic"
 )
 
@@ -86,10 +86,10 @@ func main() {
     ctx := context.Background()
 
     // Make requests
-    response, err := provider.Completion(ctx, anyllm.CompletionParams{
+    response, err := provider.Completion(ctx, llm.CompletionParams{
         Model: "claude-3-5-haiku-latest",
-        Messages: []anyllm.Message{
-            {Role: anyllm.RoleUser, Content: "What's the capital of France?"},
+        Messages: []llm.Message{
+            {Role: llm.RoleUser, Content: "What's the capital of France?"},
         },
     })
     if err != nil {
@@ -105,14 +105,14 @@ func main() {
 If you prefer not to use environment variables:
 
 ```go
-provider, err := openai.New(anyllm.WithAPIKey("sk-your-api-key"))
+provider, err := openai.New(llm.WithAPIKey("sk-your-api-key"))
 ```
 
 Or with the convenience function:
 
 ```go
-response, err := anyllm.Completion(ctx, "openai:gpt-4o-mini", messages,
-    anyllm.WithAPIKey("sk-your-api-key"),
+response, err := llm.Completion(ctx, "openai:gpt-4o-mini", messages,
+    llm.WithAPIKey("sk-your-api-key"),
 )
 ```
 
@@ -128,7 +128,7 @@ import (
     "fmt"
     "log"
 
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
@@ -140,10 +140,10 @@ func main() {
 
     ctx := context.Background()
 
-    chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
+    chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
         Model: "gpt-4o-mini",
-        Messages: []anyllm.Message{
-            {Role: anyllm.RoleUser, Content: "Write a haiku about programming."},
+        Messages: []llm.Message{
+            {Role: llm.RoleUser, Content: "Write a haiku about programming."},
         },
         Stream: true,
     })
@@ -168,11 +168,11 @@ func main() {
 Guide the model's behavior with system messages:
 
 ```go
-response, err := provider.Completion(ctx, anyllm.CompletionParams{
+response, err := provider.Completion(ctx, llm.CompletionParams{
     Model: "gpt-4o-mini",
-    Messages: []anyllm.Message{
-        {Role: anyllm.RoleSystem, Content: "You are a helpful assistant that speaks like a pirate."},
-        {Role: anyllm.RoleUser, Content: "How do I make coffee?"},
+    Messages: []llm.Message{
+        {Role: llm.RoleSystem, Content: "You are a helpful assistant that speaks like a pirate."},
+        {Role: llm.RoleUser, Content: "How do I make coffee?"},
     },
 })
 ```
@@ -185,10 +185,10 @@ Control the model's output:
 temp := 0.7
 maxTokens := 500
 
-response, err := provider.Completion(ctx, anyllm.CompletionParams{
+response, err := provider.Completion(ctx, llm.CompletionParams{
     Model: "gpt-4o-mini",
-    Messages: []anyllm.Message{
-        {Role: anyllm.RoleUser, Content: "Write a creative story."},
+    Messages: []llm.Message{
+        {Role: llm.RoleUser, Content: "Write a creative story."},
     },
     Temperature: &temp,
     MaxTokens:   &maxTokens,
@@ -206,15 +206,15 @@ import "errors"
 response, err := provider.Completion(ctx, params)
 if err != nil {
     // Check for specific error types
-    if errors.Is(err, anyllm.ErrRateLimit) {
+    if errors.Is(err, llm.ErrRateLimit) {
         fmt.Println("Rate limited - please retry later")
         return
     }
-    if errors.Is(err, anyllm.ErrAuthentication) {
+    if errors.Is(err, llm.ErrAuthentication) {
         fmt.Println("Invalid API key")
         return
     }
-    if errors.Is(err, anyllm.ErrContextLength) {
+    if errors.Is(err, llm.ErrContextLength) {
         fmt.Println("Input too long - please reduce message size")
         return
     }
@@ -241,7 +241,7 @@ models := []string{
 }
 
 for _, model := range models {
-    response, err := anyllm.Completion(ctx, model, messages)
+    response, err := llm.Completion(ctx, model, messages)
     if err != nil {
         log.Printf("Error with %s: %v", model, err)
         continue

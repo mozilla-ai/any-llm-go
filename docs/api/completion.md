@@ -8,14 +8,14 @@ The completion API is the primary way to interact with LLM providers.
 import (
     "context"
 
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     _ "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
 ctx := context.Background()
 
-response, err := anyllm.Completion(ctx, "openai:gpt-4o-mini", []anyllm.Message{
-    {Role: anyllm.RoleUser, Content: "Hello!"},
+response, err := llm.Completion(ctx, "openai:gpt-4o-mini", []llm.Message{
+    {Role: llm.RoleUser, Content: "Hello!"},
 })
 ```
 
@@ -47,9 +47,9 @@ Performs a chat completion request using the specified model.
 **Example:**
 
 ```go
-response, err := anyllm.Completion(ctx, "anthropic:claude-3-5-haiku-latest", []anyllm.Message{
-    {Role: anyllm.RoleSystem, Content: "You are a helpful assistant."},
-    {Role: anyllm.RoleUser, Content: "What is Go?"},
+response, err := llm.Completion(ctx, "anthropic:claude-3-5-haiku-latest", []llm.Message{
+    {Role: llm.RoleSystem, Content: "You are a helpful assistant."},
+    {Role: llm.RoleUser, Content: "What is Go?"},
 })
 if err != nil {
     log.Fatal(err)
@@ -83,9 +83,9 @@ Performs a chat completion with full parameter control.
 temp := 0.7
 maxTokens := 1000
 
-response, err := anyllm.CompletionWithParams(ctx, "openai:gpt-4o", anyllm.CompletionParams{
-    Messages: []anyllm.Message{
-        {Role: anyllm.RoleUser, Content: "Write a poem about coding."},
+response, err := llm.CompletionWithParams(ctx, "openai:gpt-4o", llm.CompletionParams{
+    Messages: []llm.Message{
+        {Role: llm.RoleUser, Content: "Write a poem about coding."},
     },
     Temperature: &temp,
     MaxTokens:   &maxTokens,
@@ -174,11 +174,11 @@ const (
 For messages with images or other content types:
 
 ```go
-message := anyllm.Message{
-    Role: anyllm.RoleUser,
-    Content: []anyllm.ContentPart{
+message := llm.Message{
+    Role: llm.RoleUser,
+    Content: []llm.ContentPart{
         {Type: "text", Text: "What's in this image?"},
-        {Type: "image_url", ImageURL: &anyllm.ImageURL{
+        {Type: "image_url", ImageURL: &llm.ImageURL{
             URL: "https://example.com/image.jpg",
         }},
     },
@@ -228,10 +228,10 @@ const (
 ### Defining Tools
 
 ```go
-tools := []anyllm.Tool{
+tools := []llm.Tool{
     {
         Type: "function",
-        Function: anyllm.Function{
+        Function: llm.Function{
             Name:        "get_weather",
             Description: "Get the current weather for a location",
             Parameters: map[string]any{
@@ -252,28 +252,28 @@ tools := []anyllm.Tool{
 ### Processing Tool Calls
 
 ```go
-response, err := provider.Completion(ctx, anyllm.CompletionParams{
+response, err := provider.Completion(ctx, llm.CompletionParams{
     Model:    "gpt-4o-mini",
     Messages: messages,
     Tools:    tools,
 })
 
-if response.Choices[0].FinishReason == anyllm.FinishReasonToolCalls {
+if response.Choices[0].FinishReason == llm.FinishReasonToolCalls {
     for _, tc := range response.Choices[0].Message.ToolCalls {
         // Process tool call
         result := executeFunction(tc.Function.Name, tc.Function.Arguments)
 
         // Add tool result to messages
         messages = append(messages, response.Choices[0].Message)
-        messages = append(messages, anyllm.Message{
-            Role:       anyllm.RoleTool,
+        messages = append(messages, llm.Message{
+            Role:       llm.RoleTool,
             Content:    result,
             ToolCallID: tc.ID,
         })
     }
 
     // Continue conversation with tool results
-    response, err = provider.Completion(ctx, anyllm.CompletionParams{
+    response, err = provider.Completion(ctx, llm.CompletionParams{
         Model:    "gpt-4o-mini",
         Messages: messages,
         Tools:    tools,
@@ -294,7 +294,7 @@ if err != nil {
 }
 
 // Use provider.Completion() directly
-response, err := provider.Completion(ctx, anyllm.CompletionParams{
+response, err := provider.Completion(ctx, llm.CompletionParams{
     Model:    "gpt-4o-mini",
     Messages: messages,
 })

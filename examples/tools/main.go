@@ -14,15 +14,15 @@ import (
 	"fmt"
 	"log"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	llm "github.com/mozilla-ai/any-llm-go"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
 // Define tools that the model can call
-var tools = []anyllm.Tool{
+var tools = []llm.Tool{
 	{
 		Type: "function",
-		Function: anyllm.Function{
+		Function: llm.Function{
 			Name:        "get_weather",
 			Description: "Get the current weather for a location",
 			Parameters: map[string]any{
@@ -62,15 +62,15 @@ func main() {
 	ctx := context.Background()
 
 	// Initial message asking about weather
-	messages := []anyllm.Message{
-		{Role: anyllm.RoleUser, Content: "What's the weather like in Paris?"},
+	messages := []llm.Message{
+		{Role: llm.RoleUser, Content: "What's the weather like in Paris?"},
 	}
 
 	fmt.Println("User: What's the weather like in Paris?")
 	fmt.Println()
 
 	// First request - model may call the tool
-	response, err := provider.Completion(ctx, anyllm.CompletionParams{
+	response, err := provider.Completion(ctx, llm.CompletionParams{
 		Model:      "gpt-4o-mini",
 		Messages:   messages,
 		Tools:      tools,
@@ -81,7 +81,7 @@ func main() {
 	}
 
 	// Check if the model wants to call a tool
-	if response.Choices[0].FinishReason == anyllm.FinishReasonToolCalls {
+	if response.Choices[0].FinishReason == llm.FinishReasonToolCalls {
 		fmt.Println("Model is calling tools...")
 
 		// Add the assistant's message (with tool calls) to the conversation
@@ -107,15 +107,15 @@ func main() {
 			fmt.Println()
 
 			// Add the tool result to the conversation
-			messages = append(messages, anyllm.Message{
-				Role:       anyllm.RoleTool,
+			messages = append(messages, llm.Message{
+				Role:       llm.RoleTool,
 				Content:    result,
 				ToolCallID: tc.ID,
 			})
 		}
 
 		// Continue the conversation with the tool results
-		response, err = provider.Completion(ctx, anyllm.CompletionParams{
+		response, err = provider.Completion(ctx, llm.CompletionParams{
 			Model:    "gpt-4o-mini",
 			Messages: messages,
 			Tools:    tools,

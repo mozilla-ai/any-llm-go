@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"log"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	llm "github.com/mozilla-ai/any-llm-go"
 	_ "github.com/mozilla-ai/any-llm-go/providers/anthropic" // Register Anthropic
 	_ "github.com/mozilla-ai/any-llm-go/providers/openai"    // Register OpenAI
 )
@@ -37,12 +37,12 @@ func main() {
 	for _, model := range models {
 		fmt.Printf("Model: %s\n", model)
 
-		response, err := anyllm.Completion(ctx, model, []anyllm.Message{
-			{Role: anyllm.RoleUser, Content: prompt},
+		response, err := llm.Completion(ctx, model, []llm.Message{
+			{Role: llm.RoleUser, Content: prompt},
 		})
 		if err != nil {
 			// Handle provider-specific errors gracefully
-			if errors.Is(err, anyllm.ErrMissingAPIKey) {
+			if errors.Is(err, llm.ErrMissingAPIKey) {
 				fmt.Printf("  Skipped: API key not configured\n\n")
 				continue
 			}

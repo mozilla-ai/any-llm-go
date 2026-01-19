@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	llm "github.com/mozilla-ai/any-llm-go"
 	_ "github.com/mozilla-ai/any-llm-go/providers/openai" // Register OpenAI as underlying provider
 )
 
@@ -22,7 +22,7 @@ func TestNew(t *testing.T) {
 
 		assert.Nil(t, provider)
 		assert.Error(t, err)
-		assert.ErrorIs(t, err, anyllm.ErrMissingAPIKey)
+		assert.ErrorIs(t, err, llm.ErrMissingAPIKey)
 	})
 
 	t.Run("creates provider with API key from env", func(t *testing.T) {
@@ -38,7 +38,7 @@ func TestNew(t *testing.T) {
 	t.Run("creates provider with explicit API key", func(t *testing.T) {
 		t.Setenv("ANY_LLM_KEY", "")
 
-		provider, err := New(anyllm.WithAPIKey("ANY.v1.test.fingerprint-dGVzdHByaXZhdGVrZXkxMjM0NTY3ODkwMTI="))
+		provider, err := New(llm.WithAPIKey("ANY.v1.test.fingerprint-dGVzdHByaXZhdGVrZXkxMjM0NTY3ODkwMTI="))
 
 		require.NoError(t, err)
 		assert.NotNil(t, provider)
@@ -90,7 +90,7 @@ func TestParseModelString(t *testing.T) {
 }
 
 func TestProvider_Registration(t *testing.T) {
-	assert.True(t, anyllm.IsRegistered("platform"))
+	assert.True(t, llm.IsRegistered("platform"))
 }
 
 // Integration tests - require actual platform connection and ANY_LLM_KEY
@@ -110,10 +110,10 @@ func TestIntegrationOpenAICompletion(t *testing.T) {
 	// 2. Get the decrypted OpenAI API key from the platform
 	// 3. Create an OpenAI provider and delegate the request
 	// 4. Report usage metrics back to the platform
-	response, err := provider.Completion(ctx, anyllm.CompletionParams{
+	response, err := provider.Completion(ctx, llm.CompletionParams{
 		Model: "openai:gpt-4o-mini",
-		Messages: []anyllm.Message{
-			{Role: anyllm.RoleUser, Content: "Say 'hello' and nothing else."},
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "Say 'hello' and nothing else."},
 		},
 	})
 	require.NoError(t, err)
@@ -147,10 +147,10 @@ func TestIntegrationOpenAIStreaming(t *testing.T) {
 
 	ctx := context.Background()
 
-	chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
+	chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
 		Model: "openai:gpt-4o-mini",
-		Messages: []anyllm.Message{
-			{Role: anyllm.RoleUser, Content: "Count from 1 to 5, one number per line."},
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "Count from 1 to 5, one number per line."},
 		},
 		Stream: true,
 	})

@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	llm "github.com/mozilla-ai/any-llm-go"
 )
 
 // ProviderModelMap maps providers to small, cheap test models.
@@ -50,8 +50,8 @@ var EmbeddingProviderModelMap = map[string]string{
 }
 
 // ProviderClientConfig holds provider-specific configuration for tests.
-var ProviderClientConfig = map[string][]anyllm.Option{
-	"anthropic": {anyllm.WithTimeout(60 * time.Second)},
+var ProviderClientConfig = map[string][]llm.Option{
+	"anthropic": {llm.WithTimeout(60 * time.Second)},
 }
 
 // LocalProviders are providers that run locally and don't need API keys.
@@ -64,48 +64,48 @@ var LocalProviders = map[string]bool{
 }
 
 // SimpleMessages returns a simple test message.
-func SimpleMessages() []anyllm.Message {
-	return []anyllm.Message{
-		{Role: anyllm.RoleUser, Content: "Say 'Hello World' exactly, nothing else."},
+func SimpleMessages() []llm.Message {
+	return []llm.Message{
+		{Role: llm.RoleUser, Content: "Say 'Hello World' exactly, nothing else."},
 	}
 }
 
 // MessagesWithSystem returns messages with a system prompt.
-func MessagesWithSystem() []anyllm.Message {
-	return []anyllm.Message{
-		{Role: anyllm.RoleSystem, Content: "You are a helpful assistant that follows instructions exactly."},
-		{Role: anyllm.RoleUser, Content: "Say 'Hello World' exactly, nothing else."},
+func MessagesWithSystem() []llm.Message {
+	return []llm.Message{
+		{Role: llm.RoleSystem, Content: "You are a helpful assistant that follows instructions exactly."},
+		{Role: llm.RoleUser, Content: "Say 'Hello World' exactly, nothing else."},
 	}
 }
 
 // ConversationMessages returns a multi-turn conversation.
-func ConversationMessages() []anyllm.Message {
-	return []anyllm.Message{
-		{Role: anyllm.RoleUser, Content: "My name is Alice."},
-		{Role: anyllm.RoleAssistant, Content: "Hello Alice! Nice to meet you."},
-		{Role: anyllm.RoleUser, Content: "What is my name?"},
+func ConversationMessages() []llm.Message {
+	return []llm.Message{
+		{Role: llm.RoleUser, Content: "My name is Alice."},
+		{Role: llm.RoleAssistant, Content: "Hello Alice! Nice to meet you."},
+		{Role: llm.RoleUser, Content: "What is my name?"},
 	}
 }
 
 // ToolCallMessages returns messages for testing tool calls.
-func ToolCallMessages() []anyllm.Message {
-	return []anyllm.Message{
-		{Role: anyllm.RoleUser, Content: "What is the weather in Paris?"},
+func ToolCallMessages() []llm.Message {
+	return []llm.Message{
+		{Role: llm.RoleUser, Content: "What is the weather in Paris?"},
 	}
 }
 
 // AgentLoopMessages returns messages for testing agent loops.
-func AgentLoopMessages() []anyllm.Message {
-	return []anyllm.Message{
-		{Role: anyllm.RoleUser, Content: "What is the weather like in Salvaterra?"},
+func AgentLoopMessages() []llm.Message {
+	return []llm.Message{
+		{Role: llm.RoleUser, Content: "What is the weather like in Salvaterra?"},
 		{
-			Role:    anyllm.RoleAssistant,
+			Role:    llm.RoleAssistant,
 			Content: "",
-			ToolCalls: []anyllm.ToolCall{
+			ToolCalls: []llm.ToolCall{
 				{
 					ID:   "call_123",
 					Type: "function",
-					Function: anyllm.FunctionCall{
+					Function: llm.FunctionCall{
 						Name:      "get_weather",
 						Arguments: `{"location": "Salvaterra"}`,
 					},
@@ -113,7 +113,7 @@ func AgentLoopMessages() []anyllm.Message {
 			},
 		},
 		{
-			Role:       anyllm.RoleTool,
+			Role:       llm.RoleTool,
 			Content:    "sunny, 22°C",
 			ToolCallID: "call_123",
 		},
@@ -121,10 +121,10 @@ func AgentLoopMessages() []anyllm.Message {
 }
 
 // WeatherTool returns a weather tool definition for testing.
-func WeatherTool() anyllm.Tool {
-	return anyllm.Tool{
+func WeatherTool() llm.Tool {
+	return llm.Tool{
 		Type: "function",
-		Function: anyllm.Function{
+		Function: llm.Function{
 			Name:        "get_weather",
 			Description: "Get the current weather for a location.",
 			Parameters: map[string]any{
@@ -142,10 +142,10 @@ func WeatherTool() anyllm.Tool {
 }
 
 // DateTool returns a date tool definition for testing.
-func DateTool() anyllm.Tool {
-	return anyllm.Tool{
+func DateTool() llm.Tool {
+	return llm.Tool{
 		Type: "function",
-		Function: anyllm.Function{
+		Function: llm.Function{
 			Name:        "get_current_date",
 			Description: "Get the current date and time.",
 			Parameters: map[string]any{
@@ -162,7 +162,7 @@ func HasAPIKey(provider string) bool {
 		return true
 	}
 
-	envKey := anyllm.ProviderEnvKeyName(anyllm.LLMProvider(provider))
+	envKey := llm.ProviderEnvKeyName(llm.LLMProvider(provider))
 	if envKey == "" {
 		return false
 	}
@@ -200,7 +200,7 @@ func GetEmbeddingModel(provider string) string {
 }
 
 // GetClientOptions returns the client options for a provider.
-func GetClientOptions(provider string) []anyllm.Option {
+func GetClientOptions(provider string) []llm.Option {
 	if opts, ok := ProviderClientConfig[provider]; ok {
 		return opts
 	}

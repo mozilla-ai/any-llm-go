@@ -1,4 +1,4 @@
-package anyllm
+package llm
 
 import (
 	"net/http"

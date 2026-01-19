@@ -36,14 +36,14 @@ import (
     "fmt"
     "log"
 
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     _ "github.com/mozilla-ai/any-llm-go/providers/openai" // Register provider
 )
 
 func main() {
     ctx := context.Background()
 
-    response, err := anyllm.Completion(ctx, "openai:gpt-4o-mini", []anyllm.Message{
+    response, err := llm.Completion(ctx, "openai:gpt-4o-mini", []llm.Message{
         {Role: "user", Content: "Hello!"},
     })
     if err != nil {
@@ -73,7 +73,7 @@ Import the providers you need:
 
 ```go
 import (
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     _ "github.com/mozilla-ai/any-llm-go/providers/openai"    // OpenAI
     _ "github.com/mozilla-ai/any-llm-go/providers/anthropic" // Anthropic
 )
@@ -95,7 +95,7 @@ export MISTRAL_API_KEY="your-key-here"
 Alternatively, pass API keys directly in your code using options:
 
 ```go
-provider, err := openai.New(anyllm.WithAPIKey("your-key-here"))
+provider, err := openai.New(llm.WithAPIKey("your-key-here"))
 ```
 
 ## Why choose `any-llm-go`?
@@ -119,13 +119,13 @@ Use the convenience functions with `provider:model` format:
 import (
     "context"
 
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     _ "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
 ctx := context.Background()
 
-response, err := anyllm.Completion(ctx, "openai:gpt-4o-mini", []anyllm.Message{
+response, err := llm.Completion(ctx, "openai:gpt-4o-mini", []llm.Message{
     {Role: "user", Content: "Hello!"},
 })
 if err != nil {
@@ -143,21 +143,21 @@ For applications that need to reuse providers or require more control:
 import (
     "context"
 
-    anyllm "github.com/mozilla-ai/any-llm-go"
+    github.com/mozilla-ai/any-llm-go"
     "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
 // Create provider once, reuse for multiple requests
-provider, err := openai.New(anyllm.WithAPIKey("your-api-key"))
+provider, err := openai.New(llm.WithAPIKey("your-api-key"))
 if err != nil {
     log.Fatal(err)
 }
 
 ctx := context.Background()
 
-response, err := provider.Completion(ctx, anyllm.CompletionParams{
+response, err := provider.Completion(ctx, llm.CompletionParams{
     Model: "gpt-4o-mini",
-    Messages: []anyllm.Message{
+    Messages: []llm.Message{
         {Role: "user", Content: "Hello!"},
     },
 })
@@ -167,7 +167,7 @@ response, err := provider.Completion(ctx, anyllm.CompletionParams{
 
 | Approach | Best For | Connection Handling |
 |----------|----------|---------------------|
-| **Direct API Functions** (`anyllm.Completion`) | Scripts, quick prototypes, single requests | New client per call |
+| **Direct API Functions** (`llm.Completion`) | Scripts, quick prototypes, single requests | New client per call |
 | **Provider Instance** (`provider.Completion`) | Production apps, multiple requests | Reuses client |
 
 Both approaches support identical features: streaming, tools, reasoning, etc.
@@ -177,9 +177,9 @@ Both approaches support identical features: streaming, tools, reasoning, etc.
 Use channels for streaming responses:
 
 ```go
-chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
+chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
     Model: "gpt-4o-mini",
-    Messages: []anyllm.Message{
+    Messages: []llm.Message{
         {Role: "user", Content: "Write a short poem about Go."},
     },
     Stream: true,
@@ -199,15 +199,15 @@ if err := <-errs; err != nil {
 ### Tools / Function Calling
 
 ```go
-response, err := provider.Completion(ctx, anyllm.CompletionParams{
+response, err := provider.Completion(ctx, llm.CompletionParams{
     Model: "gpt-4o-mini",
-    Messages: []anyllm.Message{
+    Messages: []llm.Message{
         {Role: "user", Content: "What's the weather in Paris?"},
     },
-    Tools: []anyllm.Tool{
+    Tools: []llm.Tool{
         {
             Type: "function",
-            Function: anyllm.Function{
+            Function: llm.Function{
                 Name:        "get_weather",
                 Description: "Get the current weather for a location",
                 Parameters: map[string]any{
@@ -238,12 +238,12 @@ if len(response.Choices[0].Message.ToolCalls) > 0 {
 For models that support extended thinking (like Claude):
 
 ```go
-response, err := provider.Completion(ctx, anyllm.CompletionParams{
+response, err := provider.Completion(ctx, llm.CompletionParams{
     Model: "claude-sonnet-4-20250514",
-    Messages: []anyllm.Message{
+    Messages: []llm.Message{
         {Role: "user", Content: "Solve this step by step: What is 15% of 80?"},
     },
-    ReasoningEffort: anyllm.ReasoningEffortMedium,
+    ReasoningEffort: llm.ReasoningEffortMedium,
 })
 
 if response.Choices[0].Message.Reasoning != nil {
@@ -260,11 +260,11 @@ All provider errors are normalized to common error types:
 response, err := provider.Completion(ctx, params)
 if err != nil {
     switch {
-    case errors.Is(err, anyllm.ErrRateLimit):
+    case errors.Is(err, llm.ErrRateLimit):
         // Handle rate limiting - maybe retry with backoff
-    case errors.Is(err, anyllm.ErrAuthentication):
+    case errors.Is(err, llm.ErrAuthentication):
         // Handle auth errors - check API key
-    case errors.Is(err, anyllm.ErrContextLength):
+    case errors.Is(err, llm.ErrContextLength):
         // Handle context too long - reduce input
     default:
         // Handle other errors
@@ -275,7 +275,7 @@ if err != nil {
 You can also use type assertions for more details:
 
 ```go
-var rateLimitErr *anyllm.RateLimitError
+var rateLimitErr *llm.RateLimitError
 if errors.As(err, &rateLimitErr) {
     fmt.Printf("Rate limited by %s: %s\n", rateLimitErr.Provider, rateLimitErr.Message)
 }
@@ -292,7 +292,7 @@ To find available models:
 - Use the `ListModels` API (if the provider supports it):
 
 ```go
-models, err := anyllm.ListModels(ctx, "openai")
+models, err := llm.ListModels(ctx, "openai")
 for _, model := range models.Data {
     fmt.Println(model.ID)
 }
