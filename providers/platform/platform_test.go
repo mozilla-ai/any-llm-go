@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mozilla-ai/any-llm-go/config"
@@ -21,9 +20,9 @@ func TestNew(t *testing.T) {
 
 		provider, err := New()
 
-		assert.Nil(t, provider)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, errors.ErrMissingAPIKey)
+		require.Nil(t, provider)
+		require.Error(t, err)
+		require.ErrorIs(t, err, errors.ErrMissingAPIKey)
 	})
 
 	t.Run("creates provider with API key from env", func(t *testing.T) {
@@ -32,8 +31,8 @@ func TestNew(t *testing.T) {
 		provider, err := New()
 
 		require.NoError(t, err)
-		assert.NotNil(t, provider)
-		assert.Equal(t, "platform", provider.Name())
+		require.NotNil(t, provider)
+		require.Equal(t, "platform", provider.Name())
 	})
 
 	t.Run("creates provider with explicit API key", func(t *testing.T) {
@@ -42,7 +41,7 @@ func TestNew(t *testing.T) {
 		provider, err := New(config.WithAPIKey("ANY.v1.test.fingerprint-dGVzdHByaXZhdGVrZXkxMjM0NTY3ODkwMTI="))
 
 		require.NoError(t, err)
-		assert.NotNil(t, provider)
+		require.NotNil(t, provider)
 	})
 }
 
@@ -52,7 +51,7 @@ func TestProvider_Name(t *testing.T) {
 	provider, err := New()
 	require.NoError(t, err)
 
-	assert.Equal(t, "platform", provider.Name())
+	require.Equal(t, "platform", provider.Name())
 }
 
 func TestProvider_Capabilities(t *testing.T) {
@@ -63,13 +62,15 @@ func TestProvider_Capabilities(t *testing.T) {
 
 	caps := provider.Capabilities()
 
-	assert.True(t, caps.Completion)
-	assert.True(t, caps.CompletionStreaming)
-	assert.True(t, caps.CompletionReasoning)
-	assert.True(t, caps.Embedding)
+	require.True(t, caps.Completion)
+	require.True(t, caps.CompletionStreaming)
+	require.True(t, caps.CompletionReasoning)
+	require.True(t, caps.Embedding)
 }
 
 func TestParseModelString(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		input        string
 		wantProvider string
@@ -81,11 +82,13 @@ func TestParseModelString(t *testing.T) {
 		{"provider:model:with:colons", "provider", "model:with:colons"},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			provider, model := parseModelString(tt.input)
-			assert.Equal(t, tt.wantProvider, provider)
-			assert.Equal(t, tt.wantModel, model)
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			t.Parallel()
+
+			provider, model := parseModelString(tc.input)
+			require.Equal(t, tc.wantProvider, provider)
+			require.Equal(t, tc.wantModel, model)
 		})
 	}
 }
@@ -93,6 +96,8 @@ func TestParseModelString(t *testing.T) {
 // Integration tests - require actual platform connection and ANY_LLM_KEY
 
 func TestIntegrationOpenAICompletion(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("ANY_LLM_KEY") == "" {
 		t.Skip("ANY_LLM_KEY not set")
 	}
@@ -115,17 +120,17 @@ func TestIntegrationOpenAICompletion(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.NotNil(t, response)
-	assert.NotEmpty(t, response.Choices)
-	assert.NotEmpty(t, response.Choices[0].Message.Content)
+	require.NotNil(t, response)
+	require.NotEmpty(t, response.Choices)
+	require.NotEmpty(t, response.Choices[0].Message.Content)
 
 	content, ok := response.Choices[0].Message.Content.(string)
 	require.True(t, ok, "Content should be a string")
-	assert.True(t, strings.Contains(strings.ToLower(content), "hello"))
+	require.True(t, strings.Contains(strings.ToLower(content), "hello"))
 
 	// Verify usage was tracked
-	assert.NotNil(t, response.Usage)
-	assert.Greater(t, response.Usage.TotalTokens, 0)
+	require.NotNil(t, response.Usage)
+	require.Greater(t, response.Usage.TotalTokens, 0)
 
 	t.Logf("Response: %s", content)
 	t.Logf("Tokens used: %d", response.Usage.TotalTokens)
@@ -135,6 +140,8 @@ func TestIntegrationOpenAICompletion(t *testing.T) {
 }
 
 func TestIntegrationOpenAIStreaming(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("ANY_LLM_KEY") == "" {
 		t.Skip("ANY_LLM_KEY not set")
 	}
@@ -165,8 +172,8 @@ func TestIntegrationOpenAIStreaming(t *testing.T) {
 	err = <-errs
 	require.NoError(t, err)
 
-	assert.Greater(t, chunkCount, 0, "Should have received chunks")
-	assert.NotEmpty(t, content.String(), "Should have received content")
+	require.Greater(t, chunkCount, 0, "Should have received chunks")
+	require.NotEmpty(t, content.String(), "Should have received content")
 
 	t.Logf("Received %d chunks", chunkCount)
 	t.Logf("Content: %s", content.String())

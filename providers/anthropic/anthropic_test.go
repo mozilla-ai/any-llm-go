@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mozilla-ai/any-llm-go/config"
@@ -19,8 +18,8 @@ func TestNew(t *testing.T) {
 	t.Run("creates provider with API key", func(t *testing.T) {
 		provider, err := New(config.WithAPIKey("test-api-key"))
 		require.NoError(t, err)
-		assert.NotNil(t, provider)
-		assert.Equal(t, "anthropic", provider.Name())
+		require.NotNil(t, provider)
+		require.Equal(t, "anthropic", provider.Name())
 	})
 
 	t.Run("creates provider from environment variable", func(t *testing.T) {
@@ -28,20 +27,20 @@ func TestNew(t *testing.T) {
 
 		provider, err := New()
 		require.NoError(t, err)
-		assert.NotNil(t, provider)
+		require.NotNil(t, provider)
 	})
 
 	t.Run("returns error when API key is missing", func(t *testing.T) {
 		t.Setenv("ANTHROPIC_API_KEY", "")
 
 		provider, err := New()
-		assert.Nil(t, provider)
-		assert.Error(t, err)
+		require.Nil(t, provider)
+		require.Error(t, err)
 
 		var missingKeyErr *errors.MissingAPIKeyError
-		assert.ErrorAs(t, err, &missingKeyErr)
-		assert.Equal(t, "anthropic", missingKeyErr.Provider)
-		assert.Equal(t, "ANTHROPIC_API_KEY", missingKeyErr.EnvVar)
+		require.ErrorAs(t, err, &missingKeyErr)
+		require.Equal(t, "anthropic", missingKeyErr.Provider)
+		require.Equal(t, "ANTHROPIC_API_KEY", missingKeyErr.EnvVar)
 	})
 }
 
@@ -53,13 +52,13 @@ func TestCapabilities(t *testing.T) {
 
 	caps := provider.Capabilities()
 
-	assert.True(t, caps.Completion)
-	assert.True(t, caps.CompletionStreaming)
-	assert.True(t, caps.CompletionReasoning)
-	assert.True(t, caps.CompletionImage)
-	assert.True(t, caps.CompletionPDF)
-	assert.False(t, caps.Embedding) // Anthropic doesn't support embeddings.
-	assert.False(t, caps.ListModels)
+	require.True(t, caps.Completion)
+	require.True(t, caps.CompletionStreaming)
+	require.True(t, caps.CompletionReasoning)
+	require.True(t, caps.CompletionImage)
+	require.True(t, caps.CompletionPDF)
+	require.False(t, caps.Embedding) // Anthropic doesn't support embeddings.
+	require.False(t, caps.ListModels)
 }
 
 func TestConvertMessages(t *testing.T) {
@@ -75,8 +74,8 @@ func TestConvertMessages(t *testing.T) {
 
 		result, system := convertMessages(messages)
 
-		assert.Equal(t, "You are a helpful assistant.", system)
-		assert.Len(t, result, 1) // Only user message.
+		require.Equal(t, "You are a helpful assistant.", system)
+		require.Len(t, result, 1) // Only user message.
 	})
 
 	t.Run("concatenates multiple system messages", func(t *testing.T) {
@@ -90,8 +89,8 @@ func TestConvertMessages(t *testing.T) {
 
 		result, system := convertMessages(messages)
 
-		assert.Equal(t, "First part.\nSecond part.", system)
-		assert.Len(t, result, 1)
+		require.Equal(t, "First part.\nSecond part.", system)
+		require.Len(t, result, 1)
 	})
 
 	t.Run("converts user message", func(t *testing.T) {
@@ -103,8 +102,8 @@ func TestConvertMessages(t *testing.T) {
 
 		result, system := convertMessages(messages)
 
-		assert.Empty(t, system)
-		assert.Len(t, result, 1)
+		require.Empty(t, system)
+		require.Len(t, result, 1)
 	})
 
 	t.Run("converts assistant message", func(t *testing.T) {
@@ -117,8 +116,8 @@ func TestConvertMessages(t *testing.T) {
 
 		result, system := convertMessages(messages)
 
-		assert.Empty(t, system)
-		assert.Len(t, result, 2)
+		require.Empty(t, system)
+		require.Len(t, result, 2)
 	})
 
 	t.Run("converts assistant message with tool calls", func(t *testing.T) {
@@ -144,7 +143,7 @@ func TestConvertMessages(t *testing.T) {
 
 		result, _ := convertMessages(messages)
 
-		assert.Len(t, result, 2)
+		require.Len(t, result, 2)
 	})
 
 	t.Run("converts tool result to user message", func(t *testing.T) {
@@ -168,7 +167,7 @@ func TestConvertMessages(t *testing.T) {
 
 		result, _ := convertMessages(messages)
 
-		assert.Len(t, result, 3)
+		require.Len(t, result, 3)
 	})
 }
 
@@ -180,7 +179,7 @@ func TestConvertImagePart(t *testing.T) {
 
 		img := &providers.ImageURL{URL: "https://example.com/image.png"}
 		result := convertImagePart(img)
-		assert.NotNil(t, result)
+		require.NotNil(t, result)
 	})
 
 	t.Run("converts base64 image", func(t *testing.T) {
@@ -188,7 +187,7 @@ func TestConvertImagePart(t *testing.T) {
 
 		img := &providers.ImageURL{URL: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}
 		result := convertImagePart(img)
-		assert.NotNil(t, result)
+		require.NotNil(t, result)
 	})
 }
 
@@ -232,7 +231,7 @@ func TestConvertStopReason(t *testing.T) {
 			t.Parallel()
 
 			result := convertStopReason(tc.input)
-			assert.Equal(t, tc.expected, result)
+			require.Equal(t, tc.expected, result)
 		})
 	}
 }
@@ -241,11 +240,11 @@ func TestNewStreamState(t *testing.T) {
 	t.Parallel()
 
 	state := newStreamState()
-	assert.NotNil(t, state)
-	assert.Equal(t, -1, state.currentToolIdx)
-	assert.Empty(t, state.messageID)
-	assert.Empty(t, state.model)
-	assert.Nil(t, state.toolCalls)
+	require.NotNil(t, state)
+	require.Equal(t, -1, state.currentToolIdx)
+	require.Empty(t, state.messageID)
+	require.Empty(t, state.model)
+	require.Nil(t, state.toolCalls)
 }
 
 func TestStreamStateHandleTextDelta(t *testing.T) {
@@ -257,17 +256,17 @@ func TestStreamStateHandleTextDelta(t *testing.T) {
 
 	chunk := state.handleTextDelta("Hello ")
 	require.NotNil(t, chunk)
-	assert.Equal(t, "msg_123", chunk.ID)
-	assert.Equal(t, "claude-3", chunk.Model)
-	assert.Equal(t, "chat.completion.chunk", chunk.Object)
+	require.Equal(t, "msg_123", chunk.ID)
+	require.Equal(t, "claude-3", chunk.Model)
+	require.Equal(t, "chat.completion.chunk", chunk.Object)
 	require.Len(t, chunk.Choices, 1)
-	assert.Equal(t, "Hello ", chunk.Choices[0].Delta.Content)
+	require.Equal(t, "Hello ", chunk.Choices[0].Delta.Content)
 
 	// Verify content is accumulated.
 	chunk2 := state.handleTextDelta("world!")
 	require.NotNil(t, chunk2)
-	assert.Equal(t, "world!", chunk2.Choices[0].Delta.Content)
-	assert.Equal(t, "Hello world!", state.content.String())
+	require.Equal(t, "world!", chunk2.Choices[0].Delta.Content)
+	require.Equal(t, "Hello world!", state.content.String())
 }
 
 func TestStreamStateHandleThinkingDelta(t *testing.T) {
@@ -279,13 +278,13 @@ func TestStreamStateHandleThinkingDelta(t *testing.T) {
 
 	chunk := state.handleThinkingDelta("Let me think...")
 	require.NotNil(t, chunk)
-	assert.Equal(t, "msg_123", chunk.ID)
+	require.Equal(t, "msg_123", chunk.ID)
 	require.Len(t, chunk.Choices, 1)
 	require.NotNil(t, chunk.Choices[0].Delta.Reasoning)
-	assert.Equal(t, "Let me think...", chunk.Choices[0].Delta.Reasoning.Content)
+	require.Equal(t, "Let me think...", chunk.Choices[0].Delta.Reasoning.Content)
 
 	// Verify reasoning is accumulated.
-	assert.Equal(t, "Let me think...", state.reasoning.String())
+	require.Equal(t, "Let me think...", state.reasoning.String())
 }
 
 func TestStreamStateHandleInputJSONDelta(t *testing.T) {
@@ -296,7 +295,7 @@ func TestStreamStateHandleInputJSONDelta(t *testing.T) {
 
 		state := newStreamState()
 		chunk := state.handleInputJSONDelta(`{"key":`)
-		assert.Nil(t, chunk)
+		require.Nil(t, chunk)
 	})
 
 	t.Run("returns nil when tool index out of bounds", func(t *testing.T) {
@@ -308,7 +307,7 @@ func TestStreamStateHandleInputJSONDelta(t *testing.T) {
 			{ID: "call_1", Type: "function", Function: providers.FunctionCall{Name: "get_weather", Arguments: ""}},
 		}
 		chunk := state.handleInputJSONDelta(`{"key":`)
-		assert.Nil(t, chunk)
+		require.Nil(t, chunk)
 	})
 
 	t.Run("appends to current tool call arguments", func(t *testing.T) {
@@ -324,11 +323,11 @@ func TestStreamStateHandleInputJSONDelta(t *testing.T) {
 
 		chunk := state.handleInputJSONDelta(`{"location":`)
 		require.NotNil(t, chunk)
-		assert.Equal(t, `{"location":`, state.toolCalls[0].Function.Arguments)
+		require.Equal(t, `{"location":`, state.toolCalls[0].Function.Arguments)
 
 		chunk2 := state.handleInputJSONDelta(`"Paris"}`)
 		require.NotNil(t, chunk2)
-		assert.Equal(t, `{"location":"Paris"}`, state.toolCalls[0].Function.Arguments)
+		require.Equal(t, `{"location":"Paris"}`, state.toolCalls[0].Function.Arguments)
 	})
 }
 
@@ -399,9 +398,9 @@ func TestApplyThinking(t *testing.T) {
 
 			req := &anthropic.MessageNewParams{MaxTokens: tc.initialMaxTokens}
 			applyThinking(req, tc.effort, tc.initialMaxTokens)
-			assert.Equal(t, tc.expectedMaxTokens, req.MaxTokens)
+			require.Equal(t, tc.expectedMaxTokens, req.MaxTokens)
 			if tc.expectThinking {
-				assert.NotNil(t, req.Thinking)
+				require.NotNil(t, req.Thinking)
 			}
 		})
 	}
@@ -448,9 +447,9 @@ func TestConvertMessage(t *testing.T) {
 
 			result := convertMessage(tc.msg)
 			if tc.expectNil {
-				assert.Nil(t, result)
+				require.Nil(t, result)
 			} else {
-				assert.NotNil(t, result)
+				require.NotNil(t, result)
 			}
 		})
 	}
@@ -508,13 +507,13 @@ func TestConvertToolCall(t *testing.T) {
 
 			result := convertToolCall(tc.toolCall)
 			require.NotNil(t, result.OfToolUse)
-			assert.Equal(t, tc.toolCall.ID, result.OfToolUse.ID)
-			assert.Equal(t, tc.toolCall.Function.Name, result.OfToolUse.Name)
-			assert.Equal(t, "tool_use", string(result.OfToolUse.Type))
+			require.Equal(t, tc.toolCall.ID, result.OfToolUse.ID)
+			require.Equal(t, tc.toolCall.Function.Name, result.OfToolUse.Name)
+			require.Equal(t, "tool_use", string(result.OfToolUse.Type))
 			if tc.expectInput {
-				assert.NotNil(t, result.OfToolUse.Input)
+				require.NotNil(t, result.OfToolUse.Input)
 			} else {
-				assert.Nil(t, result.OfToolUse.Input)
+				require.Nil(t, result.OfToolUse.Input)
 			}
 		})
 	}
@@ -566,8 +565,8 @@ func TestThinkingBudget(t *testing.T) {
 			t.Parallel()
 
 			budget, ok := thinkingBudget(tc.effort)
-			assert.Equal(t, tc.ok, ok)
-			assert.Equal(t, tc.expected, budget)
+			require.Equal(t, tc.ok, ok)
+			require.Equal(t, tc.expected, budget)
 		})
 	}
 }
@@ -575,6 +574,8 @@ func TestThinkingBudget(t *testing.T) {
 // Integration tests - only run if API key is available.
 
 func TestIntegrationCompletion(t *testing.T) {
+	t.Parallel()
+
 	if testutil.SkipIfNoAPIKey("anthropic") {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
@@ -591,16 +592,18 @@ func TestIntegrationCompletion(t *testing.T) {
 	resp, err := provider.Completion(ctx, params)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, resp.ID)
-	assert.Equal(t, "chat.completion", resp.Object)
-	assert.Len(t, resp.Choices, 1)
-	assert.NotEmpty(t, resp.Choices[0].Message.Content)
-	assert.Equal(t, providers.RoleAssistant, resp.Choices[0].Message.Role)
-	assert.NotNil(t, resp.Usage)
-	assert.Greater(t, resp.Usage.TotalTokens, 0)
+	require.NotEmpty(t, resp.ID)
+	require.Equal(t, "chat.completion", resp.Object)
+	require.Len(t, resp.Choices, 1)
+	require.NotEmpty(t, resp.Choices[0].Message.Content)
+	require.Equal(t, providers.RoleAssistant, resp.Choices[0].Message.Role)
+	require.NotNil(t, resp.Usage)
+	require.Greater(t, resp.Usage.TotalTokens, 0)
 }
 
 func TestIntegrationCompletionWithSystemMessage(t *testing.T) {
+	t.Parallel()
+
 	if testutil.SkipIfNoAPIKey("anthropic") {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
@@ -617,12 +620,14 @@ func TestIntegrationCompletionWithSystemMessage(t *testing.T) {
 	resp, err := provider.Completion(ctx, params)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, resp.ID)
-	assert.Len(t, resp.Choices, 1)
-	assert.NotEmpty(t, resp.Choices[0].Message.Content)
+	require.NotEmpty(t, resp.ID)
+	require.Len(t, resp.Choices, 1)
+	require.NotEmpty(t, resp.Choices[0].Message.Content)
 }
 
 func TestIntegrationCompletionStream(t *testing.T) {
+	t.Parallel()
+
 	if testutil.SkipIfNoAPIKey("anthropic") {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
@@ -644,7 +649,7 @@ func TestIntegrationCompletionStream(t *testing.T) {
 
 	for chunk := range chunks {
 		chunkCount++
-		assert.Equal(t, "chat.completion.chunk", chunk.Object)
+		require.Equal(t, "chat.completion.chunk", chunk.Object)
 		if len(chunk.Choices) > 0 {
 			content.WriteString(chunk.Choices[0].Delta.Content)
 		}
@@ -653,11 +658,13 @@ func TestIntegrationCompletionStream(t *testing.T) {
 	err = <-errs
 	require.NoError(t, err)
 
-	assert.Greater(t, chunkCount, 0)
-	assert.NotEmpty(t, content.String())
+	require.Greater(t, chunkCount, 0)
+	require.NotEmpty(t, content.String())
 }
 
 func TestIntegrationCompletionWithTools(t *testing.T) {
+	t.Parallel()
+
 	if testutil.SkipIfNoAPIKey("anthropic") {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
@@ -676,19 +683,21 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 	resp, err := provider.Completion(ctx, params)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, resp.ID)
-	assert.Len(t, resp.Choices, 1)
+	require.NotEmpty(t, resp.ID)
+	require.Len(t, resp.Choices, 1)
 
 	// The model should call the weather tool.
 	if len(resp.Choices[0].Message.ToolCalls) > 0 {
 		tc := resp.Choices[0].Message.ToolCalls[0]
-		assert.Equal(t, "get_weather", tc.Function.Name)
-		assert.Contains(t, strings.ToLower(tc.Function.Arguments), "paris")
-		assert.Equal(t, providers.FinishReasonToolCalls, resp.Choices[0].FinishReason)
+		require.Equal(t, "get_weather", tc.Function.Name)
+		require.Contains(t, strings.ToLower(tc.Function.Arguments), "paris")
+		require.Equal(t, providers.FinishReasonToolCalls, resp.Choices[0].FinishReason)
 	}
 }
 
 func TestIntegrationCompletionWithToolsParallelDisabled(t *testing.T) {
+	t.Parallel()
+
 	if testutil.SkipIfNoAPIKey("anthropic") {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
@@ -711,11 +720,13 @@ func TestIntegrationCompletionWithToolsParallelDisabled(t *testing.T) {
 	resp, err := provider.Completion(ctx, params)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, resp.ID)
-	assert.Len(t, resp.Choices, 1)
+	require.NotEmpty(t, resp.ID)
+	require.Len(t, resp.Choices, 1)
 }
 
 func TestIntegrationCompletionConversation(t *testing.T) {
+	t.Parallel()
+
 	if testutil.SkipIfNoAPIKey("anthropic") {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
@@ -732,16 +743,18 @@ func TestIntegrationCompletionConversation(t *testing.T) {
 	resp, err := provider.Completion(ctx, params)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, resp.ID)
-	assert.Len(t, resp.Choices, 1)
+	require.NotEmpty(t, resp.ID)
+	require.Len(t, resp.Choices, 1)
 
 	// The model should remember the name "Alice".
 	contentStr, ok := resp.Choices[0].Message.Content.(string)
 	require.True(t, ok, "expected string content")
-	assert.Contains(t, strings.ToLower(contentStr), "alice")
+	require.Contains(t, strings.ToLower(contentStr), "alice")
 }
 
 func TestIntegrationCompletionReasoning(t *testing.T) {
+	t.Parallel()
+
 	if testutil.SkipIfNoAPIKey("anthropic") {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
@@ -766,17 +779,19 @@ func TestIntegrationCompletionReasoning(t *testing.T) {
 	resp, err := provider.Completion(ctx, params)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, resp.ID)
-	assert.Len(t, resp.Choices, 1)
-	assert.NotEmpty(t, resp.Choices[0].Message.Content)
+	require.NotEmpty(t, resp.ID)
+	require.Len(t, resp.Choices, 1)
+	require.NotEmpty(t, resp.Choices[0].Message.Content)
 
 	// With reasoning effort, we should get reasoning content.
 	if resp.Choices[0].Message.Reasoning != nil {
-		assert.NotEmpty(t, resp.Choices[0].Message.Reasoning.Content)
+		require.NotEmpty(t, resp.Choices[0].Message.Reasoning.Content)
 	}
 }
 
 func TestIntegrationAgentLoop(t *testing.T) {
+	t.Parallel()
+
 	if testutil.SkipIfNoAPIKey("anthropic") {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
@@ -799,14 +814,14 @@ func TestIntegrationAgentLoop(t *testing.T) {
 	resp, err := provider.Completion(ctx, params)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, resp.ID)
-	assert.Len(t, resp.Choices, 1)
+	require.NotEmpty(t, resp.ID)
+	require.Len(t, resp.Choices, 1)
 
 	// Should have a content response (not another tool call).
 	if contentStr, ok := resp.Choices[0].Message.Content.(string); ok && contentStr != "" {
 		content := strings.ToLower(contentStr)
 		// Should mention the weather or sunny.
-		assert.True(
+		require.True(
 			t,
 			strings.Contains(content, "sunny") || strings.Contains(content, "weather") ||
 				strings.Contains(content, "salvaterra"),
@@ -815,6 +830,8 @@ func TestIntegrationAgentLoop(t *testing.T) {
 }
 
 func TestIntegrationAuthenticationError(t *testing.T) {
+	t.Parallel()
+
 	provider, err := New(config.WithAPIKey("invalid-api-key"))
 	require.NoError(t, err)
 
@@ -825,9 +842,9 @@ func TestIntegrationAuthenticationError(t *testing.T) {
 	}
 
 	_, err = provider.Completion(ctx, params)
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	// Check that it's converted to an authentication error.
 	var authErr *errors.AuthenticationError
-	assert.ErrorAs(t, err, &authErr)
+	require.ErrorAs(t, err, &authErr)
 }
