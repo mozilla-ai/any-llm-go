@@ -3,8 +3,20 @@ package errors
 import (
 	stderrors "errors"
 	"fmt"
-	"regexp"
-	"strings"
+)
+
+// Error codes used in BaseError.Code field.
+const (
+	CodeRateLimit           = "rate_limit"
+	CodeAuthError           = "auth_error"
+	CodeInvalidRequest      = "invalid_request"
+	CodeContextLength       = "context_length_exceeded"
+	CodeContentFilter       = "content_filter"
+	CodeModelNotFound       = "model_not_found"
+	CodeProviderError       = "provider_error"
+	CodeMissingAPIKey       = "missing_api_key"
+	CodeUnsupportedProvider = "unsupported_provider"
+	CodeUnsupportedParam    = "unsupported_parameter"
 )
 
 // Sentinel errors for type checking with errors.Is().
@@ -27,22 +39,31 @@ type BaseError struct {
 	// Code is a short error code (e.g., "rate_limit", "auth_error").
 	Code string
 
-	// Message is a human-readable error message.
-	Message string
-
 	// Provider is the name of the provider that returned the error.
 	Provider string
 
 	// Err is the underlying error (original provider error).
 	Err error
+
+	// sentinel is the sentinel error for errors.Is() matching.
+	sentinel error
 }
 
 // Error implements the error interface.
 func (e *BaseError) Error() string {
-	if e.Provider != "" {
-		return fmt.Sprintf("[%s] %s: %s", e.Provider, e.Code, e.Message)
+	msg := ""
+	if e.Err != nil {
+		msg = e.Err.Error()
 	}
-	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+	if e.Provider != "" {
+		return fmt.Sprintf("[%s] %s: %s", e.Provider, e.Code, msg)
+	}
+	return fmt.Sprintf("%s: %s", e.Code, msg)
+}
+
+// Is allows checking error types with errors.Is().
+func (e *BaseError) Is(target error) bool {
+	return e.sentinel != nil && target == e.sentinel
 }
 
 // Unwrap returns the underlying error for errors.Is() and errors.As().
@@ -105,101 +126,100 @@ type UnsupportedParamError struct {
 }
 
 // NewRateLimitError creates a new RateLimitError.
-func NewRateLimitError(provider, message string, err error) *RateLimitError {
+func NewRateLimitError(provider string, err error) *RateLimitError {
 	return &RateLimitError{
 		BaseError: BaseError{
-			Code:     "rate_limit",
-			Message:  message,
+			Code:     CodeRateLimit,
 			Provider: provider,
 			Err:      err,
+			sentinel: ErrRateLimit,
 		},
 	}
 }
 
 // NewAuthenticationError creates a new AuthenticationError.
-func NewAuthenticationError(provider, message string, err error) *AuthenticationError {
+func NewAuthenticationError(provider string, err error) *AuthenticationError {
 	return &AuthenticationError{
 		BaseError: BaseError{
-			Code:     "auth_error",
-			Message:  message,
+			Code:     CodeAuthError,
 			Provider: provider,
 			Err:      err,
+			sentinel: ErrAuthentication,
 		},
 	}
 }
 
 // NewInvalidRequestError creates a new InvalidRequestError.
-func NewInvalidRequestError(provider, message string, err error) *InvalidRequestError {
+func NewInvalidRequestError(provider string, err error) *InvalidRequestError {
 	return &InvalidRequestError{
 		BaseError: BaseError{
-			Code:     "invalid_request",
-			Message:  message,
+			Code:     CodeInvalidRequest,
 			Provider: provider,
 			Err:      err,
+			sentinel: ErrInvalidRequest,
 		},
 	}
 }
 
 // NewContextLengthError creates a new ContextLengthError.
-func NewContextLengthError(provider, message string, err error) *ContextLengthError {
+func NewContextLengthError(provider string, err error) *ContextLengthError {
 	return &ContextLengthError{
 		BaseError: BaseError{
-			Code:     "context_length_exceeded",
-			Message:  message,
+			Code:     CodeContextLength,
 			Provider: provider,
 			Err:      err,
+			sentinel: ErrContextLength,
 		},
 	}
 }
 
 // NewContentFilterError creates a new ContentFilterError.
-func NewContentFilterError(provider, message string, err error) *ContentFilterError {
+func NewContentFilterError(provider string, err error) *ContentFilterError {
 	return &ContentFilterError{
 		BaseError: BaseError{
-			Code:     "content_filter",
-			Message:  message,
+			Code:     CodeContentFilter,
 			Provider: provider,
 			Err:      err,
+			sentinel: ErrContentFilter,
 		},
 	}
 }
 
 // NewModelNotFoundError creates a new ModelNotFoundError.
-func NewModelNotFoundError(provider, message string, err error) *ModelNotFoundError {
+func NewModelNotFoundError(provider string, err error) *ModelNotFoundError {
 	return &ModelNotFoundError{
 		BaseError: BaseError{
-			Code:     "model_not_found",
-			Message:  message,
+			Code:     CodeModelNotFound,
 			Provider: provider,
 			Err:      err,
+			sentinel: ErrModelNotFound,
 		},
 	}
 }
 
 // NewProviderError creates a new ProviderError.
-func NewProviderError(provider, message string, statusCode int, err error) *ProviderError {
+func NewProviderError(provider string, err error) *ProviderError {
 	return &ProviderError{
 		BaseError: BaseError{
-			Code:     "provider_error",
-			Message:  message,
+			Code:     CodeProviderError,
 			Provider: provider,
 			Err:      err,
+			sentinel: ErrProvider,
 		},
-		StatusCode: statusCode,
 	}
 }
 
 // NewMissingAPIKeyError creates a new MissingAPIKeyError.
-func NewMissingAPIKeyError(provider, envVar string) *MissingAPIKeyError {
+func NewMissingAPIKeyError(provider string, envVar string) *MissingAPIKeyError {
 	return &MissingAPIKeyError{
 		BaseError: BaseError{
-			Code: "missing_api_key",
-			Message: fmt.Sprintf(
+			Code:     CodeMissingAPIKey,
+			Provider: provider,
+			Err: fmt.Errorf(
 				"API key not provided. Set %s environment variable or pass WithAPIKey option",
 				envVar,
 			),
-			Provider: provider,
-			Err:      ErrMissingAPIKey,
+			sentinel: ErrMissingAPIKey,
 		},
 		EnvVar: envVar,
 	}
@@ -209,182 +229,23 @@ func NewMissingAPIKeyError(provider, envVar string) *MissingAPIKeyError {
 func NewUnsupportedProviderError(provider string) *UnsupportedProviderError {
 	return &UnsupportedProviderError{
 		BaseError: BaseError{
-			Code:     "unsupported_provider",
-			Message:  fmt.Sprintf("provider %q is not supported", provider),
+			Code:     CodeUnsupportedProvider,
 			Provider: provider,
-			Err:      ErrUnsupportedProvider,
+			Err:      fmt.Errorf("provider %q is not supported", provider),
+			sentinel: ErrUnsupportedProvider,
 		},
 	}
 }
 
 // NewUnsupportedParamError creates a new UnsupportedParamError.
-func NewUnsupportedParamError(provider, param string) *UnsupportedParamError {
+func NewUnsupportedParamError(provider string, param string) *UnsupportedParamError {
 	return &UnsupportedParamError{
 		BaseError: BaseError{
-			Code:     "unsupported_parameter",
-			Message:  fmt.Sprintf("parameter %q is not supported by provider %s", param, provider),
+			Code:     CodeUnsupportedParam,
 			Provider: provider,
-			Err:      ErrUnsupportedParam,
+			Err:      fmt.Errorf("parameter %q is not supported by provider %s", param, provider),
+			sentinel: ErrUnsupportedParam,
 		},
 		Param: param,
 	}
-}
-
-// Error type detection patterns (used for converting provider errors).
-var (
-	rateLimitPatterns = []string{
-		"rate limit",
-		"rate_limit",
-		"ratelimit",
-		"too many requests",
-		"429",
-		"quota exceeded",
-		"throttl",
-	}
-
-	authPatterns = []string{
-		"invalid api key",
-		"invalid_api_key",
-		"authentication",
-		"unauthorized",
-		"401",
-		"api key",
-		"apikey",
-		"permission denied",
-		"access denied",
-	}
-
-	contextLengthPatterns = []string{
-		"context length",
-		"context_length",
-		"maximum context",
-		"token limit",
-		"too long",
-		"exceeds the model",
-		"max_tokens",
-	}
-
-	contentFilterPatterns = []string{
-		"content filter",
-		"content_filter",
-		"safety",
-		"blocked",
-		"harmful",
-		"policy violation",
-	}
-
-	modelNotFoundPatterns = []string{
-		"model not found",
-		"model_not_found",
-		"does not exist",
-		"no such model",
-		"invalid model",
-		"404",
-	}
-)
-
-// Convert attempts to convert a provider error to an any-llm error type.
-// If the error cannot be classified, it returns a generic ProviderError.
-func Convert(provider string, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := strings.ToLower(err.Error())
-
-	// Check for rate limit errors
-	for _, pattern := range rateLimitPatterns {
-		if strings.Contains(errStr, pattern) {
-			return NewRateLimitError(provider, err.Error(), err)
-		}
-	}
-
-	// Check for authentication errors
-	for _, pattern := range authPatterns {
-		if strings.Contains(errStr, pattern) {
-			return NewAuthenticationError(provider, err.Error(), err)
-		}
-	}
-
-	// Check for context length errors
-	for _, pattern := range contextLengthPatterns {
-		if strings.Contains(errStr, pattern) {
-			return NewContextLengthError(provider, err.Error(), err)
-		}
-	}
-
-	// Check for content filter errors
-	for _, pattern := range contentFilterPatterns {
-		if strings.Contains(errStr, pattern) {
-			return NewContentFilterError(provider, err.Error(), err)
-		}
-	}
-
-	// Check for model not found errors
-	for _, pattern := range modelNotFoundPatterns {
-		if strings.Contains(errStr, pattern) {
-			return NewModelNotFoundError(provider, err.Error(), err)
-		}
-	}
-
-	// Default to generic provider error
-	return NewProviderError(provider, err.Error(), 0, err)
-}
-
-// ConvertWithRegex uses regex patterns for more precise error detection.
-func ConvertWithRegex(provider string, err error, patterns map[*regexp.Regexp]func(string, string, error) error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := err.Error()
-
-	for pattern, constructor := range patterns {
-		if pattern.MatchString(errStr) {
-			return constructor(provider, errStr, err)
-		}
-	}
-
-	return Convert(provider, err)
-}
-
-// Is allows checking error types with errors.Is().
-func (e *RateLimitError) Is(target error) bool {
-	return target == ErrRateLimit
-}
-
-func (e *AuthenticationError) Is(target error) bool {
-	return target == ErrAuthentication
-}
-
-func (e *InvalidRequestError) Is(target error) bool {
-	return target == ErrInvalidRequest
-}
-
-func (e *ContextLengthError) Is(target error) bool {
-	return target == ErrContextLength
-}
-
-func (e *ContentFilterError) Is(target error) bool {
-	return target == ErrContentFilter
-}
-
-func (e *ModelNotFoundError) Is(target error) bool {
-	return target == ErrModelNotFound
-}
-
-func (e *ProviderError) Is(target error) bool {
-	return target == ErrProvider
-}
-
-func (e *MissingAPIKeyError) Is(target error) bool {
-	return target == ErrMissingAPIKey
-}
-
-func (e *UnsupportedProviderError) Is(target error) bool {
-	return target == ErrUnsupportedProvider
-}
-
-func (e *UnsupportedParamError) Is(target error) bool {
-	return target == ErrUnsupportedParam
 }

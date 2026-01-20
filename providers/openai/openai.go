@@ -4,6 +4,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 
 	"github.com/openai/openai-go"
@@ -20,12 +21,23 @@ const (
 	envAPIKey    = "OPENAI_API_KEY"
 )
 
+// OpenAI API error codes.
+const (
+	apiCodeContextLengthExceeded = "context_length_exceeded"
+	apiCodeContentFilter         = "content_filter"
+	apiCodeContentPolicyViolated = "content_policy_violation"
+	apiCodeModelNotFound         = "model_not_found"
+	apiCodeInvalidAPIKey         = "invalid_api_key"
+	apiCodeRateLimitExceeded     = "rate_limit_exceeded"
+)
+
 // Ensure Provider implements the required interfaces.
 var (
-	_ providers.Provider           = (*Provider)(nil)
-	_ providers.EmbeddingProvider  = (*Provider)(nil)
-	_ providers.ModelLister        = (*Provider)(nil)
 	_ providers.CapabilityProvider = (*Provider)(nil)
+	_ providers.EmbeddingProvider  = (*Provider)(nil)
+	_ providers.ErrorConverter     = (*Provider)(nil)
+	_ providers.ModelLister        = (*Provider)(nil)
+	_ providers.Provider           = (*Provider)(nil)
 )
 
 // Provider implements the providers.Provider interface for OpenAI.
@@ -89,7 +101,7 @@ func (p *Provider) Completion(
 
 	resp, err := p.client.Chat.Completions.New(ctx, req)
 	if err != nil {
-		return nil, errors.Convert(providerName, err)
+		return nil, p.ConvertError(err)
 	}
 
 	return convertResponse(resp), nil
@@ -117,7 +129,7 @@ func (p *Provider) CompletionStream(
 		}
 
 		if err := stream.Err(); err != nil {
-			errs <- errors.Convert(providerName, err)
+			errs <- p.ConvertError(err)
 		}
 	}()
 
@@ -133,7 +145,7 @@ func (p *Provider) Embedding(
 
 	resp, err := p.client.Embeddings.New(ctx, req)
 	if err != nil {
-		return nil, errors.Convert(providerName, err)
+		return nil, p.ConvertError(err)
 	}
 
 	return convertEmbeddingResponse(resp), nil
@@ -143,7 +155,7 @@ func (p *Provider) Embedding(
 func (p *Provider) ListModels(ctx context.Context) (*providers.ModelsResponse, error) {
 	resp, err := p.client.Models.List(ctx)
 	if err != nil {
-		return nil, errors.Convert(providerName, err)
+		return nil, p.ConvertError(err)
 	}
 
 	models := make([]providers.Model, 0, len(resp.Data))
@@ -521,4 +533,53 @@ func convertEmbeddingResponse(resp *openai.CreateEmbeddingResponse) *providers.E
 	}
 
 	return result
+}
+
+// ConvertError converts an OpenAI SDK error to a unified error type.
+// Implements providers.ErrorConverter.
+func (p *Provider) ConvertError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// Extract the OpenAI API error type from the error chain.
+	// If it's not an API error (e.g., it's a network error etc.),
+	// wrap as generic provider error.
+	var apiErr *openai.Error
+	if !stderrors.As(err, &apiErr) {
+		return errors.NewProviderError(providerName, err)
+	}
+
+	// Classify by HTTP status code.
+	switch apiErr.StatusCode {
+	case 401:
+		return errors.NewAuthenticationError(providerName, err)
+	case 429:
+		return errors.NewRateLimitError(providerName, err)
+	case 404:
+		return errors.NewModelNotFoundError(providerName, err)
+	case 400:
+		// Check specific error codes for 400 errors.
+		if apiErr.Code == apiCodeContextLengthExceeded {
+			return errors.NewContextLengthError(providerName, err)
+		}
+
+		if apiErr.Code == apiCodeContentFilter || apiErr.Code == apiCodeContentPolicyViolated {
+			return errors.NewContentFilterError(providerName, err)
+		}
+
+		return errors.NewInvalidRequestError(providerName, err)
+	}
+
+	// Check error code for additional classification.
+	switch apiErr.Code {
+	case apiCodeModelNotFound:
+		return errors.NewModelNotFoundError(providerName, err)
+	case apiCodeInvalidAPIKey:
+		return errors.NewAuthenticationError(providerName, err)
+	case apiCodeRateLimitExceeded:
+		return errors.NewRateLimitError(providerName, err)
+	default:
+		return errors.NewProviderError(providerName, err)
+	}
 }

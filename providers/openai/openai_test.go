@@ -2,9 +2,13 @@ package openai
 
 import (
 	"context"
+	stderrors "errors"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mozilla-ai/any-llm-go/config"
@@ -536,4 +540,115 @@ func TestIntegrationAuthenticationError(t *testing.T) {
 	// Check that it's converted to an authentication error.
 	var authErr *errors.AuthenticationError
 	require.ErrorAs(t, err, &authErr)
+}
+
+func TestConvertError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		err          error
+		wantSentinel error
+	}{
+		{
+			name:         "nil error returns nil",
+			err:          nil,
+			wantSentinel: nil,
+		},
+		{
+			name:         "non-API error becomes ProviderError",
+			err:          stderrors.New("network timeout"),
+			wantSentinel: errors.ErrProvider,
+		},
+		{
+			name:         "401 status becomes AuthenticationError",
+			err:          newTestAPIError(t, 401, ""),
+			wantSentinel: errors.ErrAuthentication,
+		},
+		{
+			name:         "429 status becomes RateLimitError",
+			err:          newTestAPIError(t, 429, ""),
+			wantSentinel: errors.ErrRateLimit,
+		},
+		{
+			name:         "404 status becomes ModelNotFoundError",
+			err:          newTestAPIError(t, 404, ""),
+			wantSentinel: errors.ErrModelNotFound,
+		},
+		{
+			name:         "400 with context_length_exceeded becomes ContextLengthError",
+			err:          newTestAPIError(t, 400, apiCodeContextLengthExceeded),
+			wantSentinel: errors.ErrContextLength,
+		},
+		{
+			name:         "400 with content_filter becomes ContentFilterError",
+			err:          newTestAPIError(t, 400, apiCodeContentFilter),
+			wantSentinel: errors.ErrContentFilter,
+		},
+		{
+			name:         "400 with content_policy_violation becomes ContentFilterError",
+			err:          newTestAPIError(t, 400, apiCodeContentPolicyViolated),
+			wantSentinel: errors.ErrContentFilter,
+		},
+		{
+			name:         "400 with unknown code becomes InvalidRequestError",
+			err:          newTestAPIError(t, 400, "unknown_error"),
+			wantSentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name:         "model_not_found code becomes ModelNotFoundError",
+			err:          newTestAPIError(t, 500, apiCodeModelNotFound),
+			wantSentinel: errors.ErrModelNotFound,
+		},
+		{
+			name:         "invalid_api_key code becomes AuthenticationError",
+			err:          newTestAPIError(t, 500, apiCodeInvalidAPIKey),
+			wantSentinel: errors.ErrAuthentication,
+		},
+		{
+			name:         "rate_limit_exceeded code becomes RateLimitError",
+			err:          newTestAPIError(t, 500, apiCodeRateLimitExceeded),
+			wantSentinel: errors.ErrRateLimit,
+		},
+		{
+			name:         "unknown status and code becomes ProviderError",
+			err:          newTestAPIError(t, 500, "unknown"),
+			wantSentinel: errors.ErrProvider,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			p := &Provider{}
+			result := p.ConvertError(tc.err)
+
+			if tc.wantSentinel == nil {
+				require.Nil(t, result)
+				return
+			}
+
+			require.NotNil(t, result)
+			require.True(t, stderrors.Is(result, tc.wantSentinel), "expected error to match %v", tc.wantSentinel)
+
+			// Verify the provider name is set in the error message.
+			require.Contains(t, result.Error(), "["+providerName+"]")
+		})
+	}
+}
+
+// newTestAPIError creates an OpenAI API error for testing.
+func newTestAPIError(t *testing.T, statusCode int, code string) *openai.Error {
+	t.Helper()
+
+	testURL, _ := url.Parse("https://api.openai.com/v1/chat/completions")
+	return &openai.Error{
+		StatusCode: statusCode,
+		Code:       code,
+		Message:    "test error message",
+		Type:       "error",
+		Request:    &http.Request{Method: "POST", URL: testURL},
+		Response:   &http.Response{StatusCode: statusCode},
+	}
 }

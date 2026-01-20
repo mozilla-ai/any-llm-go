@@ -6,14 +6,6 @@ import (
 	"encoding/json"
 )
 
-// Message roles.
-const (
-	RoleAssistant = "assistant"
-	RoleSystem    = "system"
-	RoleTool      = "tool"
-	RoleUser      = "user"
-)
-
 // Finish reasons.
 const (
 	FinishReasonContentFilter = "content_filter"
@@ -22,7 +14,7 @@ const (
 	FinishReasonToolCalls     = "tool_calls"
 )
 
-// ReasoningEffort levels for extended thinking.
+// Reasoning effort levels for extended thinking.
 const (
 	ReasoningEffortAuto   ReasoningEffort = "auto"
 	ReasoningEffortHigh   ReasoningEffort = "high"
@@ -30,6 +22,55 @@ const (
 	ReasoningEffortMedium ReasoningEffort = "medium"
 	ReasoningEffortNone   ReasoningEffort = "none"
 )
+
+// Message roles.
+const (
+	RoleAssistant = "assistant"
+	RoleSystem    = "system"
+	RoleTool      = "tool"
+	RoleUser      = "user"
+)
+
+// CapabilityProvider is an optional interface for providers to report capabilities.
+type CapabilityProvider interface {
+	Provider
+	Capabilities() Capabilities
+}
+
+// EmbeddingProvider is an optional interface for providers that support embeddings.
+type EmbeddingProvider interface {
+	Provider
+	Embedding(ctx context.Context, params EmbeddingParams) (*EmbeddingResponse, error)
+}
+
+// ErrorConverter converts provider-specific SDK errors to unified error types.
+// This interface ensures all providers implement consistent error handling.
+type ErrorConverter interface {
+	// ConvertError takes a provider SDK error and returns a normalized error type
+	// from the errors package (e.g., *errors.RateLimitError, *errors.AuthenticationError).
+	ConvertError(err error) error
+}
+
+// ModelLister is an optional interface for providers that support listing models.
+type ModelLister interface {
+	Provider
+	ListModels(ctx context.Context) (*ModelsResponse, error)
+}
+
+// Provider is the core interface that all LLM providers must implement.
+type Provider interface {
+	// Name returns the provider's identifier (e.g., "openai", "anthropic").
+	Name() string
+
+	// Completion performs a chat completion request.
+	Completion(ctx context.Context, params CompletionParams) (*ChatCompletion, error)
+
+	// CompletionStream performs a streaming chat completion request.
+	CompletionStream(ctx context.Context, params CompletionParams) (<-chan ChatCompletionChunk, <-chan error)
+}
+
+// ReasoningEffort levels for extended thinking.
+type ReasoningEffort string
 
 // Capabilities describes what features a provider supports.
 type Capabilities struct {
@@ -40,12 +81,6 @@ type Capabilities struct {
 	CompletionStreaming bool
 	Embedding           bool
 	ListModels          bool
-}
-
-// CapabilityProvider is an optional interface for providers to report capabilities.
-type CapabilityProvider interface {
-	Provider
-	Capabilities() Capabilities
 }
 
 // ChatCompletion represents a chat completion response in OpenAI format.
@@ -135,12 +170,6 @@ type EmbeddingParams struct {
 	User           string `json:"user,omitempty"`
 }
 
-// EmbeddingProvider is an optional interface for providers that support embeddings.
-type EmbeddingProvider interface {
-	Provider
-	Embedding(ctx context.Context, params EmbeddingParams) (*EmbeddingResponse, error)
-}
-
 // EmbeddingResponse represents an embedding response in OpenAI format.
 type EmbeddingResponse struct {
 	Object string          `json:"object"`
@@ -192,47 +221,6 @@ type Message struct {
 	Reasoning  *Reasoning `json:"reasoning,omitempty"`
 }
 
-// ContentParts extracts content parts from a message.
-func (m *Message) ContentParts() []ContentPart {
-	if m.Content == nil {
-		return nil
-	}
-
-	if parts, ok := m.Content.([]ContentPart); ok {
-		return parts
-	}
-
-	if parts, ok := m.Content.([]any); ok {
-		result := make([]ContentPart, 0, len(parts))
-		for _, p := range parts {
-			if partMap, ok := p.(map[string]any); ok {
-				var part ContentPart
-				if b, err := json.Marshal(partMap); err == nil {
-					if err := json.Unmarshal(b, &part); err == nil {
-						result = append(result, part)
-					}
-				}
-			}
-		}
-		return result
-	}
-
-	return nil
-}
-
-// ContentString extracts string content from a message.
-func (m *Message) ContentString() string {
-	if s, ok := m.Content.(string); ok {
-		return s
-	}
-	return ""
-}
-
-// IsMultiModal returns true if the message contains multi-modal content.
-func (m *Message) IsMultiModal() bool {
-	return m.ContentParts() != nil
-}
-
 // Model represents a model from the list models API.
 type Model struct {
 	ID      string `json:"id"`
@@ -241,37 +229,16 @@ type Model struct {
 	OwnedBy string `json:"owned_by"`
 }
 
-// ModelLister is an optional interface for providers that support listing models.
-type ModelLister interface {
-	Provider
-	ListModels(ctx context.Context) (*ModelsResponse, error)
-}
-
 // ModelsResponse represents a list models response.
 type ModelsResponse struct {
 	Object string  `json:"object"`
 	Data   []Model `json:"data"`
 }
 
-// Provider is the core interface that all LLM providers must implement.
-type Provider interface {
-	// Name returns the provider's identifier (e.g., "openai", "anthropic").
-	Name() string
-
-	// Completion performs a chat completion request.
-	Completion(ctx context.Context, params CompletionParams) (*ChatCompletion, error)
-
-	// CompletionStream performs a streaming chat completion request.
-	CompletionStream(ctx context.Context, params CompletionParams) (<-chan ChatCompletionChunk, <-chan error)
-}
-
 // Reasoning represents extended thinking/reasoning content.
 type Reasoning struct {
 	Content string `json:"content,omitempty"`
 }
-
-// ReasoningEffort levels for extended thinking.
-type ReasoningEffort string
 
 // ResponseFormat specifies the format of the response.
 type ResponseFormat struct {
@@ -314,4 +281,45 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+}
+
+// ContentParts extracts content parts from a message.
+func (m *Message) ContentParts() []ContentPart {
+	if m.Content == nil {
+		return nil
+	}
+
+	if parts, ok := m.Content.([]ContentPart); ok {
+		return parts
+	}
+
+	if parts, ok := m.Content.([]any); ok {
+		result := make([]ContentPart, 0, len(parts))
+		for _, p := range parts {
+			if partMap, ok := p.(map[string]any); ok {
+				var part ContentPart
+				if b, err := json.Marshal(partMap); err == nil {
+					if err := json.Unmarshal(b, &part); err == nil {
+						result = append(result, part)
+					}
+				}
+			}
+		}
+		return result
+	}
+
+	return nil
+}
+
+// ContentString extracts string content from a message.
+func (m *Message) ContentString() string {
+	if s, ok := m.Content.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// IsMultiModal returns true if the message contains multi-modal content.
+func (m *Message) IsMultiModal() bool {
+	return m.ContentParts() != nil
 }

@@ -2,6 +2,9 @@ package anthropic
 
 import (
 	"context"
+	stderrors "errors"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -847,4 +850,94 @@ func TestIntegrationAuthenticationError(t *testing.T) {
 	// Check that it's converted to an authentication error.
 	var authErr *errors.AuthenticationError
 	require.ErrorAs(t, err, &authErr)
+}
+
+func TestConvertError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		err          error
+		wantSentinel error
+	}{
+		{
+			name:         "nil error returns nil",
+			err:          nil,
+			wantSentinel: nil,
+		},
+		{
+			name:         "non-API error becomes ProviderError",
+			err:          stderrors.New("network timeout"),
+			wantSentinel: errors.ErrProvider,
+		},
+		{
+			name:         "401 status becomes AuthenticationError",
+			err:          newTestAPIError(t, 401),
+			wantSentinel: errors.ErrAuthentication,
+		},
+		{
+			name:         "429 status becomes RateLimitError",
+			err:          newTestAPIError(t, 429),
+			wantSentinel: errors.ErrRateLimit,
+		},
+		{
+			name:         "404 status becomes ModelNotFoundError",
+			err:          newTestAPIError(t, 404),
+			wantSentinel: errors.ErrModelNotFound,
+		},
+		{
+			name:         "400 status becomes InvalidRequestError",
+			err:          newTestAPIError(t, 400),
+			wantSentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name:         "403 status becomes AuthenticationError",
+			err:          newTestAPIError(t, 403),
+			wantSentinel: errors.ErrAuthentication,
+		},
+		{
+			name:         "500 status becomes ProviderError",
+			err:          newTestAPIError(t, 500),
+			wantSentinel: errors.ErrProvider,
+		},
+		{
+			name:         "502 status becomes ProviderError",
+			err:          newTestAPIError(t, 502),
+			wantSentinel: errors.ErrProvider,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			p := &Provider{}
+			result := p.ConvertError(tc.err)
+
+			if tc.wantSentinel == nil {
+				require.Nil(t, result)
+				return
+			}
+
+			require.NotNil(t, result)
+			require.True(t, stderrors.Is(result, tc.wantSentinel), "expected error to match %v", tc.wantSentinel)
+
+			// Verify the provider name is set in the error message.
+			require.Contains(t, result.Error(), "["+providerName+"]")
+		})
+	}
+}
+
+// newTestAPIError creates an Anthropic API error for testing.
+// Note: The raw JSON field is unexported, so we can only test status code based conversion.
+func newTestAPIError(t *testing.T, statusCode int) *anthropic.Error {
+	t.Helper()
+
+	testURL, _ := url.Parse("https://api.anthropic.com/v1/messages")
+	return &anthropic.Error{
+		StatusCode: statusCode,
+		RequestID:  "req_test123",
+		Request:    &http.Request{Method: "POST", URL: testURL},
+		Response:   &http.Response{StatusCode: statusCode},
+	}
 }

@@ -4,6 +4,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"strings"
 
@@ -36,6 +37,14 @@ const (
 	deltaTypeThinking  = "thinking_delta"
 )
 
+// Anthropic error response patterns (checked in raw JSON).
+const (
+	errorPatternContextLength = "context_length"
+	errorPatternToken         = "token"
+	errorPatternContent       = "content"
+	errorPatternSafety        = "safety"
+)
+
 // Anthropic streaming event types.
 const (
 	eventContentBlockDelta = "content_block_delta"
@@ -55,6 +64,7 @@ const (
 // Ensure Provider implements the required interfaces.
 var (
 	_ providers.CapabilityProvider = (*Provider)(nil)
+	_ providers.ErrorConverter     = (*Provider)(nil)
 	_ providers.Provider           = (*Provider)(nil)
 )
 
@@ -126,7 +136,7 @@ func (p *Provider) Completion(
 
 	resp, err := p.client.Messages.New(ctx, req)
 	if err != nil {
-		return nil, errors.Convert(providerName, err)
+		return nil, p.ConvertError(err)
 	}
 
 	return convertResponse(resp), nil
@@ -219,7 +229,7 @@ func (p *Provider) CompletionStream(
 		}
 
 		if err := stream.Err(); err != nil {
-			errs <- errors.Convert(providerName, err)
+			errs <- p.ConvertError(err)
 		}
 	}()
 
@@ -633,5 +643,47 @@ func thinkingBudget(effort providers.ReasoningEffort) (int64, bool) {
 		return 16384, true
 	default:
 		return 0, false
+	}
+}
+
+// ConvertError converts an Anthropic SDK error to a unified error type.
+// Implements providers.ErrorConverter.
+func (p *Provider) ConvertError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// Extract the Anthropic API error type from the error chain.
+	// If it's not an API error (e.g., network error), wrap as generic provider error.
+	var apiErr *anthropic.Error
+	if !stderrors.As(err, &apiErr) {
+		return errors.NewProviderError(providerName, err)
+	}
+
+	// Classify by HTTP status code.
+	switch apiErr.StatusCode {
+	case 401:
+		return errors.NewAuthenticationError(providerName, err)
+	case 429:
+		return errors.NewRateLimitError(providerName, err)
+	case 404:
+		return errors.NewModelNotFoundError(providerName, err)
+	case 400:
+		// Anthropic uses 400 for various client errors.
+		// Check the raw JSON for context length indicators.
+		rawJSON := apiErr.RawJSON()
+		if strings.Contains(rawJSON, errorPatternContextLength) || strings.Contains(rawJSON, errorPatternToken) {
+			return errors.NewContextLengthError(providerName, err)
+		}
+		return errors.NewInvalidRequestError(providerName, err)
+	case 403:
+		// Forbidden - could be content filter or permission issue.
+		rawJSON := apiErr.RawJSON()
+		if strings.Contains(rawJSON, errorPatternContent) || strings.Contains(rawJSON, errorPatternSafety) {
+			return errors.NewContentFilterError(providerName, err)
+		}
+		return errors.NewAuthenticationError(providerName, err)
+	default:
+		return errors.NewProviderError(providerName, err)
 	}
 }

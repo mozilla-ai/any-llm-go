@@ -132,8 +132,9 @@ type Provider struct {
 
 // Ensure interface compliance.
 var (
-    _ providers.Provider           = (*Provider)(nil)
     _ providers.CapabilityProvider = (*Provider)(nil)
+    _ providers.ErrorConverter     = (*Provider)(nil)
+    _ providers.Provider           = (*Provider)(nil)
 )
 
 func New(opts ...config.Option) (*Provider, error) {
@@ -169,14 +170,42 @@ func (p *Provider) Capabilities() providers.Capabilities {
 }
 
 func (p *Provider) Completion(ctx context.Context, params providers.CompletionParams) (*providers.ChatCompletion, error) {
-    // Convert params to provider format.
-    // Make API call.
-    // Convert response to providers format.
-    // Handle errors with errors.Convert().
+    req := convertParams(params)
+
+    resp, err := p.client.Messages.New(ctx, req)
+    if err != nil {
+        return nil, p.ConvertError(err)
+    }
+
+    return convertResponse(resp), nil
 }
 
 func (p *Provider) CompletionStream(ctx context.Context, params providers.CompletionParams) (<-chan providers.ChatCompletionChunk, <-chan error) {
-    // Implement streaming.
+    // Implement streaming, use p.ConvertError() for errors.
+}
+
+// ConvertError converts SDK errors to unified error types.
+// Implements providers.ErrorConverter.
+func (p *Provider) ConvertError(err error) error {
+    if err == nil {
+        return nil
+    }
+
+    var apiErr *sdk.Error
+    if !stderrors.As(err, &apiErr) {
+        return errors.NewProviderError(providerName, err)
+    }
+
+    switch apiErr.StatusCode {
+    case 401:
+        return errors.NewAuthenticationError(providerName, err)
+    case 429:
+        return errors.NewRateLimitError(providerName, err)
+    case 404:
+        return errors.NewModelNotFoundError(providerName, err)
+    default:
+        return errors.NewProviderError(providerName, err)
+    }
 }
 ```
 
@@ -234,7 +263,7 @@ func TestIntegrationCompletion(t *testing.T) {
 - [ ] Implements `Provider` interface
 - [ ] Implements `CapabilityProvider` interface
 - [ ] Normalizes responses to OpenAI format
-- [ ] Normalizes errors using `errors.Convert()`
+- [ ] Implements `ErrorConverter` interface with `ConvertError()` method
 - [ ] Has unit tests with >80% coverage
 - [ ] Has integration tests (skipped when no API key)
 - [ ] Passes `golangci-lint`
