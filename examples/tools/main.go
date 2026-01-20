@@ -14,15 +14,15 @@ import (
 	"fmt"
 	"log"
 
-	llm "github.com/mozilla-ai/any-llm-go"
+	anyllm "github.com/mozilla-ai/any-llm-go"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
-// Define tools that the model can call
-var tools = []llm.Tool{
+// Define tools that the model can call.
+var tools = []anyllm.Tool{
 	{
 		Type: "function",
-		Function: llm.Function{
+		Function: anyllm.Function{
 			Name:        "get_weather",
 			Description: "Get the current weather for a location",
 			Parameters: map[string]any{
@@ -44,12 +44,12 @@ var tools = []llm.Tool{
 	},
 }
 
-// Simulate a weather API call
+// Simulate a weather API call.
 func getWeather(location, unit string) string {
 	if unit == "" {
 		unit = "celsius"
 	}
-	// In a real app, this would call an actual weather API
+	// In a real app, this would call an actual weather API.
 	return fmt.Sprintf(`{"location": "%s", "temperature": 22, "unit": "%s", "condition": "sunny"}`, location, unit)
 }
 
@@ -61,16 +61,16 @@ func main() {
 
 	ctx := context.Background()
 
-	// Initial message asking about weather
-	messages := []llm.Message{
-		{Role: llm.RoleUser, Content: "What's the weather like in Paris?"},
+	// Initial message asking about weather.
+	messages := []anyllm.Message{
+		{Role: anyllm.RoleUser, Content: "What's the weather like in Paris?"},
 	}
 
 	fmt.Println("User: What's the weather like in Paris?")
 	fmt.Println()
 
-	// First request - model may call the tool
-	response, err := provider.Completion(ctx, llm.CompletionParams{
+	// First request - model may call the tool.
+	response, err := provider.Completion(ctx, anyllm.CompletionParams{
 		Model:      "gpt-4o-mini",
 		Messages:   messages,
 		Tools:      tools,
@@ -80,19 +80,19 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Check if the model wants to call a tool
-	if response.Choices[0].FinishReason == llm.FinishReasonToolCalls {
+	// Check if the model wants to call a tool.
+	if response.Choices[0].FinishReason == anyllm.FinishReasonToolCalls {
 		fmt.Println("Model is calling tools...")
 
-		// Add the assistant's message (with tool calls) to the conversation
+		// Add the assistant's message (with tool calls) to the conversation.
 		messages = append(messages, response.Choices[0].Message)
 
-		// Process each tool call
+		// Process each tool call.
 		for _, tc := range response.Choices[0].Message.ToolCalls {
 			fmt.Printf("  Tool: %s\n", tc.Function.Name)
 			fmt.Printf("  Arguments: %s\n", tc.Function.Arguments)
 
-			// Parse the arguments
+			// Parse the arguments.
 			var args struct {
 				Location string `json:"location"`
 				Unit     string `json:"unit"`
@@ -101,21 +101,21 @@ func main() {
 				log.Fatal(unmarshalErr)
 			}
 
-			// Execute the function
+			// Execute the function.
 			result := getWeather(args.Location, args.Unit)
 			fmt.Printf("  Result: %s\n", result)
 			fmt.Println()
 
-			// Add the tool result to the conversation
-			messages = append(messages, llm.Message{
-				Role:       llm.RoleTool,
+			// Add the tool result to the conversation.
+			messages = append(messages, anyllm.Message{
+				Role:       anyllm.RoleTool,
 				Content:    result,
 				ToolCallID: tc.ID,
 			})
 		}
 
-		// Continue the conversation with the tool results
-		response, err = provider.Completion(ctx, llm.CompletionParams{
+		// Continue the conversation with the tool results.
+		response, err = provider.Completion(ctx, anyllm.CompletionParams{
 			Model:    "gpt-4o-mini",
 			Messages: messages,
 			Tools:    tools,
@@ -125,6 +125,6 @@ func main() {
 		}
 	}
 
-	// Print the final response
+	// Print the final response.
 	fmt.Printf("Assistant: %s\n", response.Choices[0].Message.Content)
 }
