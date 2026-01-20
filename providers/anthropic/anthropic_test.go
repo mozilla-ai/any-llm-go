@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -45,6 +46,8 @@ func TestNew(t *testing.T) {
 }
 
 func TestCapabilities(t *testing.T) {
+	t.Parallel()
+
 	provider, err := New(config.WithAPIKey("test-key"))
 	require.NoError(t, err)
 
@@ -60,7 +63,11 @@ func TestCapabilities(t *testing.T) {
 }
 
 func TestConvertMessages(t *testing.T) {
+	t.Parallel()
+
 	t.Run("extracts system message", func(t *testing.T) {
+		t.Parallel()
+
 		messages := []providers.Message{
 			{Role: providers.RoleSystem, Content: "You are a helpful assistant."},
 			{Role: providers.RoleUser, Content: "Hello"},
@@ -73,6 +80,8 @@ func TestConvertMessages(t *testing.T) {
 	})
 
 	t.Run("concatenates multiple system messages", func(t *testing.T) {
+		t.Parallel()
+
 		messages := []providers.Message{
 			{Role: providers.RoleSystem, Content: "First part."},
 			{Role: providers.RoleSystem, Content: "Second part."},
@@ -86,6 +95,8 @@ func TestConvertMessages(t *testing.T) {
 	})
 
 	t.Run("converts user message", func(t *testing.T) {
+		t.Parallel()
+
 		messages := []providers.Message{
 			{Role: providers.RoleUser, Content: "Hello"},
 		}
@@ -97,6 +108,8 @@ func TestConvertMessages(t *testing.T) {
 	})
 
 	t.Run("converts assistant message", func(t *testing.T) {
+		t.Parallel()
+
 		messages := []providers.Message{
 			{Role: providers.RoleUser, Content: "Hello"},
 			{Role: providers.RoleAssistant, Content: "Hi there!"},
@@ -109,6 +122,8 @@ func TestConvertMessages(t *testing.T) {
 	})
 
 	t.Run("converts assistant message with tool calls", func(t *testing.T) {
+		t.Parallel()
+
 		messages := []providers.Message{
 			{Role: providers.RoleUser, Content: "What's the weather?"},
 			{
@@ -133,6 +148,8 @@ func TestConvertMessages(t *testing.T) {
 	})
 
 	t.Run("converts tool result to user message", func(t *testing.T) {
+		t.Parallel()
+
 		messages := []providers.Message{
 			{Role: providers.RoleUser, Content: "What's the weather?"},
 			{
@@ -152,13 +169,19 @@ func TestConvertMessages(t *testing.T) {
 }
 
 func TestConvertImagePart(t *testing.T) {
+	t.Parallel()
+
 	t.Run("converts URL image", func(t *testing.T) {
+		t.Parallel()
+
 		img := &providers.ImageURL{URL: "https://example.com/image.png"}
 		result := convertImagePart(img)
 		assert.NotNil(t, result)
 	})
 
 	t.Run("converts base64 image", func(t *testing.T) {
+		t.Parallel()
+
 		img := &providers.ImageURL{URL: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}
 		result := convertImagePart(img)
 		assert.NotNil(t, result)
@@ -166,41 +189,378 @@ func TestConvertImagePart(t *testing.T) {
 }
 
 func TestConvertStopReason(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		input    string
 		expected string
 	}{
-		{"end_turn", "end_turn", providers.FinishReasonStop},
-		{"max_tokens", "max_tokens", providers.FinishReasonLength},
-		{"tool_use", "tool_use", providers.FinishReasonToolCalls},
-		{"stop_sequence", "stop_sequence", providers.FinishReasonStop},
+		{
+			name:     "end_turn",
+			input:    "end_turn",
+			expected: providers.FinishReasonStop,
+		},
+		{
+			name:     "max_tokens",
+			input:    "max_tokens",
+			expected: providers.FinishReasonLength,
+		},
+		{
+			name:     "tool_use",
+			input:    "tool_use",
+			expected: providers.FinishReasonToolCalls,
+		},
+		{
+			name:     "stop_sequence",
+			input:    "stop_sequence",
+			expected: providers.FinishReasonStop,
+		},
+		{
+			name:     "unknown",
+			input:    "unknown",
+			expected: providers.FinishReasonStop,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Note: We can't directly test convertStopReason since it takes anthropic.MessageStopReason.
-			// This would be tested in integration tests.
-			_ = tc
+			t.Parallel()
+
+			result := convertStopReason(tc.input)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestNewStreamState(t *testing.T) {
+	t.Parallel()
+
+	state := newStreamState()
+	assert.NotNil(t, state)
+	assert.Equal(t, -1, state.currentToolIdx)
+	assert.Empty(t, state.messageID)
+	assert.Empty(t, state.model)
+	assert.Nil(t, state.toolCalls)
+}
+
+func TestStreamStateHandleTextDelta(t *testing.T) {
+	t.Parallel()
+
+	state := newStreamState()
+	state.messageID = "msg_123"
+	state.model = "claude-3"
+
+	chunk := state.handleTextDelta("Hello ")
+	require.NotNil(t, chunk)
+	assert.Equal(t, "msg_123", chunk.ID)
+	assert.Equal(t, "claude-3", chunk.Model)
+	assert.Equal(t, "chat.completion.chunk", chunk.Object)
+	require.Len(t, chunk.Choices, 1)
+	assert.Equal(t, "Hello ", chunk.Choices[0].Delta.Content)
+
+	// Verify content is accumulated.
+	chunk2 := state.handleTextDelta("world!")
+	require.NotNil(t, chunk2)
+	assert.Equal(t, "world!", chunk2.Choices[0].Delta.Content)
+	assert.Equal(t, "Hello world!", state.content.String())
+}
+
+func TestStreamStateHandleThinkingDelta(t *testing.T) {
+	t.Parallel()
+
+	state := newStreamState()
+	state.messageID = "msg_123"
+	state.model = "claude-3"
+
+	chunk := state.handleThinkingDelta("Let me think...")
+	require.NotNil(t, chunk)
+	assert.Equal(t, "msg_123", chunk.ID)
+	require.Len(t, chunk.Choices, 1)
+	require.NotNil(t, chunk.Choices[0].Delta.Reasoning)
+	assert.Equal(t, "Let me think...", chunk.Choices[0].Delta.Reasoning.Content)
+
+	// Verify reasoning is accumulated.
+	assert.Equal(t, "Let me think...", state.reasoning.String())
+}
+
+func TestStreamStateHandleInputJSONDelta(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns nil when no tool calls", func(t *testing.T) {
+		t.Parallel()
+
+		state := newStreamState()
+		chunk := state.handleInputJSONDelta(`{"key":`)
+		assert.Nil(t, chunk)
+	})
+
+	t.Run("returns nil when tool index out of bounds", func(t *testing.T) {
+		t.Parallel()
+
+		state := newStreamState()
+		state.currentToolIdx = 5 // Out of bounds.
+		state.toolCalls = []providers.ToolCall{
+			{ID: "call_1", Type: "function", Function: providers.FunctionCall{Name: "get_weather", Arguments: ""}},
+		}
+		chunk := state.handleInputJSONDelta(`{"key":`)
+		assert.Nil(t, chunk)
+	})
+
+	t.Run("appends to current tool call arguments", func(t *testing.T) {
+		t.Parallel()
+
+		state := newStreamState()
+		state.messageID = "msg_123"
+		state.model = "claude-3"
+		state.currentToolIdx = 0
+		state.toolCalls = []providers.ToolCall{
+			{ID: "call_1", Type: "function", Function: providers.FunctionCall{Name: "get_weather", Arguments: ""}},
+		}
+
+		chunk := state.handleInputJSONDelta(`{"location":`)
+		require.NotNil(t, chunk)
+		assert.Equal(t, `{"location":`, state.toolCalls[0].Function.Arguments)
+
+		chunk2 := state.handleInputJSONDelta(`"Paris"}`)
+		require.NotNil(t, chunk2)
+		assert.Equal(t, `{"location":"Paris"}`, state.toolCalls[0].Function.Arguments)
+	})
+}
+
+func TestApplyThinking(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		effort            providers.ReasoningEffort
+		initialMaxTokens  int64
+		expectedMaxTokens int64
+		expectThinking    bool
+	}{
+		{
+			name:              "empty effort does nothing",
+			effort:            "",
+			initialMaxTokens:  1000,
+			expectedMaxTokens: 1000,
+			expectThinking:    false,
+		},
+		{
+			name:              "ReasoningEffortNone does nothing",
+			effort:            providers.ReasoningEffortNone,
+			initialMaxTokens:  1000,
+			expectedMaxTokens: 1000,
+			expectThinking:    false,
+		},
+		{
+			name:              "invalid effort does nothing",
+			effort:            "invalid",
+			initialMaxTokens:  1000,
+			expectedMaxTokens: 1000,
+			expectThinking:    false,
+		},
+		{
+			name:              "low effort increases tokens when insufficient",
+			effort:            providers.ReasoningEffortLow,
+			initialMaxTokens:  1000,
+			expectedMaxTokens: 2048, // budget=1024, min=2048
+			expectThinking:    true,
+		},
+		{
+			name:              "low effort preserves tokens when sufficient",
+			effort:            providers.ReasoningEffortLow,
+			initialMaxTokens:  10000,
+			expectedMaxTokens: 10000,
+			expectThinking:    true,
+		},
+		{
+			name:              "medium effort increases tokens when insufficient",
+			effort:            providers.ReasoningEffortMedium,
+			initialMaxTokens:  1000,
+			expectedMaxTokens: 8192, // budget=4096, min=8192
+			expectThinking:    true,
+		},
+		{
+			name:              "high effort increases tokens when insufficient",
+			effort:            providers.ReasoningEffortHigh,
+			initialMaxTokens:  1000,
+			expectedMaxTokens: 32768, // budget=16384, min=32768
+			expectThinking:    true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := &anthropic.MessageNewParams{MaxTokens: tc.initialMaxTokens}
+			applyThinking(req, tc.effort, tc.initialMaxTokens)
+			assert.Equal(t, tc.expectedMaxTokens, req.MaxTokens)
+			if tc.expectThinking {
+				assert.NotNil(t, req.Thinking)
+			}
+		})
+	}
+}
+
+func TestConvertMessage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		msg       providers.Message
+		expectNil bool
+	}{
+		{
+			name:      "system role returns nil",
+			msg:       providers.Message{Role: providers.RoleSystem, Content: "System prompt"},
+			expectNil: true,
+		},
+		{
+			name:      "unknown role returns nil",
+			msg:       providers.Message{Role: "unknown", Content: "Content"},
+			expectNil: true,
+		},
+		{
+			name:      "user role converts",
+			msg:       providers.Message{Role: providers.RoleUser, Content: "Hello"},
+			expectNil: false,
+		},
+		{
+			name:      "assistant role converts",
+			msg:       providers.Message{Role: providers.RoleAssistant, Content: "Hi there!"},
+			expectNil: false,
+		},
+		{
+			name:      "tool role converts",
+			msg:       providers.Message{Role: providers.RoleTool, Content: "Result", ToolCallID: "call_123"},
+			expectNil: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := convertMessage(tc.msg)
+			if tc.expectNil {
+				assert.Nil(t, result)
+			} else {
+				assert.NotNil(t, result)
+			}
+		})
+	}
+}
+
+func TestConvertToolCall(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		toolCall    providers.ToolCall
+		expectInput bool
+	}{
+		{
+			name: "valid JSON arguments",
+			toolCall: providers.ToolCall{
+				ID:   "call_123",
+				Type: "function",
+				Function: providers.FunctionCall{
+					Name:      "get_weather",
+					Arguments: `{"location": "Paris"}`,
+				},
+			},
+			expectInput: true,
+		},
+		{
+			name: "invalid JSON arguments results in nil input",
+			toolCall: providers.ToolCall{
+				ID:   "call_456",
+				Type: "function",
+				Function: providers.FunctionCall{
+					Name:      "get_weather",
+					Arguments: `{invalid json`,
+				},
+			},
+			expectInput: false,
+		},
+		{
+			name: "empty arguments results in nil input",
+			toolCall: providers.ToolCall{
+				ID:   "call_789",
+				Type: "function",
+				Function: providers.FunctionCall{
+					Name:      "get_weather",
+					Arguments: "",
+				},
+			},
+			expectInput: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := convertToolCall(tc.toolCall)
+			require.NotNil(t, result.OfToolUse)
+			assert.Equal(t, tc.toolCall.ID, result.OfToolUse.ID)
+			assert.Equal(t, tc.toolCall.Function.Name, result.OfToolUse.Name)
+			assert.Equal(t, "tool_use", string(result.OfToolUse.Type))
+			if tc.expectInput {
+				assert.NotNil(t, result.OfToolUse.Input)
+			} else {
+				assert.Nil(t, result.OfToolUse.Input)
+			}
 		})
 	}
 }
 
 func TestThinkingBudget(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
+		name     string
 		effort   providers.ReasoningEffort
 		expected int64
 		ok       bool
 	}{
-		{providers.ReasoningEffortLow, 1024, true},
-		{providers.ReasoningEffortMedium, 4096, true},
-		{providers.ReasoningEffortHigh, 16384, true},
-		{providers.ReasoningEffortNone, 0, false},
-		{"invalid", 0, false},
+		{
+			name:     "low effort",
+			effort:   providers.ReasoningEffortLow,
+			expected: 1024,
+			ok:       true,
+		},
+		{
+			name:     "medium effort",
+			effort:   providers.ReasoningEffortMedium,
+			expected: 4096,
+			ok:       true,
+		},
+		{
+			name:     "high effort",
+			effort:   providers.ReasoningEffortHigh,
+			expected: 16384,
+			ok:       true,
+		},
+		{
+			name:     "none effort",
+			effort:   providers.ReasoningEffortNone,
+			expected: 0,
+			ok:       false,
+		},
+		{
+			name:     "invalid effort",
+			effort:   "invalid",
+			expected: 0,
+			ok:       false,
+		},
 	}
 
 	for _, tc := range tests {
-		t.Run(string(tc.effort), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			budget, ok := thinkingBudget(tc.effort)
 			assert.Equal(t, tc.ok, ok)
 			assert.Equal(t, tc.expected, budget)
