@@ -28,10 +28,6 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 ## Your First Request
 
-### Using the Convenience Function
-
-The simplest way to make a request:
-
 ```go
 package main
 
@@ -40,56 +36,24 @@ import (
     "fmt"
     "log"
 
-    github.com/mozilla-ai/any-llm-go"
-    _ "github.com/mozilla-ai/any-llm-go/providers/openai" // Register the provider
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
 func main() {
-    ctx := context.Background()
-
-    response, err := llm.Completion(ctx, "openai:gpt-4o-mini", []llm.Message{
-        {Role: llm.RoleUser, Content: "Say hello in three languages!"},
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    fmt.Println(response.Choices[0].Message.Content)
-}
-```
-
-The model string format is `provider:model_id`. This tells any-llm-go which provider to use and which model to request.
-
-### Using a Provider Instance
-
-For production code where you'll make multiple requests:
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    github.com/mozilla-ai/any-llm-go"
-    "github.com/mozilla-ai/any-llm-go/providers/anthropic"
-)
-
-func main() {
-    // Create provider once
-    provider, err := anthropic.New()
+    // Create provider instance.
+    provider, err := openai.New()
     if err != nil {
         log.Fatal(err)
     }
 
     ctx := context.Background()
 
-    // Make requests
-    response, err := provider.Completion(ctx, llm.CompletionParams{
-        Model: "claude-3-5-haiku-latest",
-        Messages: []llm.Message{
-            {Role: llm.RoleUser, Content: "What's the capital of France?"},
+    // Make a completion request.
+    response, err := provider.Completion(ctx, anyllm.CompletionParams{
+        Model: "gpt-4o-mini",
+        Messages: []anyllm.Message{
+            {Role: anyllm.RoleUser, Content: "Say hello in three languages!"},
         },
     })
     if err != nil {
@@ -105,15 +69,7 @@ func main() {
 If you prefer not to use environment variables:
 
 ```go
-provider, err := openai.New(llm.WithAPIKey("sk-your-api-key"))
-```
-
-Or with the convenience function:
-
-```go
-response, err := llm.Completion(ctx, "openai:gpt-4o-mini", messages,
-    llm.WithAPIKey("sk-your-api-key"),
-)
+provider, err := openai.New(anyllm.WithAPIKey("sk-your-api-key"))
 ```
 
 ## Streaming Responses
@@ -128,7 +84,7 @@ import (
     "fmt"
     "log"
 
-    github.com/mozilla-ai/any-llm-go"
+    anyllm "github.com/mozilla-ai/any-llm-go"
     "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
@@ -140,23 +96,23 @@ func main() {
 
     ctx := context.Background()
 
-    chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
+    chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
         Model: "gpt-4o-mini",
-        Messages: []llm.Message{
-            {Role: llm.RoleUser, Content: "Write a haiku about programming."},
+        Messages: []anyllm.Message{
+            {Role: anyllm.RoleUser, Content: "Write a haiku about programming."},
         },
         Stream: true,
     })
 
-    // Print chunks as they arrive
+    // Print chunks as they arrive.
     for chunk := range chunks {
         if len(chunk.Choices) > 0 {
             fmt.Print(chunk.Choices[0].Delta.Content)
         }
     }
-    fmt.Println() // Final newline
+    fmt.Println()
 
-    // Check for errors
+    // Check for errors.
     if err := <-errs; err != nil {
         log.Fatal(err)
     }
@@ -168,11 +124,11 @@ func main() {
 Guide the model's behavior with system messages:
 
 ```go
-response, err := provider.Completion(ctx, llm.CompletionParams{
+response, err := provider.Completion(ctx, anyllm.CompletionParams{
     Model: "gpt-4o-mini",
-    Messages: []llm.Message{
-        {Role: llm.RoleSystem, Content: "You are a helpful assistant that speaks like a pirate."},
-        {Role: llm.RoleUser, Content: "How do I make coffee?"},
+    Messages: []anyllm.Message{
+        {Role: anyllm.RoleSystem, Content: "You are a helpful assistant that speaks like a pirate."},
+        {Role: anyllm.RoleUser, Content: "How do I make coffee?"},
     },
 })
 ```
@@ -185,10 +141,10 @@ Control the model's output:
 temp := 0.7
 maxTokens := 500
 
-response, err := provider.Completion(ctx, llm.CompletionParams{
+response, err := provider.Completion(ctx, anyllm.CompletionParams{
     Model: "gpt-4o-mini",
-    Messages: []llm.Message{
-        {Role: llm.RoleUser, Content: "Write a creative story."},
+    Messages: []anyllm.Message{
+        {Role: anyllm.RoleUser, Content: "Write a creative story."},
     },
     Temperature: &temp,
     MaxTokens:   &maxTokens,
@@ -205,21 +161,21 @@ import "errors"
 
 response, err := provider.Completion(ctx, params)
 if err != nil {
-    // Check for specific error types
-    if errors.Is(err, llm.ErrRateLimit) {
+    // Check for specific error types.
+    if errors.Is(err, anyllm.ErrRateLimit) {
         fmt.Println("Rate limited - please retry later")
         return
     }
-    if errors.Is(err, llm.ErrAuthentication) {
+    if errors.Is(err, anyllm.ErrAuthentication) {
         fmt.Println("Invalid API key")
         return
     }
-    if errors.Is(err, llm.ErrContextLength) {
+    if errors.Is(err, anyllm.ErrContextLength) {
         fmt.Println("Input too long - please reduce message size")
         return
     }
 
-    // Generic error
+    // Generic error.
     log.Fatal(err)
 }
 ```
@@ -230,23 +186,35 @@ One of the main benefits of any-llm-go is easy provider switching:
 
 ```go
 import (
-    _ "github.com/mozilla-ai/any-llm-go/providers/openai"
-    _ "github.com/mozilla-ai/any-llm-go/providers/anthropic"
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/anthropic"
+    "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
-// Same code works with different providers
-models := []string{
-    "openai:gpt-4o-mini",
-    "anthropic:claude-3-5-haiku-latest",
-}
+func tryProvider(providerName string, model string, messages []anyllm.Message) error {
+    var provider anyllm.Provider
+    var err error
 
-for _, model := range models {
-    response, err := llm.Completion(ctx, model, messages)
-    if err != nil {
-        log.Printf("Error with %s: %v", model, err)
-        continue
+    switch providerName {
+    case "openai":
+        provider, err = openai.New()
+    case "anthropic":
+        provider, err = anthropic.New()
     }
-    fmt.Printf("%s: %s\n", model, response.Choices[0].Message.Content)
+    if err != nil {
+        return err
+    }
+
+    response, err := provider.Completion(ctx, anyllm.CompletionParams{
+        Model:    model,
+        Messages: messages,
+    })
+    if err != nil {
+        return err
+    }
+
+    fmt.Printf("%s: %s\n", providerName, response.Choices[0].Message.Content)
+    return nil
 }
 ```
 
