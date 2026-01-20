@@ -4,7 +4,7 @@ Get up and running with any-llm-go in minutes.
 
 ## Prerequisites
 
-- **Go 1.23+** - [Download Go](https://go.dev/dl/)
+- **Go 1.25+** - [Download Go](https://go.dev/dl/)
 - **API Keys** - Get API keys from your chosen providers:
   - [OpenAI](https://platform.openai.com/api-keys)
   - [Anthropic](https://console.anthropic.com/)
