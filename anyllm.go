@@ -112,6 +112,7 @@ type (
 
 // Configuration options.
 var (
+	NewConfig      = config.New
 	WithAPIKey     = config.WithAPIKey
 	WithBaseURL    = config.WithBaseURL
 	WithExtra      = config.WithExtra
