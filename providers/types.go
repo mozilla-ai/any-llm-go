@@ -192,8 +192,8 @@ type Message struct {
 	Reasoning  *Reasoning `json:"reasoning,omitempty"`
 }
 
-// GetContentParts extracts content parts from a message.
-func (m *Message) GetContentParts() []ContentPart {
+// ContentParts extracts content parts from a message.
+func (m *Message) ContentParts() []ContentPart {
 	if m.Content == nil {
 		return nil
 	}
@@ -220,8 +220,8 @@ func (m *Message) GetContentParts() []ContentPart {
 	return nil
 }
 
-// GetContentString extracts string content from a message.
-func (m *Message) GetContentString() string {
+// ContentString extracts string content from a message.
+func (m *Message) ContentString() string {
 	if s, ok := m.Content.(string); ok {
 		return s
 	}
@@ -230,7 +230,7 @@ func (m *Message) GetContentString() string {
 
 // IsMultiModal returns true if the message contains multi-modal content.
 func (m *Message) IsMultiModal() bool {
-	return m.GetContentParts() != nil
+	return m.ContentParts() != nil
 }
 
 // Model represents a model from the list models API.

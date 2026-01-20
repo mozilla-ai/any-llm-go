@@ -169,7 +169,10 @@ func parseModelString(model string) (providerName, modelID string) {
 }
 
 // Completion performs a chat completion request.
-func (p *Provider) Completion(ctx context.Context, params providers.CompletionParams) (*providers.ChatCompletion, error) {
+func (p *Provider) Completion(
+	ctx context.Context,
+	params providers.CompletionParams,
+) (*providers.ChatCompletion, error) {
 	startTime := time.Now()
 
 	// Parse the model to get the provider name
@@ -200,7 +203,10 @@ func (p *Provider) Completion(ctx context.Context, params providers.CompletionPa
 }
 
 // CompletionStream performs a streaming chat completion request.
-func (p *Provider) CompletionStream(ctx context.Context, params providers.CompletionParams) (<-chan providers.ChatCompletionChunk, <-chan error) {
+func (p *Provider) CompletionStream(
+	ctx context.Context,
+	params providers.CompletionParams,
+) (<-chan providers.ChatCompletionChunk, <-chan error) {
 	chunks := make(chan providers.ChatCompletionChunk)
 	errs := make(chan error, 1)
 
@@ -291,7 +297,8 @@ func (p *Provider) CompletionStream(ctx context.Context, params providers.Comple
 			}
 
 			// Calculate tokens per second if we have usage data
-			if completion.Usage != nil && completion.Usage.CompletionTokens > 0 && timeToLastContentMs != nil && *timeToLastContentMs > 0 {
+			if completion.Usage != nil && completion.Usage.CompletionTokens > 0 && timeToLastContentMs != nil &&
+				*timeToLastContentMs > 0 {
 				tps := float64(completion.Usage.CompletionTokens*1000) / *timeToLastContentMs
 				metrics.TokensPerSecond = &tps
 
@@ -367,16 +374,21 @@ func combineChunks(chunks []providers.ChatCompletionChunk) *providers.ChatComple
 
 // usageEventPayload represents the payload for usage events.
 type usageEventPayload struct {
-	ProviderKeyID string                 `json:"provider_key_id"`
-	Provider      string                 `json:"provider"`
-	Model         string                 `json:"model"`
-	Data          map[string]interface{} `json:"data"`
-	ID            string                 `json:"id"`
-	ClientName    string                 `json:"client_name,omitempty"`
+	ProviderKeyID string         `json:"provider_key_id"`
+	Provider      string         `json:"provider"`
+	Model         string         `json:"model"`
+	Data          map[string]any `json:"data"`
+	ID            string         `json:"id"`
+	ClientName    string         `json:"client_name,omitempty"`
 }
 
 // postUsageEvent posts a usage event to the platform.
-func (p *Provider) postUsageEvent(ctx context.Context, completion *providers.ChatCompletion, metrics *streamingMetrics, totalDurationMs float64) {
+func (p *Provider) postUsageEvent(
+	ctx context.Context,
+	completion *providers.ChatCompletion,
+	metrics *streamingMetrics,
+	totalDurationMs float64,
+) {
 	if completion == nil || completion.Usage == nil {
 		return
 	}
@@ -388,13 +400,13 @@ func (p *Provider) postUsageEvent(ctx context.Context, completion *providers.Cha
 	}
 
 	// Build data payload
-	data := map[string]interface{}{
+	data := map[string]any{
 		"input_tokens":  fmt.Sprintf("%d", completion.Usage.PromptTokens),
 		"output_tokens": fmt.Sprintf("%d", completion.Usage.CompletionTokens),
 	}
 
 	// Add performance metrics
-	performance := map[string]interface{}{}
+	performance := map[string]any{}
 	if totalDurationMs > 0 {
 		performance["total_duration_ms"] = totalDurationMs
 	}
@@ -441,7 +453,12 @@ func (p *Provider) postUsageEvent(ctx context.Context, completion *providers.Cha
 		platformURL = defaultPlatformURL
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, platformURL+"/usage-events/", strings.NewReader(string(jsonPayload)))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		platformURL+"/usage-events/",
+		strings.NewReader(string(jsonPayload)),
+	)
 	if err != nil {
 		return
 	}

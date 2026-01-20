@@ -156,7 +156,11 @@ func TestConvertMessages(t *testing.T) {
 				Role:    providers.RoleAssistant,
 				Content: "",
 				ToolCalls: []providers.ToolCall{
-					{ID: "call_123", Type: "function", Function: providers.FunctionCall{Name: "get_weather", Arguments: `{"location": "Paris"}`}},
+					{
+						ID:       "call_123",
+						Type:     "function",
+						Function: providers.FunctionCall{Name: "get_weather", Arguments: `{"location": "Paris"}`},
+					},
 				},
 			},
 			{Role: providers.RoleTool, Content: "sunny, 22°C", ToolCallID: "call_123"},
@@ -580,7 +584,7 @@ func TestIntegrationCompletion(t *testing.T) {
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.GetTestModel("anthropic"),
+		Model:    testutil.TestModel("anthropic"),
 		Messages: testutil.SimpleMessages(),
 	}
 
@@ -606,7 +610,7 @@ func TestIntegrationCompletionWithSystemMessage(t *testing.T) {
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.GetTestModel("anthropic"),
+		Model:    testutil.TestModel("anthropic"),
 		Messages: testutil.MessagesWithSystem(),
 	}
 
@@ -628,7 +632,7 @@ func TestIntegrationCompletionStream(t *testing.T) {
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.GetTestModel("anthropic"),
+		Model:    testutil.TestModel("anthropic"),
 		Messages: testutil.SimpleMessages(),
 		Stream:   true,
 	}
@@ -663,7 +667,7 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:      testutil.GetTestModel("anthropic"),
+		Model:      testutil.TestModel("anthropic"),
 		Messages:   testutil.ToolCallMessages(),
 		Tools:      []providers.Tool{testutil.WeatherTool()},
 		ToolChoice: "auto",
@@ -695,7 +699,7 @@ func TestIntegrationCompletionWithToolsParallelDisabled(t *testing.T) {
 	parallel := false
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model: testutil.GetTestModel("anthropic"),
+		Model: testutil.TestModel("anthropic"),
 		Messages: []providers.Message{
 			{Role: providers.RoleUser, Content: "Get the weather in Paris and London"},
 		},
@@ -721,7 +725,7 @@ func TestIntegrationCompletionConversation(t *testing.T) {
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.GetTestModel("anthropic"),
+		Model:    testutil.TestModel("anthropic"),
 		Messages: testutil.ConversationMessages(),
 	}
 
@@ -742,7 +746,7 @@ func TestIntegrationCompletionReasoning(t *testing.T) {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
 
-	model := testutil.GetReasoningModel("anthropic")
+	model := testutil.ReasoningModel("anthropic")
 	if model == "" {
 		t.Skip("No reasoning model configured for anthropic")
 	}
@@ -786,7 +790,7 @@ func TestIntegrationAgentLoop(t *testing.T) {
 	messages := testutil.AgentLoopMessages()
 
 	params := providers.CompletionParams{
-		Model:    testutil.GetTestModel("anthropic"),
+		Model:    testutil.TestModel("anthropic"),
 		Messages: messages,
 		Tools:    []providers.Tool{testutil.WeatherTool()},
 	}
@@ -802,7 +806,11 @@ func TestIntegrationAgentLoop(t *testing.T) {
 	if contentStr, ok := resp.Choices[0].Message.Content.(string); ok && contentStr != "" {
 		content := strings.ToLower(contentStr)
 		// Should mention the weather or sunny.
-		assert.True(t, strings.Contains(content, "sunny") || strings.Contains(content, "weather") || strings.Contains(content, "salvaterra"))
+		assert.True(
+			t,
+			strings.Contains(content, "sunny") || strings.Contains(content, "weather") ||
+				strings.Contains(content, "salvaterra"),
+		)
 	}
 }
 

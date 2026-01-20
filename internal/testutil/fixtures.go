@@ -193,32 +193,32 @@ func SkipIfNoAPIKey(provider string) bool {
 	return !HasAPIKey(provider)
 }
 
-// GetTestModel returns the test model for a provider.
-func GetTestModel(provider string) string {
+// TestModel returns the test model for a provider.
+func TestModel(provider string) string {
 	if model, ok := ProviderModelMap[provider]; ok {
 		return model
 	}
 	return ""
 }
 
-// GetReasoningModel returns the reasoning model for a provider.
-func GetReasoningModel(provider string) string {
+// ReasoningModel returns the reasoning model for a provider.
+func ReasoningModel(provider string) string {
 	if model, ok := ProviderReasoningModelMap[provider]; ok {
 		return model
 	}
 	return ""
 }
 
-// GetEmbeddingModel returns the embedding model for a provider.
-func GetEmbeddingModel(provider string) string {
+// EmbeddingModel returns the embedding model for a provider.
+func EmbeddingModel(provider string) string {
 	if model, ok := EmbeddingProviderModelMap[provider]; ok {
 		return model
 	}
 	return ""
 }
 
-// GetClientOptions returns the client options for a provider.
-func GetClientOptions(provider string) []config.Option {
+// ClientOptions returns the client options for a provider.
+func ClientOptions(provider string) []config.Option {
 	if opts, ok := ProviderClientConfig[provider]; ok {
 		return opts
 	}

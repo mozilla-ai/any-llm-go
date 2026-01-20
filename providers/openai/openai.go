@@ -81,7 +81,10 @@ func (p *Provider) Capabilities() providers.Capabilities {
 }
 
 // Completion performs a chat completion request.
-func (p *Provider) Completion(ctx context.Context, params providers.CompletionParams) (*providers.ChatCompletion, error) {
+func (p *Provider) Completion(
+	ctx context.Context,
+	params providers.CompletionParams,
+) (*providers.ChatCompletion, error) {
 	req := convertParams(params)
 
 	resp, err := p.client.Chat.Completions.New(ctx, req)
@@ -93,7 +96,10 @@ func (p *Provider) Completion(ctx context.Context, params providers.CompletionPa
 }
 
 // CompletionStream performs a streaming chat completion request.
-func (p *Provider) CompletionStream(ctx context.Context, params providers.CompletionParams) (<-chan providers.ChatCompletionChunk, <-chan error) {
+func (p *Provider) CompletionStream(
+	ctx context.Context,
+	params providers.CompletionParams,
+) (<-chan providers.ChatCompletionChunk, <-chan error) {
 	chunks := make(chan providers.ChatCompletionChunk)
 	errs := make(chan error, 1)
 
@@ -119,7 +125,10 @@ func (p *Provider) CompletionStream(ctx context.Context, params providers.Comple
 }
 
 // Embedding performs an embedding request.
-func (p *Provider) Embedding(ctx context.Context, params providers.EmbeddingParams) (*providers.EmbeddingResponse, error) {
+func (p *Provider) Embedding(
+	ctx context.Context,
+	params providers.EmbeddingParams,
+) (*providers.EmbeddingResponse, error) {
 	req := convertEmbeddingParams(params)
 
 	resp, err := p.client.Embeddings.New(ctx, req)
@@ -228,12 +237,12 @@ func convertParams(params providers.CompletionParams) openai.ChatCompletionNewPa
 func convertMessage(msg providers.Message) openai.ChatCompletionMessageParamUnion {
 	switch msg.Role {
 	case providers.RoleSystem:
-		return openai.SystemMessage(msg.GetContentString())
+		return openai.SystemMessage(msg.ContentString())
 
 	case providers.RoleUser:
 		if msg.IsMultiModal() {
 			parts := make([]openai.ChatCompletionContentPartUnionParam, 0)
-			for _, part := range msg.GetContentParts() {
+			for _, part := range msg.ContentParts() {
 				if part.Type == "text" {
 					parts = append(parts, openai.TextContentPart(part.Text))
 				} else if part.Type == "image_url" && part.ImageURL != nil {
@@ -244,7 +253,7 @@ func convertMessage(msg providers.Message) openai.ChatCompletionMessageParamUnio
 			}
 			return openai.UserMessage(parts)
 		}
-		return openai.UserMessage(msg.GetContentString())
+		return openai.UserMessage(msg.ContentString())
 
 	case providers.RoleAssistant:
 		if len(msg.ToolCalls) > 0 {
@@ -261,19 +270,19 @@ func convertMessage(msg providers.Message) openai.ChatCompletionMessageParamUnio
 			return openai.ChatCompletionMessageParamUnion{
 				OfAssistant: &openai.ChatCompletionAssistantMessageParam{
 					Content: openai.ChatCompletionAssistantMessageParamContentUnion{
-						OfString: openai.String(msg.GetContentString()),
+						OfString: openai.String(msg.ContentString()),
 					},
 					ToolCalls: toolCalls,
 				},
 			}
 		}
-		return openai.AssistantMessage(msg.GetContentString())
+		return openai.AssistantMessage(msg.ContentString())
 
 	case providers.RoleTool:
-		return openai.ToolMessage(msg.ToolCallID, msg.GetContentString())
+		return openai.ToolMessage(msg.ToolCallID, msg.ContentString())
 
 	default:
-		return openai.UserMessage(msg.GetContentString())
+		return openai.UserMessage(msg.ContentString())
 	}
 }
 
@@ -324,7 +333,7 @@ func convertResponseFormat(format *providers.ResponseFormat) openai.ChatCompleti
 	case "json_schema":
 		if format.JSONSchema != nil {
 			schemaBytes, _ := json.Marshal(format.JSONSchema.Schema)
-			var schema interface{}
+			var schema any
 			_ = json.Unmarshal(schemaBytes, &schema) // Ignore error: use nil on failure
 			strict := format.JSONSchema.Strict != nil && *format.JSONSchema.Strict
 			return openai.ChatCompletionNewParamsResponseFormatUnion{

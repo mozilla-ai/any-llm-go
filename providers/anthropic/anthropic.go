@@ -118,7 +118,10 @@ func (p *Provider) Capabilities() providers.Capabilities {
 }
 
 // Completion performs a chat completion request.
-func (p *Provider) Completion(ctx context.Context, params providers.CompletionParams) (*providers.ChatCompletion, error) {
+func (p *Provider) Completion(
+	ctx context.Context,
+	params providers.CompletionParams,
+) (*providers.ChatCompletion, error) {
 	req := p.convertParams(params)
 
 	resp, err := p.client.Messages.New(ctx, req)
@@ -180,7 +183,10 @@ func (p *Provider) convertParams(params providers.CompletionParams) anthropic.Me
 }
 
 // CompletionStream performs a streaming chat completion request.
-func (p *Provider) CompletionStream(ctx context.Context, params providers.CompletionParams) (<-chan providers.ChatCompletionChunk, <-chan error) {
+func (p *Provider) CompletionStream(
+	ctx context.Context,
+	params providers.CompletionParams,
+) (<-chan providers.ChatCompletionChunk, <-chan error) {
 	chunks := make(chan providers.ChatCompletionChunk)
 	errs := make(chan error, 1)
 
@@ -352,13 +358,13 @@ func applyThinking(req *anthropic.MessageNewParams, effort providers.ReasoningEf
 // convertAssistantMessage converts an assistant message to Anthropic format.
 func convertAssistantMessage(msg providers.Message) *anthropic.MessageParam {
 	if len(msg.ToolCalls) == 0 {
-		m := anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.GetContentString()))
+		m := anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.ContentString()))
 		return &m
 	}
 
 	content := make([]anthropic.ContentBlockParamUnion, 0)
-	if msg.GetContentString() != "" {
-		content = append(content, anthropic.NewTextBlock(msg.GetContentString()))
+	if msg.ContentString() != "" {
+		content = append(content, anthropic.NewTextBlock(msg.ContentString()))
 	}
 
 	for _, tc := range msg.ToolCalls {
@@ -413,7 +419,7 @@ func convertMessages(messages []providers.Message) ([]anthropic.MessageParam, st
 
 	for _, msg := range messages {
 		if msg.Role == providers.RoleSystem {
-			systemParts = append(systemParts, msg.GetContentString())
+			systemParts = append(systemParts, msg.ContentString())
 			continue
 		}
 
@@ -508,7 +514,7 @@ func convertTool(tool providers.Tool) anthropic.ToolUnionParam {
 		inputSchema.Properties = props
 	}
 	if req, ok := tool.Function.Parameters["required"]; ok {
-		if reqArr, ok := req.([]interface{}); ok {
+		if reqArr, ok := req.([]any); ok {
 			required := make([]string, len(reqArr))
 			for i, r := range reqArr {
 				if s, ok := r.(string); ok {
@@ -588,7 +594,7 @@ func convertToolChoice(choice any, parallelToolCalls *bool) anthropic.ToolChoice
 // convertToolMessage converts a tool result message to Anthropic format.
 func convertToolMessage(msg providers.Message) *anthropic.MessageParam {
 	m := anthropic.NewUserMessage(
-		anthropic.NewToolResultBlock(msg.ToolCallID, msg.GetContentString(), false),
+		anthropic.NewToolResultBlock(msg.ToolCallID, msg.ContentString(), false),
 	)
 	return &m
 }
@@ -596,12 +602,12 @@ func convertToolMessage(msg providers.Message) *anthropic.MessageParam {
 // convertUserMessage converts a user message to Anthropic format.
 func convertUserMessage(msg providers.Message) *anthropic.MessageParam {
 	if !msg.IsMultiModal() {
-		m := anthropic.NewUserMessage(anthropic.NewTextBlock(msg.GetContentString()))
+		m := anthropic.NewUserMessage(anthropic.NewTextBlock(msg.ContentString()))
 		return &m
 	}
 
 	content := make([]anthropic.ContentBlockParamUnion, 0)
-	for _, part := range msg.GetContentParts() {
+	for _, part := range msg.ContentParts() {
 		switch part.Type {
 		case "text":
 			content = append(content, anthropic.NewTextBlock(part.Text))

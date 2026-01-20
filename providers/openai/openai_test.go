@@ -300,7 +300,7 @@ func TestIntegrationCompletion(t *testing.T) {
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.GetTestModel("openai"),
+		Model:    testutil.TestModel("openai"),
 		Messages: testutil.SimpleMessages(),
 	}
 
@@ -326,7 +326,7 @@ func TestIntegrationCompletionStream(t *testing.T) {
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.GetTestModel("openai"),
+		Model:    testutil.TestModel("openai"),
 		Messages: testutil.SimpleMessages(),
 		Stream:   true,
 	}
@@ -361,7 +361,7 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:      testutil.GetTestModel("openai"),
+		Model:      testutil.TestModel("openai"),
 		Messages:   testutil.ToolCallMessages(),
 		Tools:      []providers.Tool{testutil.WeatherTool()},
 		ToolChoice: "auto",
@@ -392,7 +392,7 @@ func TestIntegrationCompletionConversation(t *testing.T) {
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.GetTestModel("openai"),
+		Model:    testutil.TestModel("openai"),
 		Messages: testutil.ConversationMessages(),
 	}
 
@@ -418,7 +418,7 @@ func TestIntegrationEmbedding(t *testing.T) {
 
 	ctx := context.Background()
 	params := providers.EmbeddingParams{
-		Model: testutil.GetEmbeddingModel("openai"),
+		Model: testutil.EmbeddingModel("openai"),
 		Input: "Hello, world!",
 	}
 

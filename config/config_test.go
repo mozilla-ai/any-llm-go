@@ -396,8 +396,12 @@ func TestNew(t *testing.T) {
 			wantAPIKey:  "test-key",
 		},
 		{
-			name:        "multiple options applied",
-			opts:        []Option{WithAPIKey("my-key"), WithBaseURL("https://api.example.com"), WithTimeout(30 * time.Second)},
+			name: "multiple options applied",
+			opts: []Option{
+				WithAPIKey("my-key"),
+				WithBaseURL("https://api.example.com"),
+				WithTimeout(30 * time.Second),
+			},
 			wantErr:     false,
 			wantTimeout: 30 * time.Second,
 			wantAPIKey:  "my-key",

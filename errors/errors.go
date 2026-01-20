@@ -193,8 +193,11 @@ func NewProviderError(provider, message string, statusCode int, err error) *Prov
 func NewMissingAPIKeyError(provider, envVar string) *MissingAPIKeyError {
 	return &MissingAPIKeyError{
 		BaseError: BaseError{
-			Code:     "missing_api_key",
-			Message:  fmt.Sprintf("API key not provided. Set %s environment variable or pass WithAPIKey option", envVar),
+			Code: "missing_api_key",
+			Message: fmt.Sprintf(
+				"API key not provided. Set %s environment variable or pass WithAPIKey option",
+				envVar,
+			),
 			Provider: provider,
 			Err:      ErrMissingAPIKey,
 		},

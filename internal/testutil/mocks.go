@@ -133,17 +133,26 @@ func (m *MockProvider) Name() string {
 	return m.NameFunc()
 }
 
-func (m *MockProvider) Completion(ctx context.Context, params providers.CompletionParams) (*providers.ChatCompletion, error) {
+func (m *MockProvider) Completion(
+	ctx context.Context,
+	params providers.CompletionParams,
+) (*providers.ChatCompletion, error) {
 	m.CompletionCalls = append(m.CompletionCalls, params)
 	return m.CompletionFunc(ctx, params)
 }
 
-func (m *MockProvider) CompletionStream(ctx context.Context, params providers.CompletionParams) (<-chan providers.ChatCompletionChunk, <-chan error) {
+func (m *MockProvider) CompletionStream(
+	ctx context.Context,
+	params providers.CompletionParams,
+) (<-chan providers.ChatCompletionChunk, <-chan error) {
 	m.CompletionStreamCalls = append(m.CompletionStreamCalls, params)
 	return m.CompletionStreamFunc(ctx, params)
 }
 
-func (m *MockProvider) Embedding(ctx context.Context, params providers.EmbeddingParams) (*providers.EmbeddingResponse, error) {
+func (m *MockProvider) Embedding(
+	ctx context.Context,
+	params providers.EmbeddingParams,
+) (*providers.EmbeddingResponse, error) {
 	m.EmbeddingCalls = append(m.EmbeddingCalls, params)
 	return m.EmbeddingFunc(ctx, params)
 }

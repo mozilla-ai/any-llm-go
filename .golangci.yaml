@@ -7,15 +7,27 @@ linters:
     - ineffassign
     - staticcheck
     - unused
-  disable:
-    - tagliatelle  # Disabled: OpenAI API uses snake_case JSON tags.
+    - tagliatelle
+    - tagalign
   settings:
     errcheck:
       check-type-assertions: true
     govet:
       enable-all: true
       disable:
-        - fieldalignment  # Struct layout must match OpenAI API for JSON compatibility.
+        - fieldalignment  # Memory optimization not needed; prefer logical field ordering.
+    tagliatelle:
+      case:
+        rules:
+          json: camel
+          yaml: snake
+          toml: snake
+        overrides:
+          # OpenAI API-compatible types use snake_case.
+          - pkg: providers
+            ignore: true
+          - pkg: providers/platform
+            ignore: true
 
 formatters:
   enable:
@@ -23,6 +35,7 @@ formatters:
     - gofmt
     - gofumpt
     - goimports
+    - golines
   settings:
     gci:
       sections:
@@ -32,8 +45,8 @@ formatters:
         - blank
         - dot
         - localmodule
-    gofumpt:
-      extra-rules: true
+    golines:
+      max-len: 120
 
 issues:
   fix: true

@@ -44,8 +44,8 @@ var tools = []anyllm.Tool{
 	},
 }
 
-// Simulate a weather API call.
-func getWeather(location, unit string) string {
+// simulateWeather simulates a weather API call.
+func simulateWeather(location, unit string) string {
 	if unit == "" {
 		unit = "celsius"
 	}
@@ -102,7 +102,7 @@ func main() {
 			}
 
 			// Execute the function.
-			result := getWeather(args.Location, args.Unit)
+			result := simulateWeather(args.Location, args.Unit)
 			fmt.Printf("  Result: %s\n", result)
 			fmt.Println()
 
