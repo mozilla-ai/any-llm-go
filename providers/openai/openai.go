@@ -4,6 +4,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -35,10 +36,12 @@ type Provider struct {
 
 // New creates a new OpenAI provider.
 func New(opts ...config.Option) (*Provider, error) {
-	cfg := config.New()
-	cfg.ApplyOptions(opts...)
+	cfg, err := config.New(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("invalid options: %w", err)
+	}
 
-	apiKey := cfg.GetAPIKeyFromEnv(envAPIKey)
+	apiKey := cfg.ResolveAPIKey(envAPIKey)
 	if apiKey == "" {
 		return nil, errors.NewMissingAPIKeyError(providerName, envAPIKey)
 	}

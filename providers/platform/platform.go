@@ -70,10 +70,12 @@ var (
 
 // New creates a new platform provider.
 func New(opts ...config.Option) (*Provider, error) {
-	cfg := config.New()
-	cfg.ApplyOptions(opts...)
+	cfg, err := config.New(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("invalid options: %w", err)
+	}
 
-	anyLLMKey := cfg.GetAPIKeyFromEnv(envAPIKey)
+	anyLLMKey := cfg.ResolveAPIKey(envAPIKey)
 	if anyLLMKey == "" {
 		return nil, errors.NewMissingAPIKeyError(providerName, envAPIKey)
 	}
@@ -87,19 +89,24 @@ func New(opts ...config.Option) (*Provider, error) {
 		anyllmplatform.WithPlatformURL(platformURL),
 	)
 
+	// Read client name from Extra if set.
+	var clientName string
+	if v, ok := cfg.ExtraValue("client_name"); ok {
+		clientName, _ = v.(string)
+	}
+
 	return &Provider{
 		config:         cfg,
 		platformClient: platformClient,
 		httpClient:     &http.Client{Timeout: 30 * time.Second},
 		anyLLMKey:      anyLLMKey,
+		clientName:     clientName,
 	}, nil
 }
 
 // WithClientName sets a client name for per-client usage tracking.
 func WithClientName(name string) config.Option {
-	return func(cfg *config.Config) {
-		cfg.Extra["client_name"] = name
-	}
+	return config.WithExtra("client_name", strings.TrimSpace(name))
 }
 
 // Name returns the provider name.

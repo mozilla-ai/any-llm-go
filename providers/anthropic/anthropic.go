@@ -4,6 +4,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -41,10 +42,12 @@ var (
 
 // New creates a new Anthropic provider.
 func New(opts ...config.Option) (*Provider, error) {
-	cfg := config.New()
-	cfg.ApplyOptions(opts...)
+	cfg, err := config.New(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("invalid options: %w", err)
+	}
 
-	apiKey := cfg.GetAPIKeyFromEnv(envAPIKey)
+	apiKey := cfg.ResolveAPIKey(envAPIKey)
 	if apiKey == "" {
 		return nil, errors.NewMissingAPIKeyError(providerName, envAPIKey)
 	}
