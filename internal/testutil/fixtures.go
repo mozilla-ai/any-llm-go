@@ -5,7 +5,8 @@ import (
 	"os"
 	"time"
 
-	llm "github.com/mozilla-ai/any-llm-go"
+	"github.com/mozilla-ai/any-llm-go/config"
+	"github.com/mozilla-ai/any-llm-go/providers"
 )
 
 // ProviderModelMap maps providers to small, cheap test models.
@@ -50,8 +51,8 @@ var EmbeddingProviderModelMap = map[string]string{
 }
 
 // ProviderClientConfig holds provider-specific configuration for tests.
-var ProviderClientConfig = map[string][]llm.Option{
-	"anthropic": {llm.WithTimeout(60 * time.Second)},
+var ProviderClientConfig = map[string][]config.Option{
+	"anthropic": {config.WithTimeout(60 * time.Second)},
 }
 
 // LocalProviders are providers that run locally and don't need API keys.
@@ -63,49 +64,66 @@ var LocalProviders = map[string]bool{
 	"vllm":      true,
 }
 
+// providerEnvKeys maps provider names to their API key environment variable names.
+var providerEnvKeys = map[string]string{
+	"anthropic":  "ANTHROPIC_API_KEY",
+	"cerebras":   "CEREBRAS_API_KEY",
+	"cohere":     "COHERE_API_KEY",
+	"deepseek":   "DEEPSEEK_API_KEY",
+	"fireworks":  "FIREWORKS_API_KEY",
+	"gemini":     "GEMINI_API_KEY",
+	"groq":       "GROQ_API_KEY",
+	"mistral":    "MISTRAL_API_KEY",
+	"openai":     "OPENAI_API_KEY",
+	"openrouter": "OPENROUTER_API_KEY",
+	"perplexity": "PERPLEXITY_API_KEY",
+	"together":   "TOGETHER_API_KEY",
+	"xai":        "XAI_API_KEY",
+}
+
 // SimpleMessages returns a simple test message.
-func SimpleMessages() []llm.Message {
-	return []llm.Message{
-		{Role: llm.RoleUser, Content: "Say 'Hello World' exactly, nothing else."},
+func SimpleMessages() []providers.Message {
+	return []providers.Message{
+		{Role: providers.RoleUser, Content: "Say 'Hello World' exactly, nothing else."},
 	}
 }
 
 // MessagesWithSystem returns messages with a system prompt.
-func MessagesWithSystem() []llm.Message {
-	return []llm.Message{
-		{Role: llm.RoleSystem, Content: "You are a helpful assistant that follows instructions exactly."},
-		{Role: llm.RoleUser, Content: "Say 'Hello World' exactly, nothing else."},
+func MessagesWithSystem() []providers.Message {
+	return []providers.Message{
+		{Role: providers.RoleSystem, Content: "You are a helpful assistant that follows instructions exactly."},
+		{Role: providers.RoleUser, Content: "Say 'Hello World' exactly, nothing else."},
 	}
 }
 
 // ConversationMessages returns a multi-turn conversation.
-func ConversationMessages() []llm.Message {
-	return []llm.Message{
-		{Role: llm.RoleUser, Content: "My name is Alice."},
-		{Role: llm.RoleAssistant, Content: "Hello Alice! Nice to meet you."},
-		{Role: llm.RoleUser, Content: "What is my name?"},
+func ConversationMessages() []providers.Message {
+	return []providers.Message{
+		{Role: providers.RoleUser, Content: "My name is Alice."},
+		{Role: providers.RoleAssistant, Content: "Hello Alice! Nice to meet you."},
+		{Role: providers.RoleUser, Content: "What is my name?"},
 	}
 }
 
 // ToolCallMessages returns messages for testing tool calls.
-func ToolCallMessages() []llm.Message {
-	return []llm.Message{
-		{Role: llm.RoleUser, Content: "What is the weather in Paris?"},
+func ToolCallMessages() []providers.Message {
+	return []providers.Message{
+		{Role: providers.RoleUser, Content: "What is the weather in Paris?"},
 	}
 }
 
 // AgentLoopMessages returns messages for testing agent loops.
-func AgentLoopMessages() []llm.Message {
-	return []llm.Message{
-		{Role: llm.RoleUser, Content: "What is the weather like in Salvaterra?"},
+func AgentLoopMessages() []providers.Message {
+	return []providers.Message{
+		{Role: providers.RoleUser, Content: "What is the weather like in Salvaterra?"},
 		{
-			Role:    llm.RoleAssistant,
+			Role:    providers.RoleAssistant,
 			Content: "",
-			ToolCalls: []llm.ToolCall{
+			ToolCalls: []providers.ToolCall{
 				{
 					ID:   "call_123",
 					Type: "function",
-					Function: llm.FunctionCall{
+					Function: providers.FunctionCall{
 						Name:      "get_weather",
 						Arguments: `{"location": "Salvaterra"}`,
 					},
@@ -113,7 +131,7 @@ func AgentLoopMessages() []llm.Message {
 			},
 		},
 		{
-			Role:       llm.RoleTool,
+			Role:       providers.RoleTool,
 			Content:    "sunny, 22°C",
 			ToolCallID: "call_123",
 		},
@@ -121,10 +139,10 @@ func AgentLoopMessages() []llm.Message {
 }
 
 // WeatherTool returns a weather tool definition for testing.
-func WeatherTool() llm.Tool {
-	return llm.Tool{
+func WeatherTool() providers.Tool {
+	return providers.Tool{
 		Type: "function",
-		Function: llm.Function{
+		Function: providers.Function{
 			Name:        "get_weather",
 			Description: "Get the current weather for a location.",
 			Parameters: map[string]any{
@@ -142,10 +160,10 @@ func WeatherTool() llm.Tool {
 }
 
 // DateTool returns a date tool definition for testing.
-func DateTool() llm.Tool {
-	return llm.Tool{
+func DateTool() providers.Tool {
+	return providers.Tool{
 		Type: "function",
-		Function: llm.Function{
+		Function: providers.Function{
 			Name:        "get_current_date",
 			Description: "Get the current date and time.",
 			Parameters: map[string]any{
@@ -162,8 +180,8 @@ func HasAPIKey(provider string) bool {
 		return true
 	}
 
-	envKey := llm.ProviderEnvKeyName(llm.LLMProvider(provider))
-	if envKey == "" {
+	envKey, ok := providerEnvKeys[provider]
+	if !ok {
 		return false
 	}
 	return os.Getenv(envKey) != ""
@@ -200,7 +218,7 @@ func GetEmbeddingModel(provider string) string {
 }
 
 // GetClientOptions returns the client options for a provider.
-func GetClientOptions(provider string) []llm.Option {
+func GetClientOptions(provider string) []config.Option {
 	if opts, ok := ProviderClientConfig[provider]; ok {
 		return opts
 	}

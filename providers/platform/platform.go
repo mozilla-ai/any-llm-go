@@ -16,7 +16,11 @@ import (
 	"github.com/google/uuid"
 	anyllmplatform "github.com/mozilla-ai/any-llm-platform-client-go"
 
-	llm "github.com/mozilla-ai/any-llm-go"
+	"github.com/mozilla-ai/any-llm-go/config"
+	"github.com/mozilla-ai/any-llm-go/errors"
+	"github.com/mozilla-ai/any-llm-go/providers"
+	"github.com/mozilla-ai/any-llm-go/providers/anthropic"
+	"github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
 const (
@@ -26,39 +30,52 @@ const (
 	defaultPlatformURL = "https://platform-api.any-llm.ai/api/v1"
 )
 
-// Provider implements the llm.Provider interface for the ANY LLM platform.
+// newProviderFunc creates a provider with the given options.
+type newProviderFunc func(opts ...config.Option) (providers.Provider, error)
+
+// supportedProviders maps provider names to their constructors.
+var supportedProviders = map[string]newProviderFunc{
+	"openai": func(opts ...config.Option) (providers.Provider, error) {
+		return openai.New(opts...)
+	},
+	"anthropic": func(opts ...config.Option) (providers.Provider, error) {
+		return anthropic.New(opts...)
+	},
+}
+
+// Provider implements the providers.Provider interface for the ANY LLM platform.
 // It proxies requests to underlying providers (OpenAI, Anthropic, etc.) after
 // authenticating with the platform to get decrypted API keys.
 type Provider struct {
-	config         *llm.Config
+	config         *config.Config
 	platformClient *anyllmplatform.Client
 	httpClient     *http.Client
 	anyLLMKey      string
 	clientName     string
 
-	// Cached provider information
+	// Cached provider information.
 	providerKeyID string
 	projectID     string
 
-	// The underlying provider that handles actual LLM calls
-	underlyingProvider llm.Provider
+	// The underlying provider that handles actual LLM calls.
+	underlyingProvider providers.Provider
 	underlyingName     string
 }
 
 // Ensure Provider implements the required interfaces.
 var (
-	_ llm.Provider           = (*Provider)(nil)
-	_ llm.CapabilityProvider = (*Provider)(nil)
+	_ providers.Provider           = (*Provider)(nil)
+	_ providers.CapabilityProvider = (*Provider)(nil)
 )
 
 // New creates a new platform provider.
-func New(opts ...llm.Option) (*Provider, error) {
-	cfg := llm.DefaultConfig()
+func New(opts ...config.Option) (*Provider, error) {
+	cfg := config.New()
 	cfg.ApplyOptions(opts...)
 
 	anyLLMKey := cfg.GetAPIKeyFromEnv(envAPIKey)
 	if anyLLMKey == "" {
-		return nil, llm.NewMissingAPIKeyError(providerName, envAPIKey)
+		return nil, errors.NewMissingAPIKeyError(providerName, envAPIKey)
 	}
 
 	platformURL := os.Getenv(envPlatformURL)
@@ -79,8 +96,8 @@ func New(opts ...llm.Option) (*Provider, error) {
 }
 
 // WithClientName sets a client name for per-client usage tracking.
-func WithClientName(name string) llm.Option {
-	return func(cfg *llm.Config) {
+func WithClientName(name string) config.Option {
+	return func(cfg *config.Config) {
 		cfg.Extra["client_name"] = name
 	}
 }
@@ -92,9 +109,9 @@ func (p *Provider) Name() string {
 
 // Capabilities returns the provider's capabilities.
 // Since this is a proxy, capabilities depend on the underlying provider.
-func (p *Provider) Capabilities() llm.ProviderCapabilities {
-	// Return full capabilities since we can proxy to any provider
-	return llm.ProviderCapabilities{
+func (p *Provider) Capabilities() providers.Capabilities {
+	// Return full capabilities since we can proxy to any provider.
+	return providers.Capabilities{
 		Completion:          true,
 		CompletionStreaming: true,
 		CompletionReasoning: true,
@@ -120,8 +137,12 @@ func (p *Provider) initializeProvider(ctx context.Context, providerName string) 
 	p.providerKeyID = result.ProviderKeyID.String()
 	p.projectID = result.ProjectID.String()
 
-	// Create the underlying provider using the decrypted API key
-	provider, err := llm.NewProvider(providerName, llm.WithAPIKey(result.APIKey))
+	// Create the underlying provider using the decrypted API key.
+	constructor, ok := supportedProviders[strings.ToLower(providerName)]
+	if !ok {
+		return fmt.Errorf("unsupported provider: %s", providerName)
+	}
+	provider, err := constructor(config.WithAPIKey(result.APIKey))
 	if err != nil {
 		return fmt.Errorf("failed to create provider %q: %w", providerName, err)
 	}
@@ -141,7 +162,7 @@ func parseModelString(model string) (providerName, modelID string) {
 }
 
 // Completion performs a chat completion request.
-func (p *Provider) Completion(ctx context.Context, params llm.CompletionParams) (*llm.ChatCompletion, error) {
+func (p *Provider) Completion(ctx context.Context, params providers.CompletionParams) (*providers.ChatCompletion, error) {
 	startTime := time.Now()
 
 	// Parse the model to get the provider name
@@ -172,8 +193,8 @@ func (p *Provider) Completion(ctx context.Context, params llm.CompletionParams) 
 }
 
 // CompletionStream performs a streaming chat completion request.
-func (p *Provider) CompletionStream(ctx context.Context, params llm.CompletionParams) (<-chan llm.ChatCompletionChunk, <-chan error) {
-	chunks := make(chan llm.ChatCompletionChunk)
+func (p *Provider) CompletionStream(ctx context.Context, params providers.CompletionParams) (<-chan providers.ChatCompletionChunk, <-chan error) {
+	chunks := make(chan providers.ChatCompletionChunk)
 	errs := make(chan error, 1)
 
 	go func() {
@@ -198,9 +219,9 @@ func (p *Provider) CompletionStream(ctx context.Context, params llm.CompletionPa
 		// Update params with just the model ID
 		params.Model = modelID
 
-		// Ensure we get usage data in the streaming response for tracking
+		// Ensure we get usage data in the streaming response for tracking.
 		if params.StreamOptions == nil {
-			params.StreamOptions = &llm.StreamOptions{IncludeUsage: true}
+			params.StreamOptions = &providers.StreamOptions{IncludeUsage: true}
 		} else if !params.StreamOptions.IncludeUsage {
 			params.StreamOptions.IncludeUsage = true
 		}
@@ -208,9 +229,9 @@ func (p *Provider) CompletionStream(ctx context.Context, params llm.CompletionPa
 		// Get the stream from the underlying provider
 		upstreamChunks, upstreamErrs := p.underlyingProvider.CompletionStream(ctx, params)
 
-		// Track streaming metrics
+		// Track streaming metrics.
 		var (
-			collectedChunks     []llm.ChatCompletionChunk
+			collectedChunks     []providers.ChatCompletionChunk
 			timeToFirstTokenMs  *float64
 			timeToLastContentMs *float64
 			previousChunkTime   *time.Time
@@ -320,19 +341,19 @@ func calculateVariance(values []float64) float64 {
 }
 
 // combineChunks combines streaming chunks into a ChatCompletion for usage tracking.
-func combineChunks(chunks []llm.ChatCompletionChunk) *llm.ChatCompletion {
+func combineChunks(chunks []providers.ChatCompletionChunk) *providers.ChatCompletion {
 	if len(chunks) == 0 {
 		return nil
 	}
 
 	lastChunk := chunks[len(chunks)-1]
 
-	return &llm.ChatCompletion{
+	return &providers.ChatCompletion{
 		ID:      lastChunk.ID,
 		Object:  "chat.completion",
 		Created: lastChunk.Created,
 		Model:   lastChunk.Model,
-		Choices: []llm.Choice{},
+		Choices: []providers.Choice{},
 		Usage:   lastChunk.Usage,
 	}
 }
@@ -348,7 +369,7 @@ type usageEventPayload struct {
 }
 
 // postUsageEvent posts a usage event to the platform.
-func (p *Provider) postUsageEvent(ctx context.Context, completion *llm.ChatCompletion, metrics *streamingMetrics, totalDurationMs float64) {
+func (p *Provider) postUsageEvent(ctx context.Context, completion *providers.ChatCompletion, metrics *streamingMetrics, totalDurationMs float64) {
 	if completion == nil || completion.Usage == nil {
 		return
 	}
@@ -429,11 +450,4 @@ func (p *Provider) postUsageEvent(ctx context.Context, completion *llm.ChatCompl
 	// Drain and close the response body to allow connection reuse
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
-}
-
-// init registers the platform provider.
-func init() {
-	llm.Register(providerName, func(opts ...llm.Option) (llm.Provider, error) {
-		return New(opts...)
-	})
 }
