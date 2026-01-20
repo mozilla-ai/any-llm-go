@@ -8,37 +8,41 @@ The completion API is the primary way to interact with LLM providers.
 import (
     "context"
 
-    github.com/mozilla-ai/any-llm-go"
-    _ "github.com/mozilla-ai/any-llm-go/providers/openai"
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
+
+provider, err := openai.New()
+if err != nil {
+    log.Fatal(err)
+}
 
 ctx := context.Background()
 
-response, err := llm.Completion(ctx, "openai:gpt-4o-mini", []llm.Message{
-    {Role: llm.RoleUser, Content: "Hello!"},
+response, err := provider.Completion(ctx, anyllm.CompletionParams{
+    Model: "gpt-4o-mini",
+    Messages: []anyllm.Message{
+        {Role: anyllm.RoleUser, Content: "Hello!"},
+    },
 })
 ```
 
-## Functions
+## Provider Interface
 
 ### `Completion`
 
 ```go
-func Completion(
+func (p *Provider) Completion(
     ctx context.Context,
-    model string,
-    messages []Message,
-    opts ...Option,
+    params CompletionParams,
 ) (*ChatCompletion, error)
 ```
 
-Performs a chat completion request using the specified model.
+Performs a chat completion request.
 
 **Parameters:**
 - `ctx` - Context for cancellation and timeouts
-- `model` - Model string in format `provider:model_id` (e.g., `"openai:gpt-4o-mini"`)
-- `messages` - Slice of messages comprising the conversation
-- `opts` - Optional configuration options
+- `params` - Completion parameters including model and messages
 
 **Returns:**
 - `*ChatCompletion` - The completion response
@@ -47,9 +51,12 @@ Performs a chat completion request using the specified model.
 **Example:**
 
 ```go
-response, err := llm.Completion(ctx, "anthropic:claude-3-5-haiku-latest", []llm.Message{
-    {Role: llm.RoleSystem, Content: "You are a helpful assistant."},
-    {Role: llm.RoleUser, Content: "What is Go?"},
+response, err := provider.Completion(ctx, anyllm.CompletionParams{
+    Model: "claude-3-5-haiku-latest",
+    Messages: []anyllm.Message{
+        {Role: anyllm.RoleSystem, Content: "You are a helpful assistant."},
+        {Role: anyllm.RoleUser, Content: "What is Go?"},
+    },
 })
 if err != nil {
     log.Fatal(err)
@@ -58,87 +65,53 @@ if err != nil {
 fmt.Println(response.Choices[0].Message.Content)
 ```
 
-### `CompletionWithParams`
-
-```go
-func CompletionWithParams(
-    ctx context.Context,
-    model string,
-    params CompletionParams,
-    opts ...Option,
-) (*ChatCompletion, error)
-```
-
-Performs a chat completion with full parameter control.
-
-**Parameters:**
-- `ctx` - Context for cancellation and timeouts
-- `model` - Model string in format `provider:model_id`
-- `params` - Full completion parameters
-- `opts` - Optional configuration options
-
-**Example:**
-
-```go
-temp := 0.7
-maxTokens := 1000
-
-response, err := llm.CompletionWithParams(ctx, "openai:gpt-4o", llm.CompletionParams{
-    Messages: []llm.Message{
-        {Role: llm.RoleUser, Content: "Write a poem about coding."},
-    },
-    Temperature: &temp,
-    MaxTokens:   &maxTokens,
-})
-```
-
 ## CompletionParams
 
 Full parameters for completion requests:
 
 ```go
 type CompletionParams struct {
-    // Model is the model ID to use (required if not using convenience function)
+    // Model is the model ID to use (required).
     Model string `json:"model"`
 
-    // Messages is the conversation history (required)
+    // Messages is the conversation history (required).
     Messages []Message `json:"messages"`
 
-    // Temperature controls randomness (0.0-2.0, default varies by provider)
+    // Temperature controls randomness (0.0-2.0, default varies by provider).
     Temperature *float64 `json:"temperature,omitempty"`
 
-    // TopP controls nucleus sampling (0.0-1.0)
+    // TopP controls nucleus sampling (0.0-1.0).
     TopP *float64 `json:"top_p,omitempty"`
 
-    // MaxTokens limits the response length
+    // MaxTokens limits the response length.
     MaxTokens *int `json:"max_tokens,omitempty"`
 
-    // Stop sequences that will halt generation
+    // Stop sequences that will halt generation.
     Stop []string `json:"stop,omitempty"`
 
-    // Stream enables streaming responses
+    // Stream enables streaming responses.
     Stream bool `json:"stream,omitempty"`
 
-    // Tools available for the model to call
+    // Tools available for the model to call.
     Tools []Tool `json:"tools,omitempty"`
 
-    // ToolChoice controls tool selection behavior
-    // Can be "auto", "none", "required", or a ToolChoice struct
+    // ToolChoice controls tool selection behavior.
+    // Can be "auto", "none", "required", or a ToolChoice struct.
     ToolChoice any `json:"tool_choice,omitempty"`
 
-    // ParallelToolCalls allows multiple tool calls in one response
+    // ParallelToolCalls allows multiple tool calls in one response.
     ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
 
-    // ResponseFormat specifies the output format
+    // ResponseFormat specifies the output format.
     ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 
-    // ReasoningEffort controls extended thinking (for supported models)
+    // ReasoningEffort controls extended thinking (for supported models).
     ReasoningEffort ReasoningEffort `json:"reasoning_effort,omitempty"`
 
-    // Seed for deterministic outputs (if supported)
+    // Seed for deterministic outputs (if supported).
     Seed *int `json:"seed,omitempty"`
 
-    // User identifier for tracking
+    // User identifier for tracking.
     User string `json:"user,omitempty"`
 }
 ```
@@ -174,11 +147,11 @@ const (
 For messages with images or other content types:
 
 ```go
-message := llm.Message{
-    Role: llm.RoleUser,
-    Content: []llm.ContentPart{
+message := anyllm.Message{
+    Role: anyllm.RoleUser,
+    Content: []anyllm.ContentPart{
         {Type: "text", Text: "What's in this image?"},
-        {Type: "image_url", ImageURL: &llm.ImageURL{
+        {Type: "image_url", ImageURL: &anyllm.ImageURL{
             URL: "https://example.com/image.jpg",
         }},
     },
@@ -208,7 +181,6 @@ type Choice struct {
     Index        int     `json:"index"`
     Message      Message `json:"message"`
     FinishReason string  `json:"finish_reason,omitempty"`
-    Logprobs     any     `json:"logprobs,omitempty"`
 }
 ```
 
@@ -216,9 +188,9 @@ type Choice struct {
 
 ```go
 const (
-    FinishReasonStop       = "stop"
-    FinishReasonLength     = "length"
-    FinishReasonToolCalls  = "tool_calls"
+    FinishReasonStop          = "stop"
+    FinishReasonLength        = "length"
+    FinishReasonToolCalls     = "tool_calls"
     FinishReasonContentFilter = "content_filter"
 )
 ```
@@ -228,10 +200,10 @@ const (
 ### Defining Tools
 
 ```go
-tools := []llm.Tool{
+tools := []anyllm.Tool{
     {
         Type: "function",
-        Function: llm.Function{
+        Function: anyllm.Function{
             Name:        "get_weather",
             Description: "Get the current weather for a location",
             Parameters: map[string]any{
@@ -252,28 +224,28 @@ tools := []llm.Tool{
 ### Processing Tool Calls
 
 ```go
-response, err := provider.Completion(ctx, llm.CompletionParams{
+response, err := provider.Completion(ctx, anyllm.CompletionParams{
     Model:    "gpt-4o-mini",
     Messages: messages,
     Tools:    tools,
 })
 
-if response.Choices[0].FinishReason == llm.FinishReasonToolCalls {
+if response.Choices[0].FinishReason == anyllm.FinishReasonToolCalls {
     for _, tc := range response.Choices[0].Message.ToolCalls {
-        // Process tool call
+        // Process tool call.
         result := executeFunction(tc.Function.Name, tc.Function.Arguments)
 
-        // Add tool result to messages
+        // Add tool result to messages.
         messages = append(messages, response.Choices[0].Message)
-        messages = append(messages, llm.Message{
-            Role:       llm.RoleTool,
+        messages = append(messages, anyllm.Message{
+            Role:       anyllm.RoleTool,
             Content:    result,
             ToolCallID: tc.ID,
         })
     }
 
-    // Continue conversation with tool results
-    response, err = provider.Completion(ctx, llm.CompletionParams{
+    // Continue conversation with tool results.
+    response, err = provider.Completion(ctx, anyllm.CompletionParams{
         Model:    "gpt-4o-mini",
         Messages: messages,
         Tools:    tools,
@@ -281,27 +253,7 @@ if response.Choices[0].FinishReason == llm.FinishReasonToolCalls {
 }
 ```
 
-## Provider Instance
-
-For better performance with multiple requests:
-
-```go
-import "github.com/mozilla-ai/any-llm-go/providers/openai"
-
-provider, err := openai.New()
-if err != nil {
-    log.Fatal(err)
-}
-
-// Use provider.Completion() directly
-response, err := provider.Completion(ctx, llm.CompletionParams{
-    Model:    "gpt-4o-mini",
-    Messages: messages,
-})
-```
-
 ## See Also
 
 - [Streaming](streaming.md) - Streaming responses
 - [Errors](errors.md) - Error handling
-- [Types](types.md) - All type definitions

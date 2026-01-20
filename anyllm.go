@@ -1,196 +1,149 @@
-// Package anyllm provides a unified interface for interacting with multiple LLM providers.
+// Package anyllm provides a unified interface for interacting with LLM providers.
 //
-// It normalizes all responses to OpenAI's format, allowing you to switch between
-// providers without changing your code.
+// This package re-exports common types and configuration options from subpackages,
+// allowing most use cases to work with just two imports:
 //
-// Basic usage:
+//	import (
+//	    anyllm "github.com/mozilla-ai/any-llm-go"
+//	    "github.com/mozilla-ai/any-llm-go/providers/openai"
+//	)
 //
-//	// Using the convenience function
-//	response, err := anyllm.Completion(ctx, "openai:gpt-4", messages)
-//
-//	// Using a specific provider
-//	provider, err := anyllm.NewProvider("anthropic", anyllm.WithAPIKey("sk-..."))
-//	response, err := provider.Completion(ctx, params)
-//
-//	// Streaming
-//	chunks, errs := provider.CompletionStream(ctx, params)
-//	for chunk := range chunks {
-//	    fmt.Print(chunk.Choices[0].Delta.Content)
-//	}
-package llm
+//	provider, err := openai.New(anyllm.WithAPIKey("sk-..."))
+//	response, err := provider.Completion(ctx, anyllm.CompletionParams{
+//	    Model: "gpt-4o-mini",
+//	    Messages: []anyllm.Message{
+//	        {Role: anyllm.RoleUser, Content: "Hello!"},
+//	    },
+//	})
+package anyllm
 
 import (
-	"context"
-	"fmt"
+	"github.com/mozilla-ai/any-llm-go/config"
+	"github.com/mozilla-ai/any-llm-go/errors"
+	"github.com/mozilla-ai/any-llm-go/providers"
 )
 
-// Completion performs a chat completion request using the specified model.
-// The model can be specified as "provider:model" (e.g., "openai:gpt-4") or
-// just "model" if the provider option is also specified.
-//
-// Example:
-//
-//	response, err := anyllm.Completion(ctx, "openai:gpt-4o", []anyllm.Message{
-//	    {Role: "user", Content: "Hello!"},
-//	})
-func Completion(ctx context.Context, model string, messages []Message, opts ...Option) (*ChatCompletion, error) {
-	providerName, modelName := ParseModelString(model)
-	if providerName == "" {
-		return nil, fmt.Errorf("provider must be specified in model string (e.g., 'openai:gpt-4') or use NewProvider directly")
-	}
+// Message roles.
+const (
+	RoleAssistant = providers.RoleAssistant
+	RoleSystem    = providers.RoleSystem
+	RoleTool      = providers.RoleTool
+	RoleUser      = providers.RoleUser
+)
 
-	provider, err := NewProvider(providerName, opts...)
-	if err != nil {
-		return nil, err
-	}
+// Finish reasons.
+const (
+	FinishReasonContentFilter = providers.FinishReasonContentFilter
+	FinishReasonLength        = providers.FinishReasonLength
+	FinishReasonStop          = providers.FinishReasonStop
+	FinishReasonToolCalls     = providers.FinishReasonToolCalls
+)
 
-	return provider.Completion(ctx, CompletionParams{
-		Model:    modelName,
-		Messages: messages,
-	})
-}
+// ReasoningEffort levels.
+const (
+	ReasoningEffortAuto   = providers.ReasoningEffortAuto
+	ReasoningEffortHigh   = providers.ReasoningEffortHigh
+	ReasoningEffortLow    = providers.ReasoningEffortLow
+	ReasoningEffortMedium = providers.ReasoningEffortMedium
+	ReasoningEffortNone   = providers.ReasoningEffortNone
+)
 
-// CompletionWithParams performs a chat completion with full parameter control.
-// The provider is extracted from the model string.
-//
-// Example:
-//
-//	response, err := anyllm.CompletionWithParams(ctx, "anthropic:claude-3-opus", anyllm.CompletionParams{
-//	    Messages:    messages,
-//	    Temperature: ptr(0.7),
-//	    MaxTokens:   ptr(1000),
-//	})
-func CompletionWithParams(ctx context.Context, model string, params CompletionParams, opts ...Option) (*ChatCompletion, error) {
-	providerName, modelName := ParseModelString(model)
-	if providerName == "" {
-		return nil, fmt.Errorf("provider must be specified in model string (e.g., 'openai:gpt-4')")
-	}
+// Provider types.
+type (
+	Capabilities       = providers.Capabilities
+	CapabilityProvider = providers.CapabilityProvider
+	EmbeddingProvider  = providers.EmbeddingProvider
+	ModelLister        = providers.ModelLister
+	Provider           = providers.Provider
+)
 
-	provider, err := NewProvider(providerName, opts...)
-	if err != nil {
-		return nil, err
-	}
+// Request/Response types.
+type (
+	ChatCompletion      = providers.ChatCompletion
+	ChatCompletionChunk = providers.ChatCompletionChunk
+	Choice              = providers.Choice
+	ChunkChoice         = providers.ChunkChoice
+	ChunkDelta          = providers.ChunkDelta
+	CompletionParams    = providers.CompletionParams
+	EmbeddingParams     = providers.EmbeddingParams
+	EmbeddingResponse   = providers.EmbeddingResponse
+	ModelsResponse      = providers.ModelsResponse
+)
 
-	params.Model = modelName
-	return provider.Completion(ctx, params)
-}
+// Message types.
+type (
+	ContentPart = providers.ContentPart
+	ImageURL    = providers.ImageURL
+	Message     = providers.Message
+	Reasoning   = providers.Reasoning
+)
 
-// CompletionStream performs a streaming chat completion request.
-// Returns two channels: one for chunks and one for errors.
-// Both channels are closed when the stream ends.
-//
-// Example:
-//
-//	chunks, errs := anyllm.CompletionStream(ctx, "openai:gpt-4", messages)
-//	for chunk := range chunks {
-//	    fmt.Print(chunk.Choices[0].Delta.Content)
-//	}
-//	if err := <-errs; err != nil {
-//	    log.Fatal(err)
-//	}
-func CompletionStream(ctx context.Context, model string, messages []Message, opts ...Option) (<-chan ChatCompletionChunk, <-chan error) {
-	errChan := make(chan error, 1)
+// Tool types.
+type (
+	Function           = providers.Function
+	FunctionCall       = providers.FunctionCall
+	Tool               = providers.Tool
+	ToolCall           = providers.ToolCall
+	ToolChoice         = providers.ToolChoice
+	ToolChoiceFunction = providers.ToolChoiceFunction
+)
 
-	providerName, modelName := ParseModelString(model)
-	if providerName == "" {
-		errChan <- fmt.Errorf("provider must be specified in model string (e.g., 'openai:gpt-4')")
-		close(errChan)
-		chunks := make(chan ChatCompletionChunk)
-		close(chunks)
-		return chunks, errChan
-	}
+// Response format types.
+type (
+	JSONSchema     = providers.JSONSchema
+	ResponseFormat = providers.ResponseFormat
+	StreamOptions  = providers.StreamOptions
+)
 
-	provider, err := NewProvider(providerName, opts...)
-	if err != nil {
-		errChan <- err
-		close(errChan)
-		chunks := make(chan ChatCompletionChunk)
-		close(chunks)
-		return chunks, errChan
-	}
+// Usage and model types.
+type (
+	EmbeddingData   = providers.EmbeddingData
+	EmbeddingUsage  = providers.EmbeddingUsage
+	Model           = providers.Model
+	ReasoningEffort = providers.ReasoningEffort
+	Usage           = providers.Usage
+)
 
-	return provider.CompletionStream(ctx, CompletionParams{
-		Model:    modelName,
-		Messages: messages,
-		Stream:   true,
-	})
-}
+// Config types.
+type (
+	Config = config.Config
+	Option = config.Option
+)
 
-// CompletionStreamWithParams performs a streaming completion with full parameter control.
-func CompletionStreamWithParams(ctx context.Context, model string, params CompletionParams, opts ...Option) (<-chan ChatCompletionChunk, <-chan error) {
-	errChan := make(chan error, 1)
+// Configuration options.
+var (
+	WithAPIKey     = config.WithAPIKey
+	WithBaseURL    = config.WithBaseURL
+	WithExtra      = config.WithExtra
+	WithHTTPClient = config.WithHTTPClient
+	WithTimeout    = config.WithTimeout
+)
 
-	providerName, modelName := ParseModelString(model)
-	if providerName == "" {
-		errChan <- fmt.Errorf("provider must be specified in model string (e.g., 'openai:gpt-4')")
-		close(errChan)
-		chunks := make(chan ChatCompletionChunk)
-		close(chunks)
-		return chunks, errChan
-	}
+// Sentinel errors for type checking with errors.Is().
+var (
+	ErrAuthentication      = errors.ErrAuthentication
+	ErrContentFilter       = errors.ErrContentFilter
+	ErrContextLength       = errors.ErrContextLength
+	ErrInvalidRequest      = errors.ErrInvalidRequest
+	ErrMissingAPIKey       = errors.ErrMissingAPIKey
+	ErrModelNotFound       = errors.ErrModelNotFound
+	ErrProvider            = errors.ErrProvider
+	ErrRateLimit           = errors.ErrRateLimit
+	ErrUnsupportedParam    = errors.ErrUnsupportedParam
+	ErrUnsupportedProvider = errors.ErrUnsupportedProvider
+)
 
-	provider, err := NewProvider(providerName, opts...)
-	if err != nil {
-		errChan <- err
-		close(errChan)
-		chunks := make(chan ChatCompletionChunk)
-		close(chunks)
-		return chunks, errChan
-	}
-
-	params.Model = modelName
-	params.Stream = true
-	return provider.CompletionStream(ctx, params)
-}
-
-// Embedding performs an embedding request using the specified model.
-//
-// Example:
-//
-//	response, err := anyllm.Embedding(ctx, "openai:text-embedding-3-small", "Hello, world!")
-func Embedding(ctx context.Context, model string, input any, opts ...Option) (*EmbeddingResponse, error) {
-	providerName, modelName := ParseModelString(model)
-	if providerName == "" {
-		return nil, fmt.Errorf("provider must be specified in model string (e.g., 'openai:text-embedding-3-small')")
-	}
-
-	provider, err := NewProvider(providerName, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	embeddingProvider, ok := provider.(EmbeddingProvider)
-	if !ok {
-		return nil, fmt.Errorf("provider %s does not support embeddings", providerName)
-	}
-
-	return embeddingProvider.Embedding(ctx, EmbeddingParams{
-		Model: modelName,
-		Input: input,
-	})
-}
-
-// ListModels lists available models for the specified provider.
-//
-// Example:
-//
-//	models, err := anyllm.ListModels(ctx, "openai")
-func ListModels(ctx context.Context, providerName string, opts ...Option) (*ModelsResponse, error) {
-	provider, err := NewProvider(providerName, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	lister, ok := provider.(ModelLister)
-	if !ok {
-		return nil, fmt.Errorf("provider %s does not support listing models", providerName)
-	}
-
-	return lister.ListModels(ctx)
-}
-
-// Helper function to create a pointer to a value.
-// Useful for optional parameters.
-func Ptr[T any](v T) *T {
-	return &v
-}
+// Error types.
+type (
+	AuthenticationError      = errors.AuthenticationError
+	BaseError                = errors.BaseError
+	ContentFilterError       = errors.ContentFilterError
+	ContextLengthError       = errors.ContextLengthError
+	InvalidRequestError      = errors.InvalidRequestError
+	MissingAPIKeyError       = errors.MissingAPIKeyError
+	ModelNotFoundError       = errors.ModelNotFoundError
+	ProviderError            = errors.ProviderError
+	RateLimitError           = errors.RateLimitError
+	UnsupportedParamError    = errors.UnsupportedParamError
+	UnsupportedProviderError = errors.UnsupportedProviderError
+)

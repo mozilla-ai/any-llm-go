@@ -1,6 +1,6 @@
 # Supported Providers
 
-any-llm-go supports multiple LLM providers through a unified interface. Each provider is implemented as a separate package that you import to register it.
+any-llm-go supports multiple LLM providers through a unified interface. Each provider is implemented as a separate package.
 
 ## Provider Status
 
@@ -24,20 +24,20 @@ any-llm-go supports multiple LLM providers through a unified interface. Each pro
 
 ```go
 import (
-    github.com/mozilla-ai/any-llm-go"
+    anyllm "github.com/mozilla-ai/any-llm-go"
     "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
-// Using environment variable (OPENAI_API_KEY)
+// Using environment variable (OPENAI_API_KEY).
 provider, err := openai.New()
 
-// Or with explicit API key
-provider, err := openai.New(llm.WithAPIKey("sk-..."))
+// Or with explicit API key.
+provider, err := openai.New(anyllm.WithAPIKey("sk-..."))
 
-// Or with custom base URL (for Azure, proxies, etc.)
+// Or with custom base URL (for Azure, proxies, etc.).
 provider, err := openai.New(
-    llm.WithAPIKey("your-key"),
-    llm.WithBaseURL("https://your-endpoint.openai.azure.com"),
+    anyllm.WithAPIKey("your-key"),
+    anyllm.WithBaseURL("https://your-endpoint.openai.azure.com"),
 )
 ```
 
@@ -58,15 +58,15 @@ provider, err := openai.New(
 
 ```go
 import (
-    github.com/mozilla-ai/any-llm-go"
+    anyllm "github.com/mozilla-ai/any-llm-go"
     "github.com/mozilla-ai/any-llm-go/providers/anthropic"
 )
 
-// Using environment variable (ANTHROPIC_API_KEY)
+// Using environment variable (ANTHROPIC_API_KEY).
 provider, err := anthropic.New()
 
-// Or with explicit API key
-provider, err := anthropic.New(llm.WithAPIKey("sk-ant-..."))
+// Or with explicit API key.
+provider, err := anthropic.New(anyllm.WithAPIKey("sk-ant-..."))
 ```
 
 **Environment Variable:** `ANTHROPIC_API_KEY`
@@ -82,13 +82,13 @@ provider, err := anthropic.New(llm.WithAPIKey("sk-ant-..."))
 Anthropic's Claude models support extended thinking for complex reasoning tasks:
 
 ```go
-response, err := provider.Completion(ctx, llm.CompletionParams{
+response, err := provider.Completion(ctx, anyllm.CompletionParams{
     Model: "claude-sonnet-4-20250514",
     Messages: messages,
-    ReasoningEffort: llm.ReasoningEffortMedium, // low, medium, or high
+    ReasoningEffort: anyllm.ReasoningEffortMedium, // low, medium, or high
 })
 
-// Access the thinking content
+// Access the thinking content.
 if response.Choices[0].Message.Reasoning != nil {
     fmt.Println("Thinking:", response.Choices[0].Message.Reasoning.Content)
 }

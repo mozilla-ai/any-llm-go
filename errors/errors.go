@@ -1,7 +1,7 @@
-package llm
+package errors
 
 import (
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -9,16 +9,16 @@ import (
 
 // Sentinel errors for type checking with errors.Is().
 var (
-	ErrRateLimit           = errors.New("rate limit exceeded")
-	ErrAuthentication      = errors.New("authentication failed")
-	ErrInvalidRequest      = errors.New("invalid request")
-	ErrContextLength       = errors.New("context length exceeded")
-	ErrContentFilter       = errors.New("content filtered")
-	ErrModelNotFound       = errors.New("model not found")
-	ErrProvider            = errors.New("provider error")
-	ErrMissingAPIKey       = errors.New("missing API key")
-	ErrUnsupportedProvider = errors.New("unsupported provider")
-	ErrUnsupportedParam    = errors.New("unsupported parameter")
+	ErrRateLimit           = stderrors.New("rate limit exceeded")
+	ErrAuthentication      = stderrors.New("authentication failed")
+	ErrInvalidRequest      = stderrors.New("invalid request")
+	ErrContextLength       = stderrors.New("context length exceeded")
+	ErrContentFilter       = stderrors.New("content filtered")
+	ErrModelNotFound       = stderrors.New("model not found")
+	ErrProvider            = stderrors.New("provider error")
+	ErrMissingAPIKey       = stderrors.New("missing API key")
+	ErrUnsupportedProvider = stderrors.New("unsupported provider")
+	ErrUnsupportedParam    = stderrors.New("unsupported parameter")
 )
 
 // BaseError is the base error type for all any-llm errors.
@@ -280,9 +280,9 @@ var (
 	}
 )
 
-// ConvertError attempts to convert a provider error to an any-llm error type.
+// Convert attempts to convert a provider error to an any-llm error type.
 // If the error cannot be classified, it returns a generic ProviderError.
-func ConvertError(provider string, err error) error {
+func Convert(provider string, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -328,8 +328,8 @@ func ConvertError(provider string, err error) error {
 	return NewProviderError(provider, err.Error(), 0, err)
 }
 
-// ConvertErrorWithRegex uses regex patterns for more precise error detection.
-func ConvertErrorWithRegex(provider string, err error, patterns map[*regexp.Regexp]func(string, string, error) error) error {
+// ConvertWithRegex uses regex patterns for more precise error detection.
+func ConvertWithRegex(provider string, err error, patterns map[*regexp.Regexp]func(string, string, error) error) error {
 	if err == nil {
 		return nil
 	}
@@ -342,7 +342,7 @@ func ConvertErrorWithRegex(provider string, err error, patterns map[*regexp.Rege
 		}
 	}
 
-	return ConvertError(provider, err)
+	return Convert(provider, err)
 }
 
 // Is allows checking error types with errors.Is().

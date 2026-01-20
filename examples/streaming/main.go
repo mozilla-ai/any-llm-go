@@ -13,12 +13,12 @@ import (
 	"fmt"
 	"log"
 
-	llm "github.com/mozilla-ai/any-llm-go"
+	anyllm "github.com/mozilla-ai/any-llm-go"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
 func main() {
-	// Create a provider instance for better performance with multiple requests
+	// Create a provider instance for better performance with multiple requests.
 	provider, err := openai.New()
 	if err != nil {
 		log.Fatal(err)
@@ -26,11 +26,11 @@ func main() {
 
 	ctx := context.Background()
 
-	// Request a streaming completion
-	chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
+	// Request a streaming completion.
+	chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
 		Model: "gpt-4o-mini",
-		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: "Write a short poem about programming in Go."},
+		Messages: []anyllm.Message{
+			{Role: anyllm.RoleUser, Content: "Write a short poem about programming in Go."},
 		},
 		Stream: true,
 	})
@@ -38,7 +38,7 @@ func main() {
 	fmt.Println("Streaming response:")
 	fmt.Println("---")
 
-	// Process chunks as they arrive
+	// Process chunks as they arrive.
 	for chunk := range chunks {
 		if len(chunk.Choices) > 0 {
 			content := chunk.Choices[0].Delta.Content
@@ -50,7 +50,7 @@ func main() {
 
 	fmt.Println("\n---")
 
-	// Always check for errors after the stream completes
+	// Always check for errors after the stream completes.
 	if err := <-errs; err != nil {
 		log.Fatal(err)
 	}

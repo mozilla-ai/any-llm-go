@@ -1,4 +1,4 @@
-package llm
+package config
 
 import (
 	"net/http"
@@ -65,8 +65,8 @@ func WithExtra(key string, value any) Option {
 	}
 }
 
-// DefaultConfig returns a Config with default values.
-func DefaultConfig() *Config {
+// New returns a Config with default values.
+func New() *Config {
 	return &Config{
 		Timeout: 120 * time.Second,
 	}

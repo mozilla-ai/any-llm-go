@@ -8,13 +8,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	llm "github.com/mozilla-ai/any-llm-go"
+	"github.com/mozilla-ai/any-llm-go/config"
+	"github.com/mozilla-ai/any-llm-go/errors"
 	"github.com/mozilla-ai/any-llm-go/internal/testutil"
+	"github.com/mozilla-ai/any-llm-go/providers"
 )
 
 func TestNew(t *testing.T) {
 	t.Run("creates provider with API key", func(t *testing.T) {
-		provider, err := New(llm.WithAPIKey("test-api-key"))
+		provider, err := New(config.WithAPIKey("test-api-key"))
 		require.NoError(t, err)
 		assert.NotNil(t, provider)
 		assert.Equal(t, "openai", provider.Name())
@@ -35,7 +37,7 @@ func TestNew(t *testing.T) {
 		assert.Nil(t, provider)
 		assert.Error(t, err)
 
-		var missingKeyErr *llm.MissingAPIKeyError
+		var missingKeyErr *errors.MissingAPIKeyError
 		assert.ErrorAs(t, err, &missingKeyErr)
 		assert.Equal(t, "openai", missingKeyErr.Provider)
 		assert.Equal(t, "OPENAI_API_KEY", missingKeyErr.EnvVar)
@@ -43,7 +45,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestCapabilities(t *testing.T) {
-	provider, err := New(llm.WithAPIKey("test-key"))
+	provider, err := New(config.WithAPIKey("test-key"))
 	require.NoError(t, err)
 
 	caps := provider.Capabilities()
@@ -58,10 +60,10 @@ func TestCapabilities(t *testing.T) {
 
 func TestConvertParams(t *testing.T) {
 	t.Run("converts basic params", func(t *testing.T) {
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model: "gpt-4",
-			Messages: []llm.Message{
-				{Role: llm.RoleUser, Content: "Hello"},
+			Messages: []providers.Message{
+				{Role: providers.RoleUser, Content: "Hello"},
 			},
 		}
 
@@ -74,7 +76,7 @@ func TestConvertParams(t *testing.T) {
 	t.Run("converts temperature and top_p", func(t *testing.T) {
 		temp := 0.7
 		topP := 0.9
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:       "gpt-4",
 			Messages:    testutil.SimpleMessages(),
 			Temperature: &temp,
@@ -89,7 +91,7 @@ func TestConvertParams(t *testing.T) {
 
 	t.Run("converts max_tokens", func(t *testing.T) {
 		maxTokens := 100
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:     "gpt-4",
 			Messages:  testutil.SimpleMessages(),
 			MaxTokens: &maxTokens,
@@ -101,7 +103,7 @@ func TestConvertParams(t *testing.T) {
 	})
 
 	t.Run("converts stop sequences", func(t *testing.T) {
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:    "gpt-4",
 			Messages: testutil.SimpleMessages(),
 			Stop:     []string{"END", "STOP"},
@@ -113,10 +115,10 @@ func TestConvertParams(t *testing.T) {
 	})
 
 	t.Run("converts tools", func(t *testing.T) {
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:    "gpt-4",
 			Messages: testutil.SimpleMessages(),
-			Tools:    []llm.Tool{testutil.WeatherTool()},
+			Tools:    []providers.Tool{testutil.WeatherTool()},
 		}
 
 		req := convertParams(params)
@@ -125,10 +127,10 @@ func TestConvertParams(t *testing.T) {
 	})
 
 	t.Run("converts tool_choice auto", func(t *testing.T) {
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:      "gpt-4",
 			Messages:   testutil.SimpleMessages(),
-			Tools:      []llm.Tool{testutil.WeatherTool()},
+			Tools:      []providers.Tool{testutil.WeatherTool()},
 			ToolChoice: "auto",
 		}
 
@@ -138,10 +140,10 @@ func TestConvertParams(t *testing.T) {
 	})
 
 	t.Run("converts tool_choice required", func(t *testing.T) {
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:      "gpt-4",
 			Messages:   testutil.SimpleMessages(),
-			Tools:      []llm.Tool{testutil.WeatherTool()},
+			Tools:      []providers.Tool{testutil.WeatherTool()},
 			ToolChoice: "required",
 		}
 
@@ -151,13 +153,13 @@ func TestConvertParams(t *testing.T) {
 	})
 
 	t.Run("converts tool_choice with specific function", func(t *testing.T) {
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:    "gpt-4",
 			Messages: testutil.SimpleMessages(),
-			Tools:    []llm.Tool{testutil.WeatherTool()},
-			ToolChoice: llm.ToolChoice{
+			Tools:    []providers.Tool{testutil.WeatherTool()},
+			ToolChoice: providers.ToolChoice{
 				Type:     "function",
-				Function: &llm.ToolChoiceFunction{Name: "get_weather"},
+				Function: &providers.ToolChoiceFunction{Name: "get_weather"},
 			},
 		}
 
@@ -167,10 +169,10 @@ func TestConvertParams(t *testing.T) {
 	})
 
 	t.Run("converts response_format json_object", func(t *testing.T) {
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:    "gpt-4",
 			Messages: testutil.SimpleMessages(),
-			ResponseFormat: &llm.ResponseFormat{
+			ResponseFormat: &providers.ResponseFormat{
 				Type: "json_object",
 			},
 		}
@@ -181,10 +183,10 @@ func TestConvertParams(t *testing.T) {
 	})
 
 	t.Run("converts reasoning_effort", func(t *testing.T) {
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:           "o1-mini",
 			Messages:        testutil.SimpleMessages(),
-			ReasoningEffort: llm.ReasoningEffortHigh,
+			ReasoningEffort: providers.ReasoningEffortHigh,
 		}
 
 		req := convertParams(params)
@@ -194,7 +196,7 @@ func TestConvertParams(t *testing.T) {
 
 	t.Run("converts seed", func(t *testing.T) {
 		seed := 42
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:    "gpt-4",
 			Messages: testutil.SimpleMessages(),
 			Seed:     &seed,
@@ -206,7 +208,7 @@ func TestConvertParams(t *testing.T) {
 	})
 
 	t.Run("converts user", func(t *testing.T) {
-		params := llm.CompletionParams{
+		params := providers.CompletionParams{
 			Model:    "gpt-4",
 			Messages: testutil.SimpleMessages(),
 			User:     "test-user",
@@ -220,32 +222,32 @@ func TestConvertParams(t *testing.T) {
 
 func TestConvertMessage(t *testing.T) {
 	t.Run("converts system message", func(t *testing.T) {
-		msg := llm.Message{Role: llm.RoleSystem, Content: "You are helpful"}
+		msg := providers.Message{Role: providers.RoleSystem, Content: "You are helpful"}
 		result := convertMessage(msg)
 		assert.NotNil(t, result)
 	})
 
 	t.Run("converts user message", func(t *testing.T) {
-		msg := llm.Message{Role: llm.RoleUser, Content: "Hello"}
+		msg := providers.Message{Role: providers.RoleUser, Content: "Hello"}
 		result := convertMessage(msg)
 		assert.NotNil(t, result)
 	})
 
 	t.Run("converts assistant message", func(t *testing.T) {
-		msg := llm.Message{Role: llm.RoleAssistant, Content: "Hi there!"}
+		msg := providers.Message{Role: providers.RoleAssistant, Content: "Hi there!"}
 		result := convertMessage(msg)
 		assert.NotNil(t, result)
 	})
 
 	t.Run("converts assistant message with tool calls", func(t *testing.T) {
-		msg := llm.Message{
-			Role:    llm.RoleAssistant,
+		msg := providers.Message{
+			Role:    providers.RoleAssistant,
 			Content: "",
-			ToolCalls: []llm.ToolCall{
+			ToolCalls: []providers.ToolCall{
 				{
 					ID:   "call_123",
 					Type: "function",
-					Function: llm.FunctionCall{
+					Function: providers.FunctionCall{
 						Name:      "get_weather",
 						Arguments: `{"location": "Paris"}`,
 					},
@@ -257,8 +259,8 @@ func TestConvertMessage(t *testing.T) {
 	})
 
 	t.Run("converts tool result message", func(t *testing.T) {
-		msg := llm.Message{
-			Role:       llm.RoleTool,
+		msg := providers.Message{
+			Role:       providers.RoleTool,
 			Content:    "sunny, 22°C",
 			ToolCallID: "call_123",
 		}
@@ -267,11 +269,11 @@ func TestConvertMessage(t *testing.T) {
 	})
 
 	t.Run("converts multimodal user message", func(t *testing.T) {
-		msg := llm.Message{
-			Role: llm.RoleUser,
-			Content: []llm.ContentPart{
+		msg := providers.Message{
+			Role: providers.RoleUser,
+			Content: []providers.ContentPart{
 				{Type: "text", Text: "What's in this image?"},
-				{Type: "image_url", ImageURL: &llm.ImageURL{URL: "https://example.com/image.png"}},
+				{Type: "image_url", ImageURL: &providers.ImageURL{URL: "https://example.com/image.png"}},
 			},
 		}
 		result := convertMessage(msg)
@@ -281,12 +283,12 @@ func TestConvertMessage(t *testing.T) {
 
 func TestConvertResponse(t *testing.T) {
 	t.Run("converts basic response", func(t *testing.T) {
-		// We can't easily test this without mocking the OpenAI SDK response
-		// This would be tested in integration tests
+		// We can't easily test this without mocking the OpenAI SDK response.
+		// This would be tested in integration tests.
 	})
 }
 
-// Integration tests - only run if API key is available
+// Integration tests - only run if API key is available.
 
 func TestIntegrationCompletion(t *testing.T) {
 	if testutil.SkipIfNoAPIKey("openai") {
@@ -297,7 +299,7 @@ func TestIntegrationCompletion(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := llm.CompletionParams{
+	params := providers.CompletionParams{
 		Model:    testutil.GetTestModel("openai"),
 		Messages: testutil.SimpleMessages(),
 	}
@@ -309,7 +311,7 @@ func TestIntegrationCompletion(t *testing.T) {
 	assert.Equal(t, "chat.completion", resp.Object)
 	assert.Len(t, resp.Choices, 1)
 	assert.NotEmpty(t, resp.Choices[0].Message.Content)
-	assert.Equal(t, llm.RoleAssistant, resp.Choices[0].Message.Role)
+	assert.Equal(t, providers.RoleAssistant, resp.Choices[0].Message.Role)
 	assert.NotNil(t, resp.Usage)
 	assert.Greater(t, resp.Usage.TotalTokens, 0)
 }
@@ -323,7 +325,7 @@ func TestIntegrationCompletionStream(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := llm.CompletionParams{
+	params := providers.CompletionParams{
 		Model:    testutil.GetTestModel("openai"),
 		Messages: testutil.SimpleMessages(),
 		Stream:   true,
@@ -358,10 +360,10 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := llm.CompletionParams{
+	params := providers.CompletionParams{
 		Model:      testutil.GetTestModel("openai"),
 		Messages:   testutil.ToolCallMessages(),
-		Tools:      []llm.Tool{testutil.WeatherTool()},
+		Tools:      []providers.Tool{testutil.WeatherTool()},
 		ToolChoice: "auto",
 	}
 
@@ -371,12 +373,12 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 	assert.NotEmpty(t, resp.ID)
 	assert.Len(t, resp.Choices, 1)
 
-	// The model should call the weather tool
+	// The model should call the weather tool.
 	if len(resp.Choices[0].Message.ToolCalls) > 0 {
 		tc := resp.Choices[0].Message.ToolCalls[0]
 		assert.Equal(t, "get_weather", tc.Function.Name)
 		assert.Contains(t, tc.Function.Arguments, "Paris")
-		assert.Equal(t, llm.FinishReasonToolCalls, resp.Choices[0].FinishReason)
+		assert.Equal(t, providers.FinishReasonToolCalls, resp.Choices[0].FinishReason)
 	}
 }
 
@@ -389,7 +391,7 @@ func TestIntegrationCompletionConversation(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := llm.CompletionParams{
+	params := providers.CompletionParams{
 		Model:    testutil.GetTestModel("openai"),
 		Messages: testutil.ConversationMessages(),
 	}
@@ -400,7 +402,7 @@ func TestIntegrationCompletionConversation(t *testing.T) {
 	assert.NotEmpty(t, resp.ID)
 	assert.Len(t, resp.Choices, 1)
 
-	// The model should remember the name "Alice"
+	// The model should remember the name "Alice".
 	contentStr, ok := resp.Choices[0].Message.Content.(string)
 	require.True(t, ok, "expected string content")
 	assert.Contains(t, strings.ToLower(contentStr), "alice")
@@ -415,7 +417,7 @@ func TestIntegrationEmbedding(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := llm.EmbeddingParams{
+	params := providers.EmbeddingParams{
 		Model: testutil.GetEmbeddingModel("openai"),
 		Input: "Hello, world!",
 	}
@@ -444,13 +446,13 @@ func TestIntegrationListModels(t *testing.T) {
 	assert.Equal(t, "list", resp.Object)
 	assert.Greater(t, len(resp.Data), 0)
 
-	// Check that some expected models are present
+	// Check that some expected models are present.
 	modelIDs := make([]string, len(resp.Data))
 	for i, m := range resp.Data {
 		modelIDs[i] = m.ID
 	}
 
-	// gpt-4o-mini should be in the list
+	// gpt-4o-mini should be in the list.
 	found := false
 	for _, id := range modelIDs {
 		if strings.Contains(id, "gpt") {
@@ -462,11 +464,11 @@ func TestIntegrationListModels(t *testing.T) {
 }
 
 func TestIntegrationAuthenticationError(t *testing.T) {
-	provider, err := New(llm.WithAPIKey("invalid-api-key"))
+	provider, err := New(config.WithAPIKey("invalid-api-key"))
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	params := llm.CompletionParams{
+	params := providers.CompletionParams{
 		Model:    "gpt-4o-mini",
 		Messages: testutil.SimpleMessages(),
 	}
@@ -474,7 +476,7 @@ func TestIntegrationAuthenticationError(t *testing.T) {
 	_, err = provider.Completion(ctx, params)
 	assert.Error(t, err)
 
-	// Check that it's converted to an authentication error
-	var authErr *llm.AuthenticationError
+	// Check that it's converted to an authentication error.
+	var authErr *errors.AuthenticationError
 	assert.ErrorAs(t, err, &authErr)
 }

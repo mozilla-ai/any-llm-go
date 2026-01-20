@@ -9,7 +9,9 @@ import (
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/shared"
 
-	llm "github.com/mozilla-ai/any-llm-go"
+	"github.com/mozilla-ai/any-llm-go/config"
+	"github.com/mozilla-ai/any-llm-go/errors"
+	"github.com/mozilla-ai/any-llm-go/providers"
 )
 
 const (
@@ -17,28 +19,28 @@ const (
 	envAPIKey    = "OPENAI_API_KEY"
 )
 
-// Provider implements the llm.Provider interface for OpenAI.
-type Provider struct {
-	client *openai.Client
-	config *llm.Config
-}
-
 // Ensure Provider implements the required interfaces.
 var (
-	_ llm.Provider           = (*Provider)(nil)
-	_ llm.EmbeddingProvider  = (*Provider)(nil)
-	_ llm.ModelLister        = (*Provider)(nil)
-	_ llm.CapabilityProvider = (*Provider)(nil)
+	_ providers.Provider           = (*Provider)(nil)
+	_ providers.EmbeddingProvider  = (*Provider)(nil)
+	_ providers.ModelLister        = (*Provider)(nil)
+	_ providers.CapabilityProvider = (*Provider)(nil)
 )
 
+// Provider implements the providers.Provider interface for OpenAI.
+type Provider struct {
+	client *openai.Client
+	config *config.Config
+}
+
 // New creates a new OpenAI provider.
-func New(opts ...llm.Option) (*Provider, error) {
-	cfg := llm.DefaultConfig()
+func New(opts ...config.Option) (*Provider, error) {
+	cfg := config.New()
 	cfg.ApplyOptions(opts...)
 
 	apiKey := cfg.GetAPIKeyFromEnv(envAPIKey)
 	if apiKey == "" {
-		return nil, llm.NewMissingAPIKeyError(providerName, envAPIKey)
+		return nil, errors.NewMissingAPIKeyError(providerName, envAPIKey)
 	}
 
 	clientOpts := []option.RequestOption{
@@ -63,8 +65,8 @@ func (p *Provider) Name() string {
 }
 
 // Capabilities returns the provider's capabilities.
-func (p *Provider) Capabilities() llm.ProviderCapabilities {
-	return llm.ProviderCapabilities{
+func (p *Provider) Capabilities() providers.Capabilities {
+	return providers.Capabilities{
 		Completion:          true,
 		CompletionStreaming: true,
 		CompletionReasoning: true,
@@ -76,20 +78,20 @@ func (p *Provider) Capabilities() llm.ProviderCapabilities {
 }
 
 // Completion performs a chat completion request.
-func (p *Provider) Completion(ctx context.Context, params llm.CompletionParams) (*llm.ChatCompletion, error) {
+func (p *Provider) Completion(ctx context.Context, params providers.CompletionParams) (*providers.ChatCompletion, error) {
 	req := convertParams(params)
 
 	resp, err := p.client.Chat.Completions.New(ctx, req)
 	if err != nil {
-		return nil, llm.ConvertError(providerName, err)
+		return nil, errors.Convert(providerName, err)
 	}
 
 	return convertResponse(resp), nil
 }
 
 // CompletionStream performs a streaming chat completion request.
-func (p *Provider) CompletionStream(ctx context.Context, params llm.CompletionParams) (<-chan llm.ChatCompletionChunk, <-chan error) {
-	chunks := make(chan llm.ChatCompletionChunk)
+func (p *Provider) CompletionStream(ctx context.Context, params providers.CompletionParams) (<-chan providers.ChatCompletionChunk, <-chan error) {
+	chunks := make(chan providers.ChatCompletionChunk)
 	errs := make(chan error, 1)
 
 	go func() {
@@ -106,7 +108,7 @@ func (p *Provider) CompletionStream(ctx context.Context, params llm.CompletionPa
 		}
 
 		if err := stream.Err(); err != nil {
-			errs <- llm.ConvertError(providerName, err)
+			errs <- errors.Convert(providerName, err)
 		}
 	}()
 
@@ -114,27 +116,27 @@ func (p *Provider) CompletionStream(ctx context.Context, params llm.CompletionPa
 }
 
 // Embedding performs an embedding request.
-func (p *Provider) Embedding(ctx context.Context, params llm.EmbeddingParams) (*llm.EmbeddingResponse, error) {
+func (p *Provider) Embedding(ctx context.Context, params providers.EmbeddingParams) (*providers.EmbeddingResponse, error) {
 	req := convertEmbeddingParams(params)
 
 	resp, err := p.client.Embeddings.New(ctx, req)
 	if err != nil {
-		return nil, llm.ConvertError(providerName, err)
+		return nil, errors.Convert(providerName, err)
 	}
 
 	return convertEmbeddingResponse(resp), nil
 }
 
 // ListModels lists available models.
-func (p *Provider) ListModels(ctx context.Context) (*llm.ModelsResponse, error) {
+func (p *Provider) ListModels(ctx context.Context) (*providers.ModelsResponse, error) {
 	resp, err := p.client.Models.List(ctx)
 	if err != nil {
-		return nil, llm.ConvertError(providerName, err)
+		return nil, errors.Convert(providerName, err)
 	}
 
-	models := make([]llm.Model, 0, len(resp.Data))
+	models := make([]providers.Model, 0, len(resp.Data))
 	for _, model := range resp.Data {
-		models = append(models, llm.Model{
+		models = append(models, providers.Model{
 			ID:      model.ID,
 			Object:  "model",
 			Created: model.Created,
@@ -142,14 +144,14 @@ func (p *Provider) ListModels(ctx context.Context) (*llm.ModelsResponse, error) 
 		})
 	}
 
-	return &llm.ModelsResponse{
+	return &providers.ModelsResponse{
 		Object: "list",
 		Data:   models,
 	}, nil
 }
 
-// convertParams converts llm.CompletionParams to OpenAI request parameters.
-func convertParams(params llm.CompletionParams) openai.ChatCompletionNewParams {
+// convertParams converts providers.CompletionParams to OpenAI request parameters.
+func convertParams(params providers.CompletionParams) openai.ChatCompletionNewParams {
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(params.Messages))
 	for _, msg := range params.Messages {
 		messages = append(messages, convertMessage(msg))
@@ -206,7 +208,7 @@ func convertParams(params llm.CompletionParams) openai.ChatCompletionNewParams {
 		req.User = openai.String(params.User)
 	}
 
-	if params.ReasoningEffort != "" && params.ReasoningEffort != llm.ReasoningEffortNone {
+	if params.ReasoningEffort != "" && params.ReasoningEffort != providers.ReasoningEffortNone {
 		req.ReasoningEffort = shared.ReasoningEffort(params.ReasoningEffort)
 	}
 
@@ -219,13 +221,13 @@ func convertParams(params llm.CompletionParams) openai.ChatCompletionNewParams {
 	return req
 }
 
-// convertMessage converts an llm.Message to an OpenAI message parameter.
-func convertMessage(msg llm.Message) openai.ChatCompletionMessageParamUnion {
+// convertMessage converts an providers.Message to an OpenAI message parameter.
+func convertMessage(msg providers.Message) openai.ChatCompletionMessageParamUnion {
 	switch msg.Role {
-	case llm.RoleSystem:
+	case providers.RoleSystem:
 		return openai.SystemMessage(msg.GetContentString())
 
-	case llm.RoleUser:
+	case providers.RoleUser:
 		if msg.IsMultiModal() {
 			parts := make([]openai.ChatCompletionContentPartUnionParam, 0)
 			for _, part := range msg.GetContentParts() {
@@ -241,7 +243,7 @@ func convertMessage(msg llm.Message) openai.ChatCompletionMessageParamUnion {
 		}
 		return openai.UserMessage(msg.GetContentString())
 
-	case llm.RoleAssistant:
+	case providers.RoleAssistant:
 		if len(msg.ToolCalls) > 0 {
 			toolCalls := make([]openai.ChatCompletionMessageToolCallParam, 0, len(msg.ToolCalls))
 			for _, tc := range msg.ToolCalls {
@@ -264,7 +266,7 @@ func convertMessage(msg llm.Message) openai.ChatCompletionMessageParamUnion {
 		}
 		return openai.AssistantMessage(msg.GetContentString())
 
-	case llm.RoleTool:
+	case providers.RoleTool:
 		return openai.ToolMessage(msg.ToolCallID, msg.GetContentString())
 
 	default:
@@ -272,8 +274,8 @@ func convertMessage(msg llm.Message) openai.ChatCompletionMessageParamUnion {
 	}
 }
 
-// convertTool converts an llm.Tool to an OpenAI tool parameter.
-func convertTool(tool llm.Tool) openai.ChatCompletionToolParam {
+// convertTool converts an providers.Tool to an OpenAI tool parameter.
+func convertTool(tool providers.Tool) openai.ChatCompletionToolParam {
 	return openai.ChatCompletionToolParam{
 		Function: shared.FunctionDefinitionParam{
 			Name:        tool.Function.Name,
@@ -291,7 +293,7 @@ func convertToolChoice(choice any) openai.ChatCompletionToolChoiceOptionUnionPar
 		return openai.ChatCompletionToolChoiceOptionUnionParam{
 			OfAuto: openai.String(v),
 		}
-	case llm.ToolChoice:
+	case providers.ToolChoice:
 		if v.Function != nil {
 			return openai.ChatCompletionToolChoiceOptionParamOfChatCompletionNamedToolChoice(
 				openai.ChatCompletionNamedToolChoiceFunctionParam{
@@ -306,7 +308,7 @@ func convertToolChoice(choice any) openai.ChatCompletionToolChoiceOptionUnionPar
 }
 
 // convertResponseFormat converts anyllm response format to OpenAI format.
-func convertResponseFormat(format *llm.ResponseFormat) openai.ChatCompletionNewParamsResponseFormatUnion {
+func convertResponseFormat(format *providers.ResponseFormat) openai.ChatCompletionNewParamsResponseFormatUnion {
 	if format == nil {
 		return openai.ChatCompletionNewParamsResponseFormatUnion{}
 	}
@@ -341,17 +343,17 @@ func convertResponseFormat(format *llm.ResponseFormat) openai.ChatCompletionNewP
 }
 
 // convertResponse converts an OpenAI response to anyllm format.
-func convertResponse(resp *openai.ChatCompletion) *llm.ChatCompletion {
-	choices := make([]llm.Choice, 0, len(resp.Choices))
+func convertResponse(resp *openai.ChatCompletion) *providers.ChatCompletion {
+	choices := make([]providers.Choice, 0, len(resp.Choices))
 	for _, choice := range resp.Choices {
-		choices = append(choices, llm.Choice{
+		choices = append(choices, providers.Choice{
 			Index:        int(choice.Index),
 			Message:      convertResponseMessage(choice.Message),
 			FinishReason: string(choice.FinishReason),
 		})
 	}
 
-	result := &llm.ChatCompletion{
+	result := &providers.ChatCompletion{
 		ID:                resp.ID,
 		Object:            "chat.completion",
 		Created:           resp.Created,
@@ -361,7 +363,7 @@ func convertResponse(resp *openai.ChatCompletion) *llm.ChatCompletion {
 	}
 
 	if resp.Usage.PromptTokens > 0 || resp.Usage.CompletionTokens > 0 {
-		result.Usage = &llm.Usage{
+		result.Usage = &providers.Usage{
 			PromptTokens:     int(resp.Usage.PromptTokens),
 			CompletionTokens: int(resp.Usage.CompletionTokens),
 			TotalTokens:      int(resp.Usage.TotalTokens),
@@ -375,19 +377,19 @@ func convertResponse(resp *openai.ChatCompletion) *llm.ChatCompletion {
 }
 
 // convertResponseMessage converts an OpenAI response message to anyllm format.
-func convertResponseMessage(msg openai.ChatCompletionMessage) llm.Message {
-	result := llm.Message{
+func convertResponseMessage(msg openai.ChatCompletionMessage) providers.Message {
+	result := providers.Message{
 		Role:    string(msg.Role),
 		Content: msg.Content,
 	}
 
 	if len(msg.ToolCalls) > 0 {
-		result.ToolCalls = make([]llm.ToolCall, 0, len(msg.ToolCalls))
+		result.ToolCalls = make([]providers.ToolCall, 0, len(msg.ToolCalls))
 		for _, tc := range msg.ToolCalls {
-			result.ToolCalls = append(result.ToolCalls, llm.ToolCall{
+			result.ToolCalls = append(result.ToolCalls, providers.ToolCall{
 				ID:   tc.ID,
 				Type: string(tc.Type),
-				Function: llm.FunctionCall{
+				Function: providers.FunctionCall{
 					Name:      tc.Function.Name,
 					Arguments: tc.Function.Arguments,
 				},
@@ -399,12 +401,12 @@ func convertResponseMessage(msg openai.ChatCompletionMessage) llm.Message {
 }
 
 // convertChunk converts an OpenAI streaming chunk to anyllm format.
-func convertChunk(chunk *openai.ChatCompletionChunk) llm.ChatCompletionChunk {
-	choices := make([]llm.ChunkChoice, 0, len(chunk.Choices))
+func convertChunk(chunk *openai.ChatCompletionChunk) providers.ChatCompletionChunk {
+	choices := make([]providers.ChunkChoice, 0, len(chunk.Choices))
 	for _, choice := range chunk.Choices {
-		chunkChoice := llm.ChunkChoice{
+		chunkChoice := providers.ChunkChoice{
 			Index: int(choice.Index),
-			Delta: llm.ChunkDelta{
+			Delta: providers.ChunkDelta{
 				Role:    string(choice.Delta.Role),
 				Content: choice.Delta.Content,
 			},
@@ -412,12 +414,12 @@ func convertChunk(chunk *openai.ChatCompletionChunk) llm.ChatCompletionChunk {
 		}
 
 		if len(choice.Delta.ToolCalls) > 0 {
-			chunkChoice.Delta.ToolCalls = make([]llm.ToolCall, 0, len(choice.Delta.ToolCalls))
+			chunkChoice.Delta.ToolCalls = make([]providers.ToolCall, 0, len(choice.Delta.ToolCalls))
 			for _, tc := range choice.Delta.ToolCalls {
-				chunkChoice.Delta.ToolCalls = append(chunkChoice.Delta.ToolCalls, llm.ToolCall{
+				chunkChoice.Delta.ToolCalls = append(chunkChoice.Delta.ToolCalls, providers.ToolCall{
 					ID:   tc.ID,
 					Type: string(tc.Type),
-					Function: llm.FunctionCall{
+					Function: providers.FunctionCall{
 						Name:      tc.Function.Name,
 						Arguments: tc.Function.Arguments,
 					},
@@ -428,7 +430,7 @@ func convertChunk(chunk *openai.ChatCompletionChunk) llm.ChatCompletionChunk {
 		choices = append(choices, chunkChoice)
 	}
 
-	result := llm.ChatCompletionChunk{
+	result := providers.ChatCompletionChunk{
 		ID:                chunk.ID,
 		Object:            "chat.completion.chunk",
 		Created:           chunk.Created,
@@ -438,7 +440,7 @@ func convertChunk(chunk *openai.ChatCompletionChunk) llm.ChatCompletionChunk {
 	}
 
 	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
-		result.Usage = &llm.Usage{
+		result.Usage = &providers.Usage{
 			PromptTokens:     int(chunk.Usage.PromptTokens),
 			CompletionTokens: int(chunk.Usage.CompletionTokens),
 			TotalTokens:      int(chunk.Usage.TotalTokens),
@@ -449,7 +451,7 @@ func convertChunk(chunk *openai.ChatCompletionChunk) llm.ChatCompletionChunk {
 }
 
 // convertEmbeddingParams converts anyllm embedding params to OpenAI format.
-func convertEmbeddingParams(params llm.EmbeddingParams) openai.EmbeddingNewParams {
+func convertEmbeddingParams(params providers.EmbeddingParams) openai.EmbeddingNewParams {
 	req := openai.EmbeddingNewParams{
 		Model: openai.EmbeddingModel(params.Model),
 	}
@@ -481,37 +483,30 @@ func convertEmbeddingParams(params llm.EmbeddingParams) openai.EmbeddingNewParam
 }
 
 // convertEmbeddingResponse converts an OpenAI embedding response to anyllm format.
-func convertEmbeddingResponse(resp *openai.CreateEmbeddingResponse) *llm.EmbeddingResponse {
-	data := make([]llm.EmbeddingData, 0, len(resp.Data))
+func convertEmbeddingResponse(resp *openai.CreateEmbeddingResponse) *providers.EmbeddingResponse {
+	data := make([]providers.EmbeddingData, 0, len(resp.Data))
 	for _, d := range resp.Data {
 		embedding := make([]float64, len(d.Embedding))
 		copy(embedding, d.Embedding)
-		data = append(data, llm.EmbeddingData{
+		data = append(data, providers.EmbeddingData{
 			Object:    "embedding",
 			Embedding: embedding,
 			Index:     int(d.Index),
 		})
 	}
 
-	result := &llm.EmbeddingResponse{
+	result := &providers.EmbeddingResponse{
 		Object: "list",
 		Data:   data,
 		Model:  resp.Model,
 	}
 
 	if resp.Usage.PromptTokens > 0 || resp.Usage.TotalTokens > 0 {
-		result.Usage = &llm.EmbeddingUsage{
+		result.Usage = &providers.EmbeddingUsage{
 			PromptTokens: int(resp.Usage.PromptTokens),
 			TotalTokens:  int(resp.Usage.TotalTokens),
 		}
 	}
 
 	return result
-}
-
-// init registers the OpenAI provider.
-func init() {
-	llm.Register(providerName, func(opts ...llm.Option) (llm.Provider, error) {
-		return New(opts...)
-	})
 }

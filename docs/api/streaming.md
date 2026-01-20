@@ -5,10 +5,10 @@ Streaming allows you to receive partial responses as they're generated, enabling
 ## Quick Start
 
 ```go
-chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
+chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
     Model: "gpt-4o-mini",
-    Messages: []llm.Message{
-        {Role: llm.RoleUser, Content: "Write a short story."},
+    Messages: []anyllm.Message{
+        {Role: anyllm.RoleUser, Content: "Write a short story."},
     },
     Stream: true,
 })
@@ -24,16 +24,14 @@ if err := <-errs; err != nil {
 }
 ```
 
-## Functions
+## Provider Interface
 
 ### `CompletionStream`
 
 ```go
-func CompletionStream(
+func (p *Provider) CompletionStream(
     ctx context.Context,
-    model string,
-    messages []Message,
-    opts ...Option,
+    params CompletionParams,
 ) (<-chan ChatCompletionChunk, <-chan error)
 ```
 
@@ -41,28 +39,13 @@ Performs a streaming chat completion request.
 
 **Parameters:**
 - `ctx` - Context for cancellation and timeouts
-- `model` - Model string in format `provider:model_id`
-- `messages` - Slice of messages comprising the conversation
-- `opts` - Optional configuration options
+- `params` - Completion parameters including model and messages
 
 **Returns:**
 - `<-chan ChatCompletionChunk` - Channel that receives chunks as they arrive
 - `<-chan error` - Channel that receives any error (at most one, then closed)
 
 Both channels are closed when the stream ends.
-
-### `CompletionStreamWithParams`
-
-```go
-func CompletionStreamWithParams(
-    ctx context.Context,
-    model string,
-    params CompletionParams,
-    opts ...Option,
-) (<-chan ChatCompletionChunk, <-chan error)
-```
-
-Performs a streaming completion with full parameter control.
 
 ## Chunk Types
 
@@ -108,7 +91,7 @@ type ChunkDelta struct {
 ```go
 chunks, errs := provider.CompletionStream(ctx, params)
 
-// Process chunks
+// Process chunks.
 for chunk := range chunks {
     if len(chunk.Choices) > 0 {
         delta := chunk.Choices[0].Delta
@@ -118,7 +101,7 @@ for chunk := range chunks {
     }
 }
 
-// Always check for errors
+// Always check for errors.
 if err := <-errs; err != nil {
     log.Printf("Stream error: %v", err)
 }
@@ -153,33 +136,33 @@ fmt.Printf("Finish reason: %s\n", finishReason)
 ### Streaming with Tool Calls
 
 ```go
-chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
+chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
     Model:    "gpt-4o-mini",
     Messages: messages,
     Tools:    tools,
     Stream:   true,
 })
 
-var toolCalls []llm.ToolCall
+var toolCalls []anyllm.ToolCall
 toolCallArgs := make(map[int]strings.Builder)
 
 for chunk := range chunks {
     if len(chunk.Choices) > 0 {
         delta := chunk.Choices[0].Delta
 
-        // Handle content
+        // Handle content.
         if delta.Content != "" {
             fmt.Print(delta.Content)
         }
 
-        // Handle tool calls
+        // Handle tool calls.
         for _, tc := range delta.ToolCalls {
             if tc.Function.Name != "" {
-                // New tool call
+                // New tool call.
                 toolCalls = append(toolCalls, tc)
             }
             if tc.Function.Arguments != "" {
-                // Accumulate arguments
+                // Accumulate arguments.
                 idx := len(toolCalls) - 1
                 toolCallArgs[idx].WriteString(tc.Function.Arguments)
             }
@@ -191,7 +174,7 @@ if err := <-errs; err != nil {
     log.Fatal(err)
 }
 
-// Process completed tool calls
+// Process completed tool calls.
 for i, tc := range toolCalls {
     tc.Function.Arguments = toolCallArgs[i].String()
     fmt.Printf("Tool: %s(%s)\n", tc.Function.Name, tc.Function.Arguments)
@@ -201,10 +184,10 @@ for i, tc := range toolCalls {
 ### Streaming with Reasoning (Claude)
 
 ```go
-chunks, errs := provider.CompletionStream(ctx, llm.CompletionParams{
+chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
     Model:           "claude-sonnet-4-20250514",
     Messages:        messages,
-    ReasoningEffort: llm.ReasoningEffortMedium,
+    ReasoningEffort: anyllm.ReasoningEffortMedium,
     Stream:          true,
 })
 
@@ -213,12 +196,12 @@ for chunk := range chunks {
     if len(chunk.Choices) > 0 {
         delta := chunk.Choices[0].Delta
 
-        // Print thinking content
+        // Print thinking content.
         if delta.Reasoning != nil && delta.Reasoning.Content != "" {
             fmt.Print(delta.Reasoning.Content)
         }
 
-        // Print response content
+        // Print response content.
         if delta.Content != "" {
             fmt.Print(delta.Content)
         }
@@ -239,14 +222,14 @@ chunks, errs := provider.CompletionStream(ctx, params)
 for chunk := range chunks {
     // Process chunk...
 
-    // Cancel if needed
+    // Cancel if needed.
     if someCondition {
         cancel()
         break
     }
 }
 
-// Check for cancellation error
+// Check for cancellation error.
 if err := <-errs; err != nil {
     if errors.Is(err, context.Canceled) {
         fmt.Println("Stream cancelled")
@@ -262,22 +245,22 @@ if err := <-errs; err != nil {
 
 ### OpenAI
 
-- Supports streaming for all chat completion models
-- `usage` field included in final chunk (optional, depends on request)
+- Supports streaming for all chat completion models.
+- `usage` field included in final chunk (optional, depends on request).
 
 ### Anthropic
 
-- Full streaming support including thinking content
-- Events include: `message_start`, `content_block_start`, `content_block_delta`, `message_delta`
-- All events normalized to OpenAI chunk format
+- Full streaming support including thinking content.
+- Events include: `message_start`, `content_block_start`, `content_block_delta`, `message_delta`.
+- All events normalized to OpenAI chunk format.
 
 ## Best Practices
 
-1. **Always drain the channels** - Read from both channels until they're closed
-2. **Check errors** - Always check the error channel after processing chunks
-3. **Use context** - Pass a context with timeout/cancellation for production code
-4. **Handle partial data** - Be prepared for chunks with empty content
-5. **Buffer tool call arguments** - Tool call arguments come in pieces during streaming
+1. **Always drain the channels** - Read from both channels until they're closed.
+2. **Check errors** - Always check the error channel after processing chunks.
+3. **Use context** - Pass a context with timeout/cancellation for production code.
+4. **Handle partial data** - Be prepared for chunks with empty content.
+5. **Buffer tool call arguments** - Tool call arguments come in pieces during streaming.
 
 ## See Also
 
