@@ -93,6 +93,68 @@ func TestParseModelString(t *testing.T) {
 	}
 }
 
+func TestCompletionDoesNotMutateParams(t *testing.T) {
+	t.Parallel()
+
+	// Test that even when the provider fails (platform auth will fail), original params are unchanged.
+	provider, err := New(config.WithAPIKey("ANY.v1.test.fingerprint-dGVzdHByaXZhdGVrZXkxMjM0NTY3ODkwMTI="))
+	require.NoError(t, err)
+
+	originalModel := "openai:gpt-4"
+	originalStream := false
+	originalStreamOptions := &providers.StreamOptions{IncludeUsage: false}
+
+	params := providers.CompletionParams{
+		Model: originalModel,
+		Messages: []providers.Message{
+			{Role: providers.RoleUser, Content: "Hello"},
+		},
+		Stream:        originalStream,
+		StreamOptions: originalStreamOptions,
+	}
+
+	// Call will fail (platform auth will fail), but params should remain unchanged.
+	_, _ = provider.Completion(context.Background(), params)
+
+	// Verify params were not mutated.
+	require.Equal(t, originalModel, params.Model)
+	require.Equal(t, originalStream, params.Stream)
+	require.Equal(t, false, params.StreamOptions.IncludeUsage)
+}
+
+func TestCompletionStreamDoesNotMutateParams(t *testing.T) {
+	t.Parallel()
+
+	provider, err := New(config.WithAPIKey("ANY.v1.test.fingerprint-dGVzdHByaXZhdGVrZXkxMjM0NTY3ODkwMTI="))
+	require.NoError(t, err)
+
+	originalModel := "openai:gpt-4"
+	originalStream := false
+	originalStreamOptions := &providers.StreamOptions{IncludeUsage: false}
+
+	params := providers.CompletionParams{
+		Model: originalModel,
+		Messages: []providers.Message{
+			{Role: providers.RoleUser, Content: "Hello"},
+		},
+		Stream:        originalStream,
+		StreamOptions: originalStreamOptions,
+	}
+
+	// Call will fail (platform auth will fail), but params should remain unchanged.
+	chunks, errs := provider.CompletionStream(context.Background(), params)
+
+	// Drain channels.
+	for range chunks {
+	}
+	<-errs
+
+	// Verify params were not mutated.
+	require.Equal(t, originalModel, params.Model)
+	require.Equal(t, originalStream, params.Stream)
+	require.Equal(t, false, params.StreamOptions.IncludeUsage)
+}
+
 // Integration tests - require actual platform connection and ANY_LLM_KEY
 
 func TestIntegrationOpenAICompletion(t *testing.T) {
