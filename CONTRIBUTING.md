@@ -6,7 +6,7 @@ Thank you for your interest in contributing to any-llm-go! This guide will help 
 
 ### Prerequisites
 
-- **Go 1.23+** - [Download Go](https://go.dev/dl/)
+- **Go 1.25+** - [Download Go](https://go.dev/dl/)
 - **Git** - For version control
 - **API Keys** - For running integration tests (optional)
 - **golangci-lint** - For linting (optional but recommended)

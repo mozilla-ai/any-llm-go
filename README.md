@@ -11,7 +11,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/mozilla-ai/any-llm-go.svg)](https://pkg.go.dev/github.com/mozilla-ai/any-llm-go)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mozilla-ai/any-llm-go)](https://goreportcard.com/report/github.com/mozilla-ai/any-llm-go)
 
-![Go 1.23+](https://img.shields.io/badge/go-1.23%2B-blue.svg)
+![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-blue.svg)
 
 **Communicate with any LLM provider using a single, unified interface.**
 Switch between OpenAI, Anthropic, Mistral, Ollama, and more without changing your code.
@@ -60,7 +60,7 @@ func main() {
 
 ### Requirements
 
-- Go 1.23 or newer
+- Go 1.25 or newer
 - API keys for whichever LLM providers you want to use
 
 ### Basic Installation
