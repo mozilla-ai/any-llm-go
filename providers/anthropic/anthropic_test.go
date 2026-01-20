@@ -186,20 +186,23 @@ func TestConvertStopReason(t *testing.T) {
 	}
 }
 
-func TestReasoningEffortToBudget(t *testing.T) {
+func TestThinkingBudget(t *testing.T) {
 	tests := []struct {
 		effort   providers.ReasoningEffort
 		expected int64
+		ok       bool
 	}{
-		{providers.ReasoningEffortLow, 1024},
-		{providers.ReasoningEffortMedium, 4096},
-		{providers.ReasoningEffortHigh, 16384},
+		{providers.ReasoningEffortLow, 1024, true},
+		{providers.ReasoningEffortMedium, 4096, true},
+		{providers.ReasoningEffortHigh, 16384, true},
+		{providers.ReasoningEffortNone, 0, false},
+		{"invalid", 0, false},
 	}
 
 	for _, tc := range tests {
 		t.Run(string(tc.effort), func(t *testing.T) {
-			budget, ok := reasoningEffortToBudget[tc.effort]
-			assert.True(t, ok)
+			budget, ok := thinkingBudget(tc.effort)
+			assert.Equal(t, tc.ok, ok)
 			assert.Equal(t, tc.expected, budget)
 		})
 	}

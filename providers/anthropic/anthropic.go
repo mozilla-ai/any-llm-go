@@ -21,11 +21,49 @@ const (
 	defaultMaxTokens = 4096
 )
 
-// Reasoning effort to thinking budget tokens mapping.
-var reasoningEffortToBudget = map[providers.ReasoningEffort]int64{
-	providers.ReasoningEffortLow:    1024,
-	providers.ReasoningEffortMedium: 4096,
-	providers.ReasoningEffortHigh:   16384,
+// Anthropic streaming event types.
+const (
+	eventMessageStart      = "message_start"
+	eventContentBlockStart = "content_block_start"
+	eventContentBlockDelta = "content_block_delta"
+	eventMessageDelta      = "message_delta"
+)
+
+// Anthropic content block types.
+const (
+	blockTypeText     = "text"
+	blockTypeThinking = "thinking"
+	blockTypeToolUse  = "tool_use"
+)
+
+// Anthropic delta types.
+const (
+	deltaTypeText      = "text_delta"
+	deltaTypeThinking  = "thinking_delta"
+	deltaTypeInputJSON = "input_json_delta"
+)
+
+// Anthropic stop reasons.
+const (
+	stopReasonEndTurn      = "end_turn"
+	stopReasonMaxTokens    = "max_tokens"
+	stopReasonToolUse      = "tool_use"
+	stopReasonStopSequence = "stop_sequence"
+)
+
+// thinkingBudget returns the token budget for the given reasoning effort.
+// Returns the budget and true if the effort level is supported, or 0 and false otherwise.
+func thinkingBudget(effort providers.ReasoningEffort) (int64, bool) {
+	switch effort {
+	case providers.ReasoningEffortLow:
+		return 1024, true
+	case providers.ReasoningEffortMedium:
+		return 4096, true
+	case providers.ReasoningEffortHigh:
+		return 16384, true
+	default:
+		return 0, false
+	}
 }
 
 // Provider implements the providers.Provider interface for Anthropic.
@@ -126,7 +164,7 @@ func (p *Provider) CompletionStream(ctx context.Context, params providers.Comple
 			event := stream.Current()
 
 			switch event.Type {
-			case "message_start":
+			case eventMessageStart:
 				e := event.AsMessageStart()
 				messageID = e.Message.ID
 				model = string(e.Message.Model)
@@ -145,12 +183,12 @@ func (p *Provider) CompletionStream(ctx context.Context, params providers.Comple
 					}},
 				}
 
-			case "content_block_start":
+			case eventContentBlockStart:
 				e := event.AsContentBlockStart()
 				switch e.ContentBlock.Type {
-				case "thinking":
+				case blockTypeThinking:
 					// Reasoning block started.
-				case "tool_use":
+				case blockTypeToolUse:
 					currentToolIdx++
 					toolCalls = append(toolCalls, providers.ToolCall{
 						ID:   e.ContentBlock.ID,
@@ -161,10 +199,10 @@ func (p *Provider) CompletionStream(ctx context.Context, params providers.Comple
 					})
 				}
 
-			case "content_block_delta":
+			case eventContentBlockDelta:
 				e := event.AsContentBlockDelta()
 				switch e.Delta.Type {
-				case "text_delta":
+				case deltaTypeText:
 					text := e.Delta.Text
 					contentBuilder.WriteString(text)
 					chunks <- providers.ChatCompletionChunk{
@@ -179,7 +217,7 @@ func (p *Provider) CompletionStream(ctx context.Context, params providers.Comple
 						}},
 					}
 
-				case "thinking_delta":
+				case deltaTypeThinking:
 					thinking := e.Delta.Thinking
 					reasoningBuilder.WriteString(thinking)
 					chunks <- providers.ChatCompletionChunk{
@@ -196,7 +234,7 @@ func (p *Provider) CompletionStream(ctx context.Context, params providers.Comple
 						}},
 					}
 
-				case "input_json_delta":
+				case deltaTypeInputJSON:
 					if currentToolIdx >= 0 && currentToolIdx < len(toolCalls) {
 						toolCalls[currentToolIdx].Function.Arguments += e.Delta.PartialJSON
 						chunks <- providers.ChatCompletionChunk{
@@ -213,7 +251,7 @@ func (p *Provider) CompletionStream(ctx context.Context, params providers.Comple
 					}
 				}
 
-			case "message_delta":
+			case eventMessageDelta:
 				e := event.AsMessageDelta()
 				finishReason := convertStopReason(string(e.Delta.StopReason))
 				chunks <- providers.ChatCompletionChunk{
@@ -288,7 +326,7 @@ func (p *Provider) convertParams(params providers.CompletionParams) anthropic.Me
 
 	// Handle reasoning/thinking.
 	if params.ReasoningEffort != "" && params.ReasoningEffort != providers.ReasoningEffortNone {
-		if budget, ok := reasoningEffortToBudget[params.ReasoningEffort]; ok {
+		if budget, ok := thinkingBudget(params.ReasoningEffort); ok {
 			req.Thinking = anthropic.ThinkingConfigParamOfEnabled(budget)
 			// Increase max tokens to accommodate thinking.
 			if maxTokens < budget*2 {
@@ -466,13 +504,13 @@ func convertResponse(resp *anthropic.Message) *providers.ChatCompletion {
 
 	for _, block := range resp.Content {
 		switch block.Type {
-		case "text":
+		case blockTypeText:
 			content += block.Text
-		case "thinking":
+		case blockTypeThinking:
 			reasoning = &providers.Reasoning{
 				Content: block.Thinking,
 			}
-		case "tool_use":
+		case blockTypeToolUse:
 			inputJSON := ""
 			if block.Input != nil {
 				if inputBytes, err := json.Marshal(block.Input); err == nil {
@@ -519,13 +557,13 @@ func convertResponse(resp *anthropic.Message) *providers.ChatCompletion {
 // convertStopReason converts Anthropic stop reason to OpenAI finish reason.
 func convertStopReason(reason string) string {
 	switch reason {
-	case "end_turn":
+	case stopReasonEndTurn:
 		return providers.FinishReasonStop
-	case "max_tokens":
+	case stopReasonMaxTokens:
 		return providers.FinishReasonLength
-	case "tool_use":
+	case stopReasonToolUse:
 		return providers.FinishReasonToolCalls
-	case "stop_sequence":
+	case stopReasonStopSequence:
 		return providers.FinishReasonStop
 	default:
 		return providers.FinishReasonStop
