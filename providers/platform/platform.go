@@ -186,11 +186,12 @@ func (p *Provider) Completion(
 		return nil, err
 	}
 
-	// Update params with just the model ID (without provider prefix)
-	params.Model = modelID
+	// Create a copy with the provider-specific model ID.
+	completionParams := params
+	completionParams.Model = modelID
 
 	// Delegate to the underlying provider
-	completion, err := p.underlyingProvider.Completion(ctx, params)
+	completion, err := p.underlyingProvider.Completion(ctx, completionParams)
 	if err != nil {
 		return nil, err
 	}
@@ -229,18 +230,23 @@ func (p *Provider) CompletionStream(
 			return
 		}
 
-		// Update params with just the model ID
-		params.Model = modelID
+		// Create a copy with updated fields.
+		streamParams := params
+		streamParams.Model = modelID
+		streamParams.Stream = true
 
 		// Ensure we get usage data in the streaming response for tracking.
-		if params.StreamOptions == nil {
-			params.StreamOptions = &providers.StreamOptions{IncludeUsage: true}
-		} else if !params.StreamOptions.IncludeUsage {
-			params.StreamOptions.IncludeUsage = true
+		if streamParams.StreamOptions == nil {
+			streamParams.StreamOptions = &providers.StreamOptions{IncludeUsage: true}
+		} else if !streamParams.StreamOptions.IncludeUsage {
+			// Create a copy of StreamOptions to avoid mutating the original.
+			opts := *streamParams.StreamOptions
+			opts.IncludeUsage = true
+			streamParams.StreamOptions = &opts
 		}
 
 		// Get the stream from the underlying provider
-		upstreamChunks, upstreamErrs := p.underlyingProvider.CompletionStream(ctx, params)
+		upstreamChunks, upstreamErrs := p.underlyingProvider.CompletionStream(ctx, streamParams)
 
 		// Track streaming metrics.
 		var (
