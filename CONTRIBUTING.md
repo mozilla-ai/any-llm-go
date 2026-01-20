@@ -113,8 +113,11 @@ package newprovider
 
 import (
     "context"
+    "fmt"
 
-    github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/config"
+    "github.com/mozilla-ai/any-llm-go/errors"
+    "github.com/mozilla-ai/any-llm-go/providers"
 )
 
 const (
@@ -124,25 +127,27 @@ const (
 
 type Provider struct {
     client *sdk.Client
-    config *llm.Config
+    config *config.Config
 }
 
-// Ensure interface compliance
+// Ensure interface compliance.
 var (
-    _ llm.Provider           = (*Provider)(nil)
-    _ llm.CapabilityProvider = (*Provider)(nil)
+    _ providers.Provider           = (*Provider)(nil)
+    _ providers.CapabilityProvider = (*Provider)(nil)
 )
 
-func New(opts ...llm.Option) (*Provider, error) {
-    cfg := llm.DefaultConfig()
-    cfg.ApplyOptions(opts...)
-
-    apiKey := cfg.GetAPIKeyFromEnv(envAPIKey)
-    if apiKey == "" {
-        return nil, llm.NewMissingAPIKeyError(providerName, envAPIKey)
+func New(opts ...config.Option) (*Provider, error) {
+    cfg, err := config.New(opts...)
+    if err != nil {
+        return nil, fmt.Errorf("invalid options: %w", err)
     }
 
-    // Initialize the official SDK client
+    apiKey := cfg.ResolveAPIKey(envAPIKey)
+    if apiKey == "" {
+        return nil, errors.NewMissingAPIKeyError(providerName, envAPIKey)
+    }
+
+    // Initialize the official SDK client.
     client := sdk.NewClient(apiKey)
 
     return &Provider{
@@ -155,30 +160,23 @@ func (p *Provider) Name() string {
     return providerName
 }
 
-func (p *Provider) Capabilities() llm.ProviderCapabilities {
-    return llm.ProviderCapabilities{
+func (p *Provider) Capabilities() providers.Capabilities {
+    return providers.Capabilities{
         Completion:          true,
         CompletionStreaming: true,
         // ... other capabilities
     }
 }
 
-func (p *Provider) Completion(ctx context.Context, params llm.CompletionParams) (*llm.ChatCompletion, error) {
-    // Convert params to provider format
-    // Make API call
-    // Convert response to anyllm format
-    // Handle errors with llm.ConvertError()
+func (p *Provider) Completion(ctx context.Context, params providers.CompletionParams) (*providers.ChatCompletion, error) {
+    // Convert params to provider format.
+    // Make API call.
+    // Convert response to providers format.
+    // Handle errors with errors.Convert().
 }
 
-func (p *Provider) CompletionStream(ctx context.Context, params llm.CompletionParams) (<-chan llm.ChatCompletionChunk, <-chan error) {
-    // Implement streaming
-}
-
-// Register the provider
-func init() {
-    llm.Register(providerName, func(opts ...llm.Option) (llm.Provider, error) {
-        return New(opts...)
-    })
+func (p *Provider) CompletionStream(ctx context.Context, params providers.CompletionParams) (<-chan providers.ChatCompletionChunk, <-chan error) {
+    // Implement streaming.
 }
 ```
 
@@ -190,29 +188,28 @@ package newprovider
 import (
     "testing"
 
-    "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
 
-    github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/config"
     "github.com/mozilla-ai/any-llm-go/internal/testutil"
 )
 
 func TestNew(t *testing.T) {
     t.Run("creates provider with API key", func(t *testing.T) {
-        provider, err := New(llm.WithAPIKey("test-key"))
+        provider, err := New(config.WithAPIKey("test-key"))
         require.NoError(t, err)
-        assert.NotNil(t, provider)
+        require.NotNil(t, provider)
     })
 
     t.Run("returns error when API key is missing", func(t *testing.T) {
         t.Setenv("NEWPROVIDER_API_KEY", "")
         provider, err := New()
-        assert.Nil(t, provider)
-        assert.Error(t, err)
+        require.Nil(t, provider)
+        require.Error(t, err)
     })
 }
 
-// Integration tests
+// Integration tests.
 func TestIntegrationCompletion(t *testing.T) {
     if testutil.SkipIfNoAPIKey("newprovider") {
         t.Skip("NEWPROVIDER_API_KEY not set")
@@ -237,8 +234,7 @@ func TestIntegrationCompletion(t *testing.T) {
 - [ ] Implements `Provider` interface
 - [ ] Implements `CapabilityProvider` interface
 - [ ] Normalizes responses to OpenAI format
-- [ ] Normalizes errors using `llm.ConvertError()`
-- [ ] Registers provider in `init()`
+- [ ] Normalizes errors using `errors.Convert()`
 - [ ] Has unit tests with >80% coverage
 - [ ] Has integration tests (skipped when no API key)
 - [ ] Passes `golangci-lint`
