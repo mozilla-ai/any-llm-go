@@ -620,14 +620,18 @@ func TestGenerateID(t *testing.T) {
 
 func TestIntegrationCompletion(t *testing.T) {
 	t.Parallel()
-	skipIfOllamaUnavailable(t)
+
+	model := testutil.TestModel(providerName)
+	require.NotEmpty(t, model)
+
+	skipTestIfOllamaUnavailable(t, model)
 
 	provider, err := New()
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.TestModel(providerName),
+		Model:    model,
 		Messages: testutil.SimpleMessages(),
 	}
 
@@ -644,14 +648,18 @@ func TestIntegrationCompletion(t *testing.T) {
 
 func TestIntegrationCompletionWithSystemMessage(t *testing.T) {
 	t.Parallel()
-	skipIfOllamaUnavailable(t)
+
+	model := testutil.TestModel(providerName)
+	require.NotEmpty(t, model)
+
+	skipTestIfOllamaUnavailable(t, model)
 
 	provider, err := New()
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.TestModel(providerName),
+		Model:    model,
 		Messages: testutil.MessagesWithSystem(),
 	}
 
@@ -665,14 +673,18 @@ func TestIntegrationCompletionWithSystemMessage(t *testing.T) {
 
 func TestIntegrationCompletionStream(t *testing.T) {
 	t.Parallel()
-	skipIfOllamaUnavailable(t)
+
+	model := testutil.TestModel(providerName)
+	require.NotEmpty(t, model)
+
+	skipTestIfOllamaUnavailable(t, model)
 
 	provider, err := New()
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.TestModel(providerName),
+		Model:    model,
 		Messages: testutil.SimpleMessages(),
 		Stream:   true,
 	}
@@ -699,7 +711,7 @@ func TestIntegrationCompletionStream(t *testing.T) {
 
 func TestIntegrationListModels(t *testing.T) {
 	t.Parallel()
-	skipIfOllamaUnavailable(t)
+	skipTestIfOllamaUnavailable(t, "")
 
 	provider, err := New()
 	require.NoError(t, err)
@@ -714,14 +726,18 @@ func TestIntegrationListModels(t *testing.T) {
 
 func TestIntegrationConversation(t *testing.T) {
 	t.Parallel()
-	skipIfOllamaUnavailable(t)
+
+	model := testutil.TestModel(providerName)
+	require.NotEmpty(t, model)
+
+	skipTestIfOllamaUnavailable(t, model)
 
 	provider, err := New()
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:    testutil.TestModel(providerName),
+		Model:    model,
 		Messages: testutil.ConversationMessages(),
 	}
 
@@ -739,14 +755,18 @@ func TestIntegrationConversation(t *testing.T) {
 
 func TestIntegrationCompletionWithTools(t *testing.T) {
 	t.Parallel()
-	skipIfOllamaUnavailable(t)
+
+	model := testutil.TestModel(providerName)
+	require.NotEmpty(t, model)
+
+	skipTestIfOllamaUnavailable(t, model)
 
 	provider, err := New()
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	params := providers.CompletionParams{
-		Model:      testutil.TestModel(providerName),
+		Model:      model,
 		Messages:   testutil.ToolCallMessages(),
 		Tools:      []providers.Tool{testutil.WeatherTool()},
 		ToolChoice: "auto",
@@ -765,7 +785,11 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 
 func TestIntegrationAgentLoop(t *testing.T) {
 	t.Parallel()
-	skipIfOllamaUnavailable(t)
+
+	model := testutil.TestModel(providerName)
+	require.NotEmpty(t, model)
+
+	skipTestIfOllamaUnavailable(t, model)
 
 	provider, err := New()
 	require.NoError(t, err)
@@ -776,7 +800,7 @@ func TestIntegrationAgentLoop(t *testing.T) {
 	messages := testutil.AgentLoopMessages()
 
 	params := providers.CompletionParams{
-		Model:    testutil.TestModel(providerName),
+		Model:    model,
 		Messages: messages,
 		Tools:    []providers.Tool{testutil.WeatherTool()},
 	}
@@ -792,30 +816,32 @@ func TestIntegrationAgentLoop(t *testing.T) {
 
 func TestIntegrationEmbedding(t *testing.T) {
 	t.Parallel()
-	skipIfOllamaUnavailable(t)
+
+	model := testutil.EmbeddingModel(providerName)
+	require.NotEmpty(t, model)
+
+	skipTestIfOllamaUnavailable(t, model)
 
 	provider, err := New()
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	params := providers.EmbeddingParams{
-		Model: testutil.EmbeddingModel(providerName),
+		Model: model,
 		Input: "Hello, world!",
 	}
 
 	resp, err := provider.Embedding(ctx, params)
-	if err != nil {
-		// Embedding model may not be available.
-		t.Skipf("Embedding model not available: %v", err)
-	}
+	require.NoError(t, err)
 
 	require.Equal(t, objectList, resp.Object)
 	require.NotEmpty(t, resp.Data)
 	require.NotEmpty(t, resp.Data[0].Embedding)
 }
 
-// skipIfOllamaUnavailable skips the test if Ollama is not running.
-func skipIfOllamaUnavailable(t *testing.T) {
+// skipTestIfOllamaUnavailable skips the test if Ollama is not running or the model is not available.
+// If model is empty, only checks that Ollama is reachable.
+func skipTestIfOllamaUnavailable(t *testing.T, model string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testOllamaAvailabilityTimeout)
@@ -823,10 +849,26 @@ func skipIfOllamaUnavailable(t *testing.T) {
 
 	provider, err := New()
 	if err != nil {
-		t.Skip("Ollama not available")
+		t.Skipf("Ollama not available: %v", err)
 	}
 
-	if _, err = provider.ListModels(ctx); err != nil {
-		t.Skip("Ollama not available")
+	models, err := provider.ListModels(ctx)
+	if err != nil {
+		t.Skipf("Ollama not reachable: %v", err)
 	}
+
+	// If no specific model requested, just checking Ollama is reachable is enough.
+	if model == "" {
+		return
+	}
+
+	// Check if the required model is available.
+	// Models can be "llama3.2" or "llama3.2:latest", so check for prefix match.
+	for _, m := range models.Data {
+		if m.ID == model || strings.HasPrefix(m.ID, model+":") {
+			return
+		}
+	}
+
+	t.Skipf("Ollama model %q not available (install with: ollama pull %s)", model, model)
 }
