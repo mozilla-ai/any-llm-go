@@ -98,6 +98,15 @@ type Provider struct {
 	config *config.Config
 }
 
+// streamState tracks accumulated state during streaming.
+type streamState struct {
+	id        string
+	model     string
+	created   int64
+	content   strings.Builder
+	reasoning strings.Builder
+}
+
 // New creates a new Ollama provider.
 func New(opts ...config.Option) (*Provider, error) {
 	cfg, err := config.New(opts...)
@@ -314,15 +323,6 @@ func (p *Provider) convertParams(params providers.CompletionParams) *api.ChatReq
 	}
 
 	return req
-}
-
-// streamState tracks accumulated state during streaming.
-type streamState struct {
-	id        string
-	model     string
-	created   int64
-	content   strings.Builder
-	reasoning strings.Builder
 }
 
 // newStreamState creates a new stream state.
