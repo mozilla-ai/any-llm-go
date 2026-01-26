@@ -280,6 +280,7 @@ for _, model := range models.Data {
 |-----------|:----------:|:---------:|:-----:|:---------:|:----------:|
 | OpenAI    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |
 | Anthropic |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |
+| Ollama    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |
 
 More providers coming soon! See [docs/providers.md](docs/providers.md) for the full list.
 
