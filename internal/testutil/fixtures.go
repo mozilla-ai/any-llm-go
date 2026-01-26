@@ -33,6 +33,7 @@ var ProviderReasoningModelMap = map[string]string{
 	"anthropic": "claude-sonnet-4-20250514",
 	"mistral":   "magistral-small-latest",
 	"deepseek":  "deepseek-reasoner",
+	"ollama":    "deepseek-r1",
 }
 
 // ProviderImageModelMap maps providers to vision-capable models.
@@ -40,6 +41,7 @@ var ProviderImageModelMap = map[string]string{
 	"openai":    "gpt-4o-mini",
 	"anthropic": "claude-3-5-haiku-latest",
 	"gemini":    "gemini-1.5-flash",
+	"ollama":    "llava",
 }
 
 // EmbeddingProviderModelMap maps providers to embedding models.
@@ -48,6 +50,7 @@ var EmbeddingProviderModelMap = map[string]string{
 	"cohere":   "embed-english-v3.0",
 	"mistral":  "mistral-embed",
 	"together": "togethercomputer/m2-bert-80M-8k-retrieval",
+	"ollama":   "nomic-embed-text",
 }
 
 // ProviderClientConfig holds provider-specific configuration for tests.
