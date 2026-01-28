@@ -9,6 +9,7 @@ any-llm-go supports multiple LLM providers through a unified interface. Each pro
 | [OpenAI](#openai) | `openai` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [Anthropic](#anthropic) | `anthropic` | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | [Ollama](#ollama) | `ollama` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| [Llamafile](#llamafile) | `llamafile` | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
 
 ### Legend
 
@@ -156,6 +157,75 @@ for _, model := range models.Data {
 }
 ```
 
+### Llamafile
+
+Llamafile is a single-file executable that bundles a model with llama.cpp for easy local deployment. It exposes an OpenAI-compatible API. No API key is required.
+
+```go
+import (
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/llamafile"
+)
+
+// Using default settings (localhost:8080/v1).
+provider, err := llamafile.New()
+
+// Or with custom base URL.
+provider, err := llamafile.New(anyllm.WithBaseURL("http://localhost:8081/v1"))
+```
+
+**Environment Variable:** `LLAMAFILE_BASE_URL` (optional, defaults to `http://localhost:8080/v1`)
+
+**Running Llamafile:**
+
+Download a llamafile from [Mozilla-Ocho/llamafile](https://github.com/Mozilla-Ocho/llamafile) and run it:
+
+```bash
+# Download a llamafile (example: LLaVA)
+curl -LO https://huggingface.co/Mozilla/llava-v1.5-7b-llamafile/resolve/main/llava-v1.5-7b-q4.llamafile
+chmod +x llava-v1.5-7b-q4.llamafile
+./llava-v1.5-7b-q4.llamafile --server
+```
+
+**Completion:**
+
+```go
+provider, _ := llamafile.New()
+resp, err := provider.Completion(ctx, anyllm.CompletionParams{
+    Model: "LLaMA_CPP", // Llamafile uses "LLaMA_CPP" as the model name.
+    Messages: []anyllm.Message{
+        {Role: anyllm.RoleUser, Content: "Hello!"},
+    },
+})
+```
+
+**Streaming:**
+
+```go
+provider, _ := llamafile.New()
+chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
+    Model: "LLaMA_CPP",
+    Messages: messages,
+})
+
+for chunk := range chunks {
+    fmt.Print(chunk.Choices[0].Delta.Content)
+}
+if err := <-errs; err != nil {
+    log.Fatal(err)
+}
+```
+
+**List Models:**
+
+```go
+provider, _ := llamafile.New()
+models, err := provider.ListModels(ctx)
+for _, model := range models.Data {
+    fmt.Println(model.ID) // Typically "LLaMA_CPP"
+}
+```
+
 ## Coming Soon
 
 The following providers are planned for future releases:
@@ -168,7 +238,6 @@ The following providers are planned for future releases:
 | Cohere | Planned |
 | Together AI | Planned |
 | AWS Bedrock | Planned |
-| Llamafile | Planned |
 | Azure OpenAI | Planned (use OpenAI with custom base URL for now) |
 
 ## Adding a New Provider
