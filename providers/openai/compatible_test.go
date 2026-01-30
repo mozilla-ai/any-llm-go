@@ -11,13 +11,13 @@ import (
 	"github.com/mozilla-ai/any-llm-go/providers"
 )
 
-func TestNewBase(t *testing.T) {
+func TestNewCompatible(t *testing.T) {
 	// Note: Not using t.Parallel() here because child test uses t.Setenv.
 
 	t.Run("creates provider with valid config", func(t *testing.T) {
 		t.Parallel()
 
-		baseCfg := BaseConfig{
+		baseCfg := CompatibleConfig{
 			Name:           "test-provider",
 			DefaultBaseURL: "http://localhost:8080/v1",
 			DefaultAPIKey:  "test-key",
@@ -27,7 +27,7 @@ func TestNewBase(t *testing.T) {
 			},
 		}
 
-		provider, err := NewBase(baseCfg)
+		provider, err := NewCompatible(baseCfg)
 		require.NoError(t, err)
 		require.NotNil(t, provider)
 		require.Equal(t, "test-provider", provider.Name())
@@ -36,11 +36,11 @@ func TestNewBase(t *testing.T) {
 	t.Run("returns error when name is missing", func(t *testing.T) {
 		t.Parallel()
 
-		baseCfg := BaseConfig{
+		baseCfg := CompatibleConfig{
 			DefaultBaseURL: "http://localhost:8080/v1",
 		}
 
-		provider, err := NewBase(baseCfg)
+		provider, err := NewCompatible(baseCfg)
 		require.Error(t, err)
 		require.Nil(t, provider)
 		require.Contains(t, err.Error(), "provider name is required")
@@ -49,13 +49,13 @@ func TestNewBase(t *testing.T) {
 	t.Run("returns error when API key required but missing", func(t *testing.T) {
 		t.Parallel()
 
-		baseCfg := BaseConfig{
+		baseCfg := CompatibleConfig{
 			Name:          "test-provider",
 			APIKeyEnvVar:  "TEST_API_KEY",
 			RequireAPIKey: true,
 		}
 
-		provider, err := NewBase(baseCfg)
+		provider, err := NewCompatible(baseCfg)
 		require.Error(t, err)
 		require.Nil(t, provider)
 
@@ -66,13 +66,13 @@ func TestNewBase(t *testing.T) {
 	t.Run("uses default API key when not required", func(t *testing.T) {
 		t.Parallel()
 
-		baseCfg := BaseConfig{
+		baseCfg := CompatibleConfig{
 			Name:          "test-provider",
 			DefaultAPIKey: "default-key",
 			RequireAPIKey: false,
 		}
 
-		provider, err := NewBase(baseCfg)
+		provider, err := NewCompatible(baseCfg)
 		require.NoError(t, err)
 		require.NotNil(t, provider)
 	})
@@ -80,13 +80,13 @@ func TestNewBase(t *testing.T) {
 	t.Run("uses config base URL over default", func(t *testing.T) {
 		t.Parallel()
 
-		baseCfg := BaseConfig{
+		baseCfg := CompatibleConfig{
 			Name:           "test-provider",
 			DefaultBaseURL: "http://default:8080/v1",
 			DefaultAPIKey:  "test-key",
 		}
 
-		provider, err := NewBase(baseCfg, config.WithBaseURL("http://custom:9090/v1"))
+		provider, err := NewCompatible(baseCfg, config.WithBaseURL("http://custom:9090/v1"))
 		require.NoError(t, err)
 		require.NotNil(t, provider)
 	})
@@ -94,20 +94,20 @@ func TestNewBase(t *testing.T) {
 	t.Run("uses environment variable for base URL", func(t *testing.T) {
 		t.Setenv("TEST_BASE_URL", "http://env:8080/v1")
 
-		baseCfg := BaseConfig{
+		baseCfg := CompatibleConfig{
 			Name:           "test-provider",
 			BaseURLEnvVar:  "TEST_BASE_URL",
 			DefaultBaseURL: "http://default:8080/v1",
 			DefaultAPIKey:  "test-key",
 		}
 
-		provider, err := NewBase(baseCfg)
+		provider, err := NewCompatible(baseCfg)
 		require.NoError(t, err)
 		require.NotNil(t, provider)
 	})
 }
 
-func TestBaseProviderCapabilities(t *testing.T) {
+func TestCompatibleProviderCapabilities(t *testing.T) {
 	t.Parallel()
 
 	expectedCaps := providers.Capabilities{
@@ -116,12 +116,12 @@ func TestBaseProviderCapabilities(t *testing.T) {
 		Embedding:           true,
 	}
 
-	baseCfg := BaseConfig{
+	baseCfg := CompatibleConfig{
 		Name:         "test-provider",
 		Capabilities: expectedCaps,
 	}
 
-	provider, err := NewBase(baseCfg)
+	provider, err := NewCompatible(baseCfg)
 	require.NoError(t, err)
 
 	caps := provider.Capabilities()
@@ -294,13 +294,13 @@ func TestStreamingContextCancellation(t *testing.T) {
 	t.Run("respects context cancellation", func(t *testing.T) {
 		t.Parallel()
 
-		baseCfg := BaseConfig{
+		baseCfg := CompatibleConfig{
 			Name:           "test-provider",
 			DefaultBaseURL: "http://localhost:9999/v1", // Non-existent server.
 			DefaultAPIKey:  "test-key",
 		}
 
-		provider, err := NewBase(baseCfg)
+		provider, err := NewCompatible(baseCfg)
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())

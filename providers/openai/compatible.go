@@ -47,9 +47,9 @@ const (
 	responseFormatJSONSchema = "json_schema"
 )
 
-// BaseConfig contains the configuration for an OpenAI-compatible provider.
+// CompatibleConfig contains the configuration for an OpenAI-compatible provider.
 // Fields are ordered alphabetically.
-type BaseConfig struct {
+type CompatibleConfig struct {
 	// APIKeyEnvVar is the environment variable for the API key.
 	APIKeyEnvVar string
 
@@ -72,41 +72,45 @@ type BaseConfig struct {
 	RequireAPIKey bool
 }
 
-// Ensure BaseProvider implements the required interfaces.
+// Ensure CompatibleProvider implements the required interfaces.
 var (
-	_ providers.CapabilityProvider = (*BaseProvider)(nil)
-	_ providers.EmbeddingProvider  = (*BaseProvider)(nil)
-	_ providers.ErrorConverter     = (*BaseProvider)(nil)
-	_ providers.ModelLister        = (*BaseProvider)(nil)
-	_ providers.Provider           = (*BaseProvider)(nil)
+	_ providers.CapabilityProvider = (*CompatibleProvider)(nil)
+	_ providers.EmbeddingProvider  = (*CompatibleProvider)(nil)
+	_ providers.ErrorConverter     = (*CompatibleProvider)(nil)
+	_ providers.ModelLister        = (*CompatibleProvider)(nil)
+	_ providers.Provider           = (*CompatibleProvider)(nil)
 )
 
-// BaseProvider implements the providers.Provider interface for OpenAI-compatible APIs.
+// CompatibleProvider implements the providers.Provider interface for OpenAI-compatible APIs.
 // It can be embedded by other providers that use OpenAI-compatible endpoints.
-type BaseProvider struct {
-	baseConfig BaseConfig
-	client     openai.Client
+type CompatibleProvider struct {
+	compatibleConfig CompatibleConfig
+	client           openai.Client
 }
 
-// NewBase creates a new OpenAI-compatible base provider.
-func NewBase(baseCfg BaseConfig, opts ...config.Option) (*BaseProvider, error) {
+// NewCompatible creates a new OpenAI-compatible provider.
+func NewCompatible(compatCfg CompatibleConfig, opts ...config.Option) (*CompatibleProvider, error) {
 	cfg, err := config.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("invalid options: %w", err)
 	}
 
-	if err := validateBaseConfig(baseCfg); err != nil {
+	if validErr := validateCompatibleConfig(compatCfg); validErr != nil {
+		return nil, validErr
+	}
+
+	baseURL, err := cfg.ResolveBaseURL(compatCfg.BaseURLEnvVar, compatCfg.DefaultBaseURL)
+	if err != nil {
 		return nil, err
 	}
 
-	baseURL := resolveBaseURL(cfg, baseCfg)
-	apiKey := resolveAPIKey(cfg, baseCfg)
+	apiKey := resolveAPIKey(cfg, compatCfg)
 
-	if apiKey == "" && baseCfg.RequireAPIKey {
-		return nil, errors.NewMissingAPIKeyError(baseCfg.Name, baseCfg.APIKeyEnvVar)
+	if apiKey == "" && compatCfg.RequireAPIKey {
+		return nil, errors.NewMissingAPIKeyError(compatCfg.Name, compatCfg.APIKeyEnvVar)
 	}
 	if apiKey == "" {
-		apiKey = baseCfg.DefaultAPIKey
+		apiKey = compatCfg.DefaultAPIKey
 	}
 
 	clientOpts := []option.RequestOption{
@@ -118,19 +122,19 @@ func NewBase(baseCfg BaseConfig, opts ...config.Option) (*BaseProvider, error) {
 		clientOpts = append(clientOpts, option.WithBaseURL(baseURL))
 	}
 
-	return &BaseProvider{
-		baseConfig: baseCfg,
-		client:     openai.NewClient(clientOpts...),
+	return &CompatibleProvider{
+		compatibleConfig: compatCfg,
+		client:           openai.NewClient(clientOpts...),
 	}, nil
 }
 
 // Capabilities returns the provider's capabilities.
-func (p *BaseProvider) Capabilities() providers.Capabilities {
-	return p.baseConfig.Capabilities
+func (p *CompatibleProvider) Capabilities() providers.Capabilities {
+	return p.compatibleConfig.Capabilities
 }
 
 // Completion performs a chat completion request.
-func (p *BaseProvider) Completion(
+func (p *CompatibleProvider) Completion(
 	ctx context.Context,
 	params providers.CompletionParams,
 ) (*providers.ChatCompletion, error) {
@@ -149,7 +153,7 @@ func (p *BaseProvider) Completion(
 }
 
 // CompletionStream performs a streaming chat completion request.
-func (p *BaseProvider) CompletionStream(
+func (p *CompatibleProvider) CompletionStream(
 	ctx context.Context,
 	params providers.CompletionParams,
 ) (<-chan providers.ChatCompletionChunk, <-chan error) {
@@ -187,12 +191,12 @@ func (p *BaseProvider) CompletionStream(
 
 // ConvertError converts OpenAI-compatible errors to unified error types.
 // Implements providers.ErrorConverter.
-func (p *BaseProvider) ConvertError(err error) error {
+func (p *CompatibleProvider) ConvertError(err error) error {
 	if err == nil {
 		return nil
 	}
 
-	name := p.baseConfig.Name
+	name := p.compatibleConfig.Name
 
 	// Check for OpenAI API error type.
 	var apiErr *openai.Error
@@ -207,7 +211,7 @@ func (p *BaseProvider) ConvertError(err error) error {
 }
 
 // Embedding generates embeddings for the given input.
-func (p *BaseProvider) Embedding(
+func (p *CompatibleProvider) Embedding(
 	ctx context.Context,
 	params providers.EmbeddingParams,
 ) (*providers.EmbeddingResponse, error) {
@@ -222,7 +226,7 @@ func (p *BaseProvider) Embedding(
 }
 
 // ListModels returns a list of available models.
-func (p *BaseProvider) ListModels(ctx context.Context) (*providers.ModelsResponse, error) {
+func (p *CompatibleProvider) ListModels(ctx context.Context) (*providers.ModelsResponse, error) {
 	resp, err := p.client.Models.List(ctx)
 	if err != nil {
 		return nil, p.ConvertError(err)
@@ -245,8 +249,8 @@ func (p *BaseProvider) ListModels(ctx context.Context) (*providers.ModelsRespons
 }
 
 // Name returns the provider name.
-func (p *BaseProvider) Name() string {
-	return p.baseConfig.Name
+func (p *CompatibleProvider) Name() string {
+	return p.compatibleConfig.Name
 }
 
 // convertAPIError converts an OpenAI API error to a unified error type.
@@ -663,28 +667,15 @@ func convertUserMessage(msg providers.Message) openai.ChatCompletionMessageParam
 }
 
 // resolveAPIKey resolves the API key from config or environment.
-func resolveAPIKey(cfg *config.Config, baseCfg BaseConfig) string {
-	if baseCfg.APIKeyEnvVar != "" {
-		return cfg.ResolveAPIKey(baseCfg.APIKeyEnvVar)
+func resolveAPIKey(cfg *config.Config, compatCfg CompatibleConfig) string {
+	if compatCfg.APIKeyEnvVar != "" {
+		return cfg.ResolveAPIKey(compatCfg.APIKeyEnvVar)
 	}
 	return cfg.APIKey
 }
 
-// resolveBaseURL resolves the base URL from config or environment.
-func resolveBaseURL(cfg *config.Config, baseCfg BaseConfig) string {
-	if cfg.BaseURL != "" {
-		return cfg.BaseURL
-	}
-	if baseCfg.BaseURLEnvVar != "" {
-		if url := cfg.ResolveAPIKey(baseCfg.BaseURLEnvVar); url != "" {
-			return url
-		}
-	}
-	return baseCfg.DefaultBaseURL
-}
-
-// validateBaseConfig validates the base configuration.
-func validateBaseConfig(cfg BaseConfig) error {
+// validateCompatibleConfig validates the compatible provider configuration.
+func validateCompatibleConfig(cfg CompatibleConfig) error {
 	if cfg.Name == "" {
 		return fmt.Errorf("provider name is required")
 	}

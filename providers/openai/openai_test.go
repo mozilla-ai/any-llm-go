@@ -636,7 +636,7 @@ func TestConvertError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			p := &BaseProvider{baseConfig: BaseConfig{Name: providerName}}
+			p := &CompatibleProvider{compatibleConfig: CompatibleConfig{Name: providerName}}
 			result := p.ConvertError(tc.err)
 
 			if tc.wantSentinel == nil {

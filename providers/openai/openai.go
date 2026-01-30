@@ -22,14 +22,14 @@ var (
 )
 
 // Provider implements the providers.Provider interface for OpenAI.
-// It embeds BaseProvider which handles the OpenAI SDK integration.
+// It embeds CompatibleProvider which handles the OpenAI SDK integration.
 type Provider struct {
-	*BaseProvider
+	*CompatibleProvider
 }
 
 // New creates a new OpenAI provider.
 func New(opts ...config.Option) (*Provider, error) {
-	base, err := NewBase(BaseConfig{
+	base, err := NewCompatible(CompatibleConfig{
 		APIKeyEnvVar:   envAPIKey,
 		Capabilities:   openAICapabilities(),
 		DefaultBaseURL: defaultBaseURL,
@@ -40,7 +40,7 @@ func New(opts ...config.Option) (*Provider, error) {
 		return nil, err
 	}
 
-	return &Provider{BaseProvider: base}, nil
+	return &Provider{CompatibleProvider: base}, nil
 }
 
 // openAICapabilities returns the capabilities for the OpenAI provider.
