@@ -95,9 +95,9 @@ Providers implement `ErrorConverter` using `errors.As` with SDK typed errors (no
 ### OpenAI-Compatible Providers
 
 For providers that expose OpenAI-compatible APIs but don't have their own Go SDK (Llamafile, vLLM, LM Studio, etc.):
-- Use the base provider in `providers/openai/base.go`
+- Use the compatible provider in `providers/openai/compatible.go`
 - Import: `"github.com/mozilla-ai/any-llm-go/providers/openai"`
-- Create thin wrapper that calls `openai.NewBase()` with provider-specific config
+- Create thin wrapper that calls `openai.NewCompatible()` with provider-specific `CompatibleConfig`
 - Add interface assertions in the wrapper package
 
 ### Testing
