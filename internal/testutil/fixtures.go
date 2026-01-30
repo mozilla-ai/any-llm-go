@@ -18,6 +18,7 @@ var ProviderModelMap = map[string]string{
 	"cohere":     "command-r",
 	"groq":       "llama-3.1-8b-instant",
 	"ollama":     "llama3.2",
+	"llamafile":  "LLaMA_CPP",
 	"together":   "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
 	"perplexity": "llama-3.1-sonar-small-128k-online",
 	"deepseek":   "deepseek-chat",
@@ -46,11 +47,12 @@ var ProviderImageModelMap = map[string]string{
 
 // EmbeddingProviderModelMap maps providers to embedding models.
 var EmbeddingProviderModelMap = map[string]string{
-	"openai":   "text-embedding-3-small",
-	"cohere":   "embed-english-v3.0",
-	"mistral":  "mistral-embed",
-	"together": "togethercomputer/m2-bert-80M-8k-retrieval",
-	"ollama":   "nomic-embed-text",
+	"openai":    "text-embedding-3-small",
+	"cohere":    "embed-english-v3.0",
+	"mistral":   "mistral-embed",
+	"together":  "togethercomputer/m2-bert-80M-8k-retrieval",
+	"ollama":    "nomic-embed-text",
+	"llamafile": "LLaMA_CPP",
 }
 
 // ProviderClientConfig holds provider-specific configuration for tests.

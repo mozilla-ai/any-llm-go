@@ -257,7 +257,8 @@ func TestConvertMessage(t *testing.T) {
 		t.Parallel()
 
 		msg := providers.Message{Role: providers.RoleSystem, Content: "You are helpful"}
-		result := convertMessage(msg)
+		result, err := convertMessage(msg)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 	})
 
@@ -265,7 +266,8 @@ func TestConvertMessage(t *testing.T) {
 		t.Parallel()
 
 		msg := providers.Message{Role: providers.RoleUser, Content: "Hello"}
-		result := convertMessage(msg)
+		result, err := convertMessage(msg)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 	})
 
@@ -273,7 +275,8 @@ func TestConvertMessage(t *testing.T) {
 		t.Parallel()
 
 		msg := providers.Message{Role: providers.RoleAssistant, Content: "Hi there!"}
-		result := convertMessage(msg)
+		result, err := convertMessage(msg)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 	})
 
@@ -294,7 +297,8 @@ func TestConvertMessage(t *testing.T) {
 				},
 			},
 		}
-		result := convertMessage(msg)
+		result, err := convertMessage(msg)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 	})
 
@@ -306,7 +310,8 @@ func TestConvertMessage(t *testing.T) {
 			Content:    "sunny, 22°C",
 			ToolCallID: "call_123",
 		}
-		result := convertMessage(msg)
+		result, err := convertMessage(msg)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 	})
 
@@ -320,8 +325,18 @@ func TestConvertMessage(t *testing.T) {
 				{Type: "image_url", ImageURL: &providers.ImageURL{URL: "https://example.com/image.png"}},
 			},
 		}
-		result := convertMessage(msg)
+		result, err := convertMessage(msg)
+		require.NoError(t, err)
 		require.NotNil(t, result)
+	})
+
+	t.Run("returns error for unknown role", func(t *testing.T) {
+		t.Parallel()
+
+		msg := providers.Message{Role: "unknown_role", Content: "Hello"}
+		_, err := convertMessage(msg)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unknown message role")
 	})
 }
 
@@ -621,7 +636,7 @@ func TestConvertError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			p := &Provider{}
+			p := &CompatibleProvider{compatibleConfig: CompatibleConfig{Name: providerName}}
 			result := p.ConvertError(tc.err)
 
 			if tc.wantSentinel == nil {

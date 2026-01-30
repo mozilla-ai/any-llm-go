@@ -169,3 +169,41 @@ func (c *Config) ResolveAPIKey(envVar string) string {
 
 	return os.Getenv(envVar)
 }
+
+// ResolveEnv returns the value of the specified environment variable,
+// trimming whitespace. Returns empty string if the variable is not set or empty.
+func (c *Config) ResolveEnv(envVar string) string {
+	if envVar == "" {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv(envVar))
+}
+
+// ResolveBaseURL resolves the base URL from config, environment variable, or default value.
+// It validates that the resolved URL has a scheme and host.
+func (c *Config) ResolveBaseURL(envVar, defaultVal string) (string, error) {
+	baseURL := c.BaseURL
+	if baseURL == "" {
+		baseURL = c.ResolveEnv(envVar)
+	}
+	if baseURL == "" {
+		baseURL = defaultVal
+	}
+
+	if baseURL == "" {
+		return "", nil
+	}
+
+	baseURL = strings.TrimSpace(baseURL)
+
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid base URL %q: %w", baseURL, err)
+	}
+
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("base URL %q must have scheme and host", baseURL)
+	}
+
+	return baseURL, nil
+}

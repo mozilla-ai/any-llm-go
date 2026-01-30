@@ -83,10 +83,22 @@ Providers implement `ErrorConverter` using `errors.As` with SDK typed errors (no
 ### Key Patterns
 
 - **Configuration**: Functional options with validation
-- **Constants**: Extract ALL magic strings to named constants
+- **Constants**: Extract ALL magic strings to named constants (including response format types like `json_object`)
 - **Streaming**: Break monolithic handlers into focused methods (see `anthropic/anthropic.go`)
+- **Streaming Safety**: Always use `select` with `ctx.Done()` when sending to channels in goroutines to prevent blocking forever if consumer abandons
 - **ID Generation**: Use `crypto/rand`, not package-level mutable state
-- **Error Conversion**: Use `errors.As` with SDK typed errors
+- **Error Conversion**: Use `errors.As` with SDK typed errors; avoid string matching when possible
+- **Input Validation**: Validate required fields (Model non-empty, Messages has entries) before API calls
+- **Unknown Values**: Never silently convert unknown enum values (e.g., unknown role → user); error or log warning instead
+- **Struct Field Order**: Order struct fields A-Z (don't optimize for padding)
+
+### OpenAI-Compatible Providers
+
+For providers that expose OpenAI-compatible APIs but don't have their own Go SDK (Llamafile, vLLM, LM Studio, etc.):
+- Use the compatible provider in `providers/openai/compatible.go`
+- Import: `"github.com/mozilla-ai/any-llm-go/providers/openai"`
+- Create thin wrapper that calls `openai.NewCompatible()` with provider-specific `CompatibleConfig`
+- Add interface assertions in the wrapper package
 
 ### Testing
 
@@ -96,6 +108,8 @@ Providers implement `ErrorConverter` using `errors.As` with SDK typed errors (no
 - Name test case variable `tc`, not `tt`
 - Name helpers/mocks with `test`, `mock`, `fake` to distinguish from production code
 - Skip integration tests gracefully when provider unavailable
+- Use constants (e.g., `objectChatCompletion`) instead of string literals in test assertions
+- Base packages need their own test suites, not just wrapper tests
 
 ## Adding a New Provider
 

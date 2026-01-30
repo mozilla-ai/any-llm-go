@@ -479,6 +479,87 @@ func TestResolveAPIKey(t *testing.T) {
 	}
 }
 
+func TestResolveEnv(t *testing.T) {
+	// Note: Cannot use t.Parallel() with t.Setenv().
+
+	t.Run("returns trimmed env value", func(t *testing.T) {
+		t.Setenv("TEST_RESOLVE_ENV", "  some-value  ")
+
+		cfg := &Config{}
+		result := cfg.ResolveEnv("TEST_RESOLVE_ENV")
+		require.Equal(t, "some-value", result)
+	})
+
+	t.Run("returns empty for unset variable", func(t *testing.T) {
+		cfg := &Config{}
+		result := cfg.ResolveEnv("TEST_RESOLVE_ENV_UNSET")
+		require.Empty(t, result)
+	})
+
+	t.Run("returns empty for empty env var name", func(t *testing.T) {
+		cfg := &Config{}
+		result := cfg.ResolveEnv("")
+		require.Empty(t, result)
+	})
+}
+
+func TestResolveBaseURL(t *testing.T) {
+	// Note: Cannot use t.Parallel() with t.Setenv().
+
+	t.Run("uses config BaseURL first", func(t *testing.T) {
+		cfg := &Config{BaseURL: "https://config.example.com/v1"}
+		result, err := cfg.ResolveBaseURL("", "https://default.example.com/v1")
+		require.NoError(t, err)
+		require.Equal(t, "https://config.example.com/v1", result)
+	})
+
+	t.Run("falls back to env var", func(t *testing.T) {
+		t.Setenv("TEST_BASE_URL_RESOLVE", "https://env.example.com/v1")
+
+		cfg := &Config{}
+		result, err := cfg.ResolveBaseURL("TEST_BASE_URL_RESOLVE", "https://default.example.com/v1")
+		require.NoError(t, err)
+		require.Equal(t, "https://env.example.com/v1", result)
+	})
+
+	t.Run("falls back to default", func(t *testing.T) {
+		cfg := &Config{}
+		result, err := cfg.ResolveBaseURL("", "https://default.example.com/v1")
+		require.NoError(t, err)
+		require.Equal(t, "https://default.example.com/v1", result)
+	})
+
+	t.Run("returns empty when all empty", func(t *testing.T) {
+		cfg := &Config{}
+		result, err := cfg.ResolveBaseURL("", "")
+		require.NoError(t, err)
+		require.Empty(t, result)
+	})
+
+	t.Run("returns error for invalid URL", func(t *testing.T) {
+		cfg := &Config{BaseURL: "://bad-url"}
+		_, err := cfg.ResolveBaseURL("", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid base URL")
+	})
+
+	t.Run("returns error for URL without scheme", func(t *testing.T) {
+		cfg := &Config{BaseURL: "example.com/v1"}
+		_, err := cfg.ResolveBaseURL("", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "must have scheme and host")
+	})
+
+	t.Run("trims whitespace from resolved URL", func(t *testing.T) {
+		t.Setenv("TEST_BASE_URL_WS", "  https://env.example.com/v1  ")
+
+		cfg := &Config{}
+		result, err := cfg.ResolveBaseURL("TEST_BASE_URL_WS", "")
+		require.NoError(t, err)
+		require.Equal(t, "https://env.example.com/v1", result)
+	})
+}
+
 func TestHTTPClientCaching(t *testing.T) {
 	t.Parallel()
 
