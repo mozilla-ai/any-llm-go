@@ -27,14 +27,14 @@ var (
 )
 
 // Provider implements the providers.Provider interface for Llamafile.
-// It embeds openai.BaseProvider since Llamafile exposes an OpenAI-compatible API.
+// It embeds openai.CompatibleProvider since Llamafile exposes an OpenAI-compatible API.
 type Provider struct {
-	*openai.BaseProvider
+	*openai.CompatibleProvider
 }
 
 // New creates a new Llamafile provider.
 func New(opts ...config.Option) (*Provider, error) {
-	base, err := openai.NewBase(openai.BaseConfig{
+	base, err := openai.NewCompatible(openai.CompatibleConfig{
 		APIKeyEnvVar:   "", // Llamafile doesn't use an API key env var.
 		BaseURLEnvVar:  envBaseURL,
 		Capabilities:   llamafileCapabilities(),
@@ -47,7 +47,7 @@ func New(opts ...config.Option) (*Provider, error) {
 		return nil, err
 	}
 
-	return &Provider{BaseProvider: base}, nil
+	return &Provider{CompatibleProvider: base}, nil
 }
 
 // llamafileCapabilities returns the capabilities for the Llamafile provider.
