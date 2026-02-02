@@ -14,7 +14,7 @@ var ProviderModelMap = map[string]string{
 	"openai":     "gpt-4o-mini",
 	"anthropic":  "claude-3-5-haiku-latest",
 	"mistral":    "mistral-small-latest",
-	"gemini":     "gemini-1.5-flash",
+	"gemini":     "gemini-2.5-flash",
 	"cohere":     "command-r",
 	"groq":       "llama-3.1-8b-instant",
 	"ollama":     "llama3.2",
@@ -32,6 +32,7 @@ var ProviderModelMap = map[string]string{
 var ProviderReasoningModelMap = map[string]string{
 	"openai":    "o1-mini",
 	"anthropic": "claude-sonnet-4-20250514",
+	"gemini":    "gemini-3-flash-preview",
 	"mistral":   "magistral-small-latest",
 	"deepseek":  "deepseek-reasoner",
 	"ollama":    "deepseek-r1",
@@ -41,13 +42,14 @@ var ProviderReasoningModelMap = map[string]string{
 var ProviderImageModelMap = map[string]string{
 	"openai":    "gpt-4o-mini",
 	"anthropic": "claude-3-5-haiku-latest",
-	"gemini":    "gemini-1.5-flash",
+	"gemini":    "gemini-2.5-flash",
 	"ollama":    "llava",
 }
 
 // EmbeddingProviderModelMap maps providers to embedding models.
 var EmbeddingProviderModelMap = map[string]string{
 	"openai":    "text-embedding-3-small",
+	"gemini":    "gemini-embedding-001",
 	"cohere":    "embed-english-v3.0",
 	"mistral":   "mistral-embed",
 	"together":  "togethercomputer/m2-bert-80M-8k-retrieval",
