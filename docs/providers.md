@@ -9,6 +9,7 @@ any-llm-go supports multiple LLM providers through a unified interface. Each pro
 | [OpenAI](#openai) | `openai` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [Anthropic](#anthropic) | `anthropic` | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | [Ollama](#ollama) | `ollama` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| [Gemini](#gemini) | `gemini` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [Llamafile](#llamafile) | `llamafile` | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
 
 ### Legend
@@ -86,6 +87,48 @@ Anthropic's Claude models support extended thinking for complex reasoning tasks:
 ```go
 response, err := provider.Completion(ctx, anyllm.CompletionParams{
     Model: "claude-sonnet-4-20250514",
+    Messages: messages,
+    ReasoningEffort: anyllm.ReasoningEffortMedium, // low, medium, or high
+})
+
+// Access the thinking content.
+if response.Choices[0].Message.Reasoning != nil {
+    fmt.Println("Thinking:", response.Choices[0].Message.Reasoning.Content)
+}
+```
+
+### Gemini
+
+```go
+import (
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/gemini"
+)
+
+// Using environment variable (GEMINI_API_KEY or GOOGLE_API_KEY).
+provider, err := gemini.New()
+
+// Or with explicit API key.
+provider, err := gemini.New(anyllm.WithAPIKey("your-key"))
+```
+
+**Environment Variables:** `GEMINI_API_KEY` or `GOOGLE_API_KEY`
+
+**Popular Models:**
+- `gemini-2.5-flash` - Fast and cost-effective
+- `gemini-2.5-pro` - Most capable model
+- `gemini-3-flash-preview` - Reasoning-capable model
+
+**Embedding Models:**
+- `gemini-embedding-001` - Text embeddings
+
+**Reasoning/Thinking:**
+
+Gemini models support extended thinking for complex reasoning tasks:
+
+```go
+response, err := provider.Completion(ctx, anyllm.CompletionParams{
+    Model: "gemini-3-flash-preview",
     Messages: messages,
     ReasoningEffort: anyllm.ReasoningEffortMedium, // low, medium, or high
 })
@@ -233,7 +276,6 @@ The following providers are planned for future releases:
 | Provider | Status |
 |----------|--------|
 | Mistral | Planned |
-| Google Gemini | Planned |
 | Groq | Planned |
 | Cohere | Planned |
 | Together AI | Planned |
