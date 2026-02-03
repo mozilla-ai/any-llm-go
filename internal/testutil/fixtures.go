@@ -239,15 +239,14 @@ func MockCalculatorResult(t *testing.T, a float64, b float64, operation string) 
 			result = a / b
 		}
 	}
-	return `{"result": ` + formatFloat(result) + `}`
-}
 
-// formatFloat formats a float for JSON output.
-func formatFloat(f float64) string {
-	if f == float64(int(f)) {
-		return fmt.Sprintf("%.0f", f)
+	var formatted string
+	if result == float64(int(result)) {
+		formatted = fmt.Sprintf("%.0f", result)
+	} else {
+		formatted = fmt.Sprintf("%g", result)
 	}
-	return fmt.Sprintf("%g", f)
+	return `{"result": ` + formatted + `}`
 }
 
 // HasAPIKey checks if the API key environment variable is set for a provider.
