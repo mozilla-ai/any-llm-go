@@ -61,6 +61,12 @@ const (
 	stopReasonToolUse      = "tool_use"
 )
 
+// JSON schema field names.
+const (
+	schemaFieldProperties = "properties"
+	schemaFieldRequired   = "required"
+)
+
 // Ensure Provider implements the required interfaces.
 var (
 	_ providers.CapabilityProvider = (*Provider)(nil)
@@ -537,11 +543,11 @@ func convertTool(tool providers.Tool) (anthropic.ToolUnionParam, error) {
 		return buildToolParam(tool, inputSchema), nil
 	}
 
-	if props, ok := tool.Function.Parameters["properties"]; ok {
+	if props, ok := tool.Function.Parameters[schemaFieldProperties]; ok {
 		inputSchema.Properties = props
 	}
 
-	req, ok := tool.Function.Parameters["required"]
+	req, ok := tool.Function.Parameters[schemaFieldRequired]
 	if !ok {
 		return buildToolParam(tool, inputSchema), nil
 	}
