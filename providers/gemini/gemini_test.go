@@ -606,23 +606,27 @@ func TestGenerateID(t *testing.T) {
 	t.Run("has correct prefix", func(t *testing.T) {
 		t.Parallel()
 
-		id := generateID("gemini-")
-		require.True(t, strings.HasPrefix(id, "gemini-"))
+		id, err := generateID(idPrefixCompletion)
+		require.NoError(t, err)
+		require.True(t, strings.HasPrefix(id, idPrefixCompletion))
 	})
 
 	t.Run("generates unique IDs", func(t *testing.T) {
 		t.Parallel()
 
-		id1 := generateID("call_")
-		id2 := generateID("call_")
+		id1, err := generateID(idPrefixToolCall)
+		require.NoError(t, err)
+		id2, err := generateID(idPrefixToolCall)
+		require.NoError(t, err)
 		require.NotEqual(t, id1, id2)
 	})
 
 	t.Run("has expected length", func(t *testing.T) {
 		t.Parallel()
 
-		id := generateID("test-")
-		// prefix (5) + 24 hex chars (12 bytes) = 29
+		id, err := generateID("test-")
+		require.NoError(t, err)
+		// prefix (5) + 24 hex chars (12 bytes) = 29.
 		require.Len(t, id, 29)
 	})
 }
@@ -630,10 +634,11 @@ func TestGenerateID(t *testing.T) {
 func TestNewStreamState(t *testing.T) {
 	t.Parallel()
 
-	state := newStreamState("gemini-1.5-flash")
+	state, err := newStreamState("gemini-1.5-flash")
+	require.NoError(t, err)
 	require.NotNil(t, state)
 	require.Equal(t, "gemini-1.5-flash", state.model)
-	require.True(t, strings.HasPrefix(state.messageID, "gemini-"))
+	require.True(t, strings.HasPrefix(state.messageID, idPrefixCompletion))
 	require.Nil(t, state.toolCalls)
 	require.Nil(t, state.usage)
 }
@@ -644,7 +649,8 @@ func TestStreamStateProcessResponse(t *testing.T) {
 	t.Run("processes text content", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState("test-model")
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
 		resp := &genai.GenerateContentResponse{
 			Candidates: []*genai.Candidate{{
 				Content: &genai.Content{
@@ -653,7 +659,8 @@ func TestStreamStateProcessResponse(t *testing.T) {
 			}},
 		}
 
-		chunks := state.processResponse(resp)
+		chunks, err := state.processResponse(resp)
+		require.NoError(t, err)
 		require.Len(t, chunks, 1)
 		require.Equal(t, "Hello ", chunks[0].Choices[0].Delta.Content)
 		require.Equal(t, "Hello ", state.content.String())
@@ -662,7 +669,8 @@ func TestStreamStateProcessResponse(t *testing.T) {
 	t.Run("processes thinking content", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState("test-model")
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
 		resp := &genai.GenerateContentResponse{
 			Candidates: []*genai.Candidate{{
 				Content: &genai.Content{
@@ -671,7 +679,8 @@ func TestStreamStateProcessResponse(t *testing.T) {
 			}},
 		}
 
-		chunks := state.processResponse(resp)
+		chunks, err := state.processResponse(resp)
+		require.NoError(t, err)
 		require.Len(t, chunks, 1)
 		require.NotNil(t, chunks[0].Choices[0].Delta.Reasoning)
 		require.Equal(t, "Let me think...", chunks[0].Choices[0].Delta.Reasoning.Content)
@@ -680,7 +689,8 @@ func TestStreamStateProcessResponse(t *testing.T) {
 	t.Run("processes function call", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState("test-model")
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
 		resp := &genai.GenerateContentResponse{
 			Candidates: []*genai.Candidate{{
 				Content: &genai.Content{
@@ -694,7 +704,8 @@ func TestStreamStateProcessResponse(t *testing.T) {
 			}},
 		}
 
-		chunks := state.processResponse(resp)
+		chunks, err := state.processResponse(resp)
+		require.NoError(t, err)
 		require.Len(t, chunks, 1)
 		require.Len(t, chunks[0].Choices[0].Delta.ToolCalls, 1)
 		require.Equal(t, "get_weather", chunks[0].Choices[0].Delta.ToolCalls[0].Function.Name)
@@ -704,7 +715,8 @@ func TestStreamStateProcessResponse(t *testing.T) {
 	t.Run("tracks usage metadata", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState("test-model")
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
 		resp := &genai.GenerateContentResponse{
 			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
 				PromptTokenCount:     10,
@@ -717,21 +729,24 @@ func TestStreamStateProcessResponse(t *testing.T) {
 			}},
 		}
 
-		state.processResponse(resp)
+		_, err = state.processResponse(resp)
+		require.NoError(t, err)
 		require.NotNil(t, state.usage)
 		require.Equal(t, 10, state.usage.PromptTokens)
 		require.Equal(t, 5, state.usage.CompletionTokens)
 		require.Equal(t, 15, state.usage.TotalTokens)
 	})
 
-	t.Run("returns nil for empty candidates", func(t *testing.T) {
+	t.Run("returns empty slice for empty candidates", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState("test-model")
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
 		resp := &genai.GenerateContentResponse{}
 
-		chunks := state.processResponse(resp)
-		require.Nil(t, chunks)
+		chunks, err := state.processResponse(resp)
+		require.NoError(t, err)
+		require.Empty(t, chunks)
 	})
 }
 
@@ -741,7 +756,8 @@ func TestStreamStateFinalChunk(t *testing.T) {
 	t.Run("defaults to stop finish reason", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState("test-model")
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
 		state.finishReason = genai.FinishReasonStop
 
 		chunk := state.finalChunk()
@@ -751,7 +767,8 @@ func TestStreamStateFinalChunk(t *testing.T) {
 	t.Run("uses tool_calls when tool calls present", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState("test-model")
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
 		state.finishReason = genai.FinishReasonStop
 		state.toolCalls = []providers.ToolCall{
 			{ID: "call_1", Type: "function", Function: providers.FunctionCall{Name: "get_weather"}},
@@ -764,7 +781,8 @@ func TestStreamStateFinalChunk(t *testing.T) {
 	t.Run("uses max_tokens finish reason", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState("test-model")
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
 		state.finishReason = genai.FinishReasonMaxTokens
 
 		chunk := state.finalChunk()
@@ -774,7 +792,8 @@ func TestStreamStateFinalChunk(t *testing.T) {
 	t.Run("includes usage", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState("test-model")
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
 		state.usage = &providers.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}
 
 		chunk := state.finalChunk()
@@ -802,7 +821,8 @@ func TestConvertResponse(t *testing.T) {
 			},
 		}
 
-		result := convertResponse(resp, "gemini-1.5-flash")
+		result, err := convertResponse(resp, "gemini-1.5-flash")
+		require.NoError(t, err)
 		require.Equal(t, objectChatCompletion, result.Object)
 		require.Equal(t, "gemini-1.5-flash", result.Model)
 		require.Len(t, result.Choices, 1)
@@ -832,7 +852,8 @@ func TestConvertResponse(t *testing.T) {
 			}},
 		}
 
-		result := convertResponse(resp, "gemini-1.5-flash")
+		result, err := convertResponse(resp, "gemini-1.5-flash")
+		require.NoError(t, err)
 		require.Len(t, result.Choices[0].Message.ToolCalls, 1)
 		require.Equal(t, "get_weather", result.Choices[0].Message.ToolCalls[0].Function.Name)
 		require.Equal(t, providers.FinishReasonToolCalls, result.Choices[0].FinishReason)
@@ -853,7 +874,8 @@ func TestConvertResponse(t *testing.T) {
 			}},
 		}
 
-		result := convertResponse(resp, "gemini-2.0-flash")
+		result, err := convertResponse(resp, "gemini-2.0-flash")
+		require.NoError(t, err)
 		require.Equal(t, "Hello!", result.Choices[0].Message.ContentString())
 		require.NotNil(t, result.Choices[0].Message.Reasoning)
 		require.Equal(t, "Let me think...", result.Choices[0].Message.Reasoning.Content)

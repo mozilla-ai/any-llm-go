@@ -64,6 +64,12 @@ const (
 	toolCallType         = "function"
 )
 
+// ID prefix constants for generated identifiers.
+const (
+	idPrefixCompletion = "gemini-"
+	idPrefixToolCall   = "call_"
+)
+
 // Default MIME type for image URLs when type cannot be determined.
 const defaultImageMIMEType = "image/jpeg"
 
@@ -158,7 +164,7 @@ func (p *Provider) Completion(
 		return nil, p.ConvertError(err)
 	}
 
-	return convertResponse(resp, params.Model), nil
+	return convertResponse(resp, params.Model)
 }
 
 // CompletionStream performs a streaming chat completion request.
@@ -174,7 +180,14 @@ func (p *Provider) CompletionStream(
 		defer close(errs)
 
 		contents, cfg := p.convertParams(params)
-		state := newStreamState(params.Model)
+		state, err := newStreamState(params.Model)
+		if err != nil {
+			select {
+			case errs <- err:
+			case <-ctx.Done():
+			}
+			return
+		}
 
 		for resp, err := range p.client.Models.GenerateContentStream(ctx, params.Model, contents, cfg) {
 			if err != nil {
@@ -185,7 +198,16 @@ func (p *Provider) CompletionStream(
 				return
 			}
 
-			for _, chunk := range state.processResponse(resp) {
+			responseChunks, err := state.processResponse(resp)
+			if err != nil {
+				select {
+				case errs <- err:
+				case <-ctx.Done():
+				}
+				return
+			}
+
+			for _, chunk := range responseChunks {
 				select {
 				case chunks <- chunk:
 				case <-ctx.Done():
@@ -360,11 +382,15 @@ func (p *Provider) convertParams(params providers.CompletionParams) ([]*genai.Co
 }
 
 // newStreamState creates a new stream state.
-func newStreamState(model string) *streamState {
-	return &streamState{
-		messageID: generateID("gemini-"),
-		model:     model,
+func newStreamState(model string) (*streamState, error) {
+	id, err := generateID(idPrefixCompletion)
+	if err != nil {
+		return nil, err
 	}
+	return &streamState{
+		messageID: id,
+		model:     model,
+	}, nil
 }
 
 // chunk creates a ChatCompletionChunk with the given delta.
@@ -395,7 +421,7 @@ func (s *streamState) finalChunk() *providers.ChatCompletionChunk {
 }
 
 // processResponse processes a streaming response and returns chunks to emit.
-func (s *streamState) processResponse(resp *genai.GenerateContentResponse) []providers.ChatCompletionChunk {
+func (s *streamState) processResponse(resp *genai.GenerateContentResponse) ([]providers.ChatCompletionChunk, error) {
 	var result []providers.ChatCompletionChunk
 
 	if resp.UsageMetadata != nil {
@@ -408,7 +434,7 @@ func (s *streamState) processResponse(resp *genai.GenerateContentResponse) []pro
 	}
 
 	if len(resp.Candidates) == 0 {
-		return nil
+		return result, nil
 	}
 
 	candidate := resp.Candidates[0]
@@ -418,28 +444,26 @@ func (s *streamState) processResponse(resp *genai.GenerateContentResponse) []pro
 	}
 
 	if candidate.Content == nil {
-		return nil
+		return result, nil
 	}
 
 	for _, part := range candidate.Content.Parts {
-		if part.FunctionCall != nil {
-			tc := convertFunctionCallToToolCall(part.FunctionCall)
-			s.toolCalls = append(s.toolCalls, tc)
+		switch {
+		case part.FunctionCall != nil:
+			toolCall, err := convertFunctionCallToToolCall(part.FunctionCall)
+			if err != nil {
+				return nil, err
+			}
+			s.toolCalls = append(s.toolCalls, toolCall)
 			result = append(result, s.chunk(providers.ChunkDelta{
-				ToolCalls: []providers.ToolCall{tc},
+				ToolCalls: []providers.ToolCall{toolCall},
 			}))
-			continue
-		}
-
-		if part.Thought {
+		case part.Thought:
 			s.reasoning.WriteString(part.Text)
 			result = append(result, s.chunk(providers.ChunkDelta{
 				Reasoning: &providers.Reasoning{Content: part.Text},
 			}))
-			continue
-		}
-
-		if part.Text != "" {
+		case part.Text != "":
 			s.content.WriteString(part.Text)
 			result = append(result, s.chunk(providers.ChunkDelta{
 				Content: part.Text,
@@ -447,7 +471,7 @@ func (s *streamState) processResponse(resp *genai.GenerateContentResponse) []pro
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 // applyResponseFormat configures the response format on the config.
@@ -532,7 +556,7 @@ func convertFinishReason(reason genai.FinishReason) string {
 }
 
 // convertFunctionCallToToolCall converts a Gemini function call to a providers tool call.
-func convertFunctionCallToToolCall(fc *genai.FunctionCall) providers.ToolCall {
+func convertFunctionCallToToolCall(fc *genai.FunctionCall) (providers.ToolCall, error) {
 	argsJSON := ""
 	if fc.Args != nil {
 		if b, err := json.Marshal(fc.Args); err == nil {
@@ -540,14 +564,19 @@ func convertFunctionCallToToolCall(fc *genai.FunctionCall) providers.ToolCall {
 		}
 	}
 
+	id, err := generateID(idPrefixToolCall)
+	if err != nil {
+		return providers.ToolCall{}, err
+	}
+
 	return providers.ToolCall{
-		ID:   generateID("call_"),
+		ID:   id,
 		Type: toolCallType,
 		Function: providers.FunctionCall{
 			Name:      fc.Name,
 			Arguments: argsJSON,
 		},
-	}
+	}, nil
 }
 
 // convertImagePart converts an image URL to Gemini part format.
@@ -619,35 +648,53 @@ func convertMessages(messages []providers.Message) ([]*genai.Content, *genai.Con
 	return contents, systemInstruction
 }
 
-// convertResponse converts a Gemini response to providers format.
-func convertResponse(resp *genai.GenerateContentResponse, model string) *providers.ChatCompletion {
-	var content string
-	var reasoning *providers.Reasoning
+// extractResponseContent extracts content, reasoning, tool calls, and finish reason from a Gemini response.
+func extractResponseContent(
+	resp *genai.GenerateContentResponse,
+) (string, *providers.Reasoning, []providers.ToolCall, string, error) {
+	if len(resp.Candidates) == 0 {
+		return "", nil, nil, "", nil
+	}
+
+	candidate := resp.Candidates[0]
+	finishReason := convertFinishReason(candidate.FinishReason)
+
+	if candidate.Content == nil {
+		return "", nil, nil, finishReason, nil
+	}
+
+	var contentBuilder strings.Builder
+	var reasoningBuilder strings.Builder
 	var toolCalls []providers.ToolCall
-	var finishReason string
 
-	if len(resp.Candidates) > 0 {
-		candidate := resp.Candidates[0]
-		finishReason = convertFinishReason(candidate.FinishReason)
-
-		if candidate.Content != nil {
-			for _, part := range candidate.Content.Parts {
-				if part.FunctionCall != nil {
-					toolCalls = append(toolCalls, convertFunctionCallToToolCall(part.FunctionCall))
-					continue
-				}
-				if part.Thought {
-					if reasoning == nil {
-						reasoning = &providers.Reasoning{}
-					}
-					reasoning.Content += part.Text
-					continue
-				}
-				if part.Text != "" {
-					content += part.Text
-				}
+	for _, part := range candidate.Content.Parts {
+		switch {
+		case part.FunctionCall != nil:
+			toolCall, err := convertFunctionCallToToolCall(part.FunctionCall)
+			if err != nil {
+				return "", nil, nil, "", err
 			}
+			toolCalls = append(toolCalls, toolCall)
+		case part.Thought:
+			reasoningBuilder.WriteString(part.Text)
+		case part.Text != "":
+			contentBuilder.WriteString(part.Text)
 		}
+	}
+
+	var reasoning *providers.Reasoning
+	if reasoningBuilder.Len() > 0 {
+		reasoning = &providers.Reasoning{Content: reasoningBuilder.String()}
+	}
+
+	return contentBuilder.String(), reasoning, toolCalls, finishReason, nil
+}
+
+// convertResponse converts a Gemini response to providers format.
+func convertResponse(resp *genai.GenerateContentResponse, model string) (*providers.ChatCompletion, error) {
+	content, reasoning, toolCalls, finishReason, err := extractResponseContent(resp)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(toolCalls) > 0 && finishReason == providers.FinishReasonStop {
@@ -661,8 +708,13 @@ func convertResponse(resp *genai.GenerateContentResponse, model string) *provide
 		Reasoning: reasoning,
 	}
 
+	id, err := generateID(idPrefixCompletion)
+	if err != nil {
+		return nil, err
+	}
+
 	completion := &providers.ChatCompletion{
-		ID:      generateID("gemini-"),
+		ID:      id,
 		Object:  objectChatCompletion,
 		Created: time.Now().Unix(),
 		Model:   model,
@@ -682,7 +734,7 @@ func convertResponse(resp *genai.GenerateContentResponse, model string) *provide
 		}
 	}
 
-	return completion
+	return completion, nil
 }
 
 // convertToolChoice converts providers tool choice to Gemini format.
@@ -791,12 +843,12 @@ func convertUserMessage(msg providers.Message) *genai.Content {
 }
 
 // generateID generates a random ID with the given prefix.
-func generateID(prefix string) string {
+func generateID(prefix string) (string, error) {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("generating ID: %w", err)
 	}
-	return prefix + hex.EncodeToString(b)
+	return prefix + hex.EncodeToString(b), nil
 }
 
 // thinkingBudget returns the token budget for the given reasoning effort.
