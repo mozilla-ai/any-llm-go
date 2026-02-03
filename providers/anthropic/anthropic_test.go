@@ -530,8 +530,9 @@ func TestConvertTool(t *testing.T) {
 		t.Parallel()
 
 		tool := testutil.WeatherTool()
-		result := convertTool(tool)
+		result, err := convertTool(tool)
 
+		require.NoError(t, err)
 		require.NotNil(t, result.OfTool)
 		require.Equal(t, "get_weather", result.OfTool.Name)
 		require.Equal(t, "Get the current weather for a location.", result.OfTool.Description.Value)
@@ -555,8 +556,9 @@ func TestConvertTool(t *testing.T) {
 		t.Parallel()
 
 		tool := testutil.CalculatorTool()
-		result := convertTool(tool)
+		result, err := convertTool(tool)
 
+		require.NoError(t, err)
 		require.NotNil(t, result.OfTool)
 		require.Equal(t, "calculate", result.OfTool.Name)
 		require.Equal(t, "object", string(result.OfTool.InputSchema.Type))
@@ -613,8 +615,9 @@ func TestConvertTool(t *testing.T) {
 				},
 			},
 		}
-		result := convertTool(tool)
+		result, err := convertTool(tool)
 
+		require.NoError(t, err)
 		require.NotNil(t, result.OfTool)
 		require.Equal(t, "optional_params", result.OfTool.Name)
 		require.Empty(t, result.OfTool.InputSchema.Required)
@@ -624,11 +627,56 @@ func TestConvertTool(t *testing.T) {
 		t.Parallel()
 
 		tool := testutil.DateTool()
-		result := convertTool(tool)
+		result, err := convertTool(tool)
 
+		require.NoError(t, err)
 		require.NotNil(t, result.OfTool)
 		require.Equal(t, "get_current_date", result.OfTool.Name)
 		require.Equal(t, "object", string(result.OfTool.InputSchema.Type))
+	})
+
+	t.Run("returns error for invalid required field type", func(t *testing.T) {
+		t.Parallel()
+
+		tool := providers.Tool{
+			Type: "function",
+			Function: providers.Function{
+				Name:        "bad_tool",
+				Description: "A tool with invalid required field.",
+				Parameters: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+					"required":   123, // Invalid type.
+				},
+			},
+		}
+		_, err := convertTool(tool)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "bad_tool")
+		require.Contains(t, err.Error(), "invalid required field")
+	})
+
+	t.Run("returns error for non-string element in required array", func(t *testing.T) {
+		t.Parallel()
+
+		tool := providers.Tool{
+			Type: "function",
+			Function: providers.Function{
+				Name:        "mixed_required",
+				Description: "A tool with mixed types in required.",
+				Parameters: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+					"required":   []any{"valid", 42, "also_valid"}, // Mixed types.
+				},
+			},
+		}
+		_, err := convertTool(tool)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "mixed_required")
+		require.Contains(t, err.Error(), "element 1")
 	})
 }
 
@@ -682,6 +730,71 @@ func TestThinkingBudget(t *testing.T) {
 			require.Equal(t, tc.expected, budget)
 		})
 	}
+}
+
+func TestToStringSlice(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns []string input unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		input := []string{"a", "b", "c"}
+		result, err := toStringSlice(input)
+
+		require.NoError(t, err)
+		require.Equal(t, input, result)
+	})
+
+	t.Run("converts []any with all strings", func(t *testing.T) {
+		t.Parallel()
+
+		input := []any{"x", "y", "z"}
+		result, err := toStringSlice(input)
+
+		require.NoError(t, err)
+		require.Equal(t, []string{"x", "y", "z"}, result)
+	})
+
+	t.Run("converts empty []any to empty []string", func(t *testing.T) {
+		t.Parallel()
+
+		input := []any{}
+		result, err := toStringSlice(input)
+
+		require.NoError(t, err)
+		require.Empty(t, result)
+	})
+
+	t.Run("returns error for []any with non-string element", func(t *testing.T) {
+		t.Parallel()
+
+		input := []any{"valid", 42, "another"}
+		_, err := toStringSlice(input)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "element 1")
+		require.Contains(t, err.Error(), "expected string")
+		require.Contains(t, err.Error(), "int")
+	})
+
+	t.Run("returns error for unexpected type", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := toStringSlice(123)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "expected []string or []any")
+		require.Contains(t, err.Error(), "int")
+	})
+
+	t.Run("returns error for nil input", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := toStringSlice(nil)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "expected []string or []any")
+	})
 }
 
 // Integration tests - only run if API key is available.

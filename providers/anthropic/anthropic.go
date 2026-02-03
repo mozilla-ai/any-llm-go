@@ -132,7 +132,10 @@ func (p *Provider) Completion(
 	ctx context.Context,
 	params providers.CompletionParams,
 ) (*providers.ChatCompletion, error) {
-	req := p.convertParams(params)
+	req, err := p.convertParams(params)
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := p.client.Messages.New(ctx, req)
 	if err != nil {
@@ -143,7 +146,7 @@ func (p *Provider) Completion(
 }
 
 // convertParams converts providers.CompletionParams to Anthropic request parameters.
-func (p *Provider) convertParams(params providers.CompletionParams) anthropic.MessageNewParams {
+func (p *Provider) convertParams(params providers.CompletionParams) (anthropic.MessageNewParams, error) {
 	messages, system := convertMessages(params.Messages)
 
 	maxTokens := int64(defaultMaxTokens)
@@ -178,7 +181,11 @@ func (p *Provider) convertParams(params providers.CompletionParams) anthropic.Me
 	if len(params.Tools) > 0 {
 		tools := make([]anthropic.ToolUnionParam, 0, len(params.Tools))
 		for _, tool := range params.Tools {
-			tools = append(tools, convertTool(tool))
+			converted, err := convertTool(tool)
+			if err != nil {
+				return anthropic.MessageNewParams{}, err
+			}
+			tools = append(tools, converted)
 		}
 		req.Tools = tools
 	}
@@ -189,7 +196,7 @@ func (p *Provider) convertParams(params providers.CompletionParams) anthropic.Me
 
 	applyThinking(&req, params.ReasoningEffort, maxTokens)
 
-	return req
+	return req, nil
 }
 
 // CompletionStream performs a streaming chat completion request.
@@ -204,7 +211,12 @@ func (p *Provider) CompletionStream(
 		defer close(chunks)
 		defer close(errs)
 
-		req := p.convertParams(params)
+		req, err := p.convertParams(params)
+		if err != nil {
+			errs <- err
+			return
+		}
+
 		stream := p.client.Messages.NewStreaming(ctx, req)
 		state := newStreamState()
 
@@ -516,7 +528,7 @@ func convertStopReason(reason string) string {
 }
 
 // convertTool converts a providers.Tool to Anthropic format.
-func convertTool(tool providers.Tool) anthropic.ToolUnionParam {
+func convertTool(tool providers.Tool) (anthropic.ToolUnionParam, error) {
 	inputSchema := anthropic.ToolInputSchemaParam{
 		Type: "object",
 	}
@@ -524,19 +536,15 @@ func convertTool(tool providers.Tool) anthropic.ToolUnionParam {
 		inputSchema.Properties = props
 	}
 	if req, ok := tool.Function.Parameters["required"]; ok {
-		// Handle both []string (from Go code) and []any (from JSON unmarshaling).
-		switch reqTyped := req.(type) {
-		case []string:
-			inputSchema.Required = reqTyped
-		case []any:
-			required := make([]string, 0, len(reqTyped))
-			for _, r := range reqTyped {
-				if s, ok := r.(string); ok {
-					required = append(required, s)
-				}
-			}
-			inputSchema.Required = required
+		required, err := toStringSlice(req)
+		if err != nil {
+			return anthropic.ToolUnionParam{}, fmt.Errorf(
+				"tool %s: invalid required field: %w",
+				tool.Function.Name,
+				err,
+			)
 		}
+		inputSchema.Required = required
 	}
 
 	return anthropic.ToolUnionParam{
@@ -545,7 +553,7 @@ func convertTool(tool providers.Tool) anthropic.ToolUnionParam {
 			Description: anthropic.String(tool.Function.Description),
 			InputSchema: inputSchema,
 		},
-	}
+	}, nil
 }
 
 // convertToolCall converts a tool call to Anthropic content block format.
@@ -647,6 +655,27 @@ func thinkingBudget(effort providers.ReasoningEffort) (int64, bool) {
 		return 16384, true
 	default:
 		return 0, false
+	}
+}
+
+// toStringSlice converts a value to []string.
+// Accepts []string (returned as-is) or []any (each element must be string).
+func toStringSlice(v any) ([]string, error) {
+	switch typed := v.(type) {
+	case []string:
+		return typed, nil
+	case []any:
+		result := make([]string, len(typed))
+		for i, elem := range typed {
+			s, ok := elem.(string)
+			if !ok {
+				return nil, fmt.Errorf("element %d: expected string, got %T", i, elem)
+			}
+			result[i] = s
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("expected []string or []any, got %T", v)
 	}
 }
 
