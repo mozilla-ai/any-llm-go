@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -61,6 +62,19 @@ const (
 	responseFormatJSON   = "json_object"
 	toolCallFallbackName = "function"
 	toolCallType         = "function"
+)
+
+// Default MIME type for image URLs when type cannot be determined.
+const defaultImageMIMEType = "image/jpeg"
+
+// Error message patterns for 400 error classification.
+// The Gemini SDK doesn't expose typed errors for these conditions,
+// so we rely on message matching as a pragmatic fallback.
+const (
+	errMsgContext = "context"
+	errMsgToken   = "token"
+	errMsgSafety  = "safety"
+	errMsgBlock   = "block"
 )
 
 // Ensure Provider implements the required interfaces.
@@ -211,11 +225,13 @@ func (p *Provider) ConvertError(err error) error {
 	case 429:
 		return errors.NewRateLimitError(providerName, err)
 	case 400:
+		// The Gemini SDK doesn't expose typed errors for context length or content
+		// filter violations, so we use message matching as a pragmatic fallback.
 		msg := strings.ToLower(apiErr.Message)
-		if strings.Contains(msg, "context") || strings.Contains(msg, "token") {
+		if strings.Contains(msg, errMsgContext) || strings.Contains(msg, errMsgToken) {
 			return errors.NewContextLengthError(providerName, err)
 		}
-		if strings.Contains(msg, "safety") || strings.Contains(msg, "block") {
+		if strings.Contains(msg, errMsgSafety) || strings.Contains(msg, errMsgBlock) {
 			return errors.NewContentFilterError(providerName, err)
 		}
 		return errors.NewInvalidRequestError(providerName, err)
@@ -535,6 +551,8 @@ func convertFunctionCallToToolCall(fc *genai.FunctionCall) providers.ToolCall {
 }
 
 // convertImagePart converts an image URL to Gemini part format.
+// For data URLs, it extracts the base64-encoded data and MIME type.
+// For regular URLs, it treats them as file URIs with a default MIME type.
 func convertImagePart(img *providers.ImageURL) *genai.Part {
 	url := img.URL
 
@@ -547,18 +565,21 @@ func convertImagePart(img *providers.ImageURL) *genai.Part {
 			if err == nil {
 				return genai.NewPartFromBytes(data, mediaType)
 			}
+			// Base64 decoding failed for data URL; fall through to treat as file URI.
+			// This handles malformed data URLs gracefully.
 		}
 	}
 
 	return &genai.Part{
 		FileData: &genai.FileData{
 			FileURI:  url,
-			MIMEType: "image/jpeg",
+			MIMEType: defaultImageMIMEType,
 		},
 	}
 }
 
 // convertMessage converts a single message to Gemini format.
+// Returns nil for unknown roles (with a warning logged).
 func convertMessage(msg providers.Message) *genai.Content {
 	switch msg.Role {
 	case providers.RoleUser:
@@ -568,6 +589,7 @@ func convertMessage(msg providers.Message) *genai.Content {
 	case providers.RoleTool:
 		return convertToolMessage(msg)
 	default:
+		log.Printf("gemini: unknown message role %q, skipping message", msg.Role)
 		return nil
 	}
 }
@@ -771,7 +793,9 @@ func convertUserMessage(msg providers.Message) *genai.Content {
 // generateID generates a random ID with the given prefix.
 func generateID(prefix string) string {
 	b := make([]byte, 12)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return prefix + hex.EncodeToString(b)
 }
 
