@@ -434,7 +434,7 @@ func convertMessage(msg providers.Message) (openai.ChatCompletionMessageParamUni
 	case providers.RoleSystem:
 		return openai.SystemMessage(msg.ContentString()), nil
 	case providers.RoleTool:
-		return openai.ToolMessage(msg.ToolCallID, msg.ContentString()), nil
+		return openai.ToolMessage(msg.ContentString(), msg.ToolCallID), nil
 	case providers.RoleUser:
 		return convertUserMessage(msg), nil
 	default:
