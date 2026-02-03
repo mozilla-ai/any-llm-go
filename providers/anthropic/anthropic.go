@@ -524,11 +524,15 @@ func convertTool(tool providers.Tool) anthropic.ToolUnionParam {
 		inputSchema.Properties = props
 	}
 	if req, ok := tool.Function.Parameters["required"]; ok {
-		if reqArr, ok := req.([]any); ok {
-			required := make([]string, len(reqArr))
-			for i, r := range reqArr {
+		// Handle both []string (from Go code) and []any (from JSON unmarshaling).
+		switch reqTyped := req.(type) {
+		case []string:
+			inputSchema.Required = reqTyped
+		case []any:
+			required := make([]string, 0, len(reqTyped))
+			for _, r := range reqTyped {
 				if s, ok := r.(string); ok {
-					required[i] = s
+					required = append(required, s)
 				}
 			}
 			inputSchema.Required = required
