@@ -532,28 +532,42 @@ func convertTool(tool providers.Tool) (anthropic.ToolUnionParam, error) {
 	inputSchema := anthropic.ToolInputSchemaParam{
 		Type: "object",
 	}
+
+	if tool.Function.Parameters == nil {
+		return buildToolParam(tool, inputSchema), nil
+	}
+
 	if props, ok := tool.Function.Parameters["properties"]; ok {
 		inputSchema.Properties = props
 	}
-	if req, ok := tool.Function.Parameters["required"]; ok {
-		required, err := toStringSlice(req)
-		if err != nil {
-			return anthropic.ToolUnionParam{}, fmt.Errorf(
-				"tool %s: invalid required field: %w",
-				tool.Function.Name,
-				err,
-			)
-		}
-		inputSchema.Required = required
+
+	req, ok := tool.Function.Parameters["required"]
+	if !ok {
+		return buildToolParam(tool, inputSchema), nil
 	}
 
+	required, err := toStringSlice(req)
+	if err != nil {
+		return anthropic.ToolUnionParam{}, fmt.Errorf(
+			"tool %s: invalid required field: %w",
+			tool.Function.Name,
+			err,
+		)
+	}
+	inputSchema.Required = required
+
+	return buildToolParam(tool, inputSchema), nil
+}
+
+// buildToolParam constructs the final ToolUnionParam from tool metadata and schema.
+func buildToolParam(tool providers.Tool, schema anthropic.ToolInputSchemaParam) anthropic.ToolUnionParam {
 	return anthropic.ToolUnionParam{
 		OfTool: &anthropic.ToolParam{
 			Name:        tool.Function.Name,
 			Description: anthropic.String(tool.Function.Description),
-			InputSchema: inputSchema,
+			InputSchema: schema,
 		},
-	}, nil
+	}
 }
 
 // convertToolCall converts a tool call to Anthropic content block format.

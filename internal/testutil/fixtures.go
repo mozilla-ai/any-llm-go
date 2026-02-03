@@ -4,6 +4,7 @@ package testutil
 import (
 	"fmt"
 	"os"
+	"testing"
 	"time"
 
 	"github.com/mozilla-ai/any-llm-go/config"
@@ -180,10 +181,12 @@ func DateTool() providers.Tool {
 	}
 }
 
-// CalculatorTool returns a calculator tool with multiple parameters for testing.
+// NewTestCalculatorTool returns a calculator tool with multiple parameters for testing.
 // This tool is useful for verifying that parameter order and required fields
 // are correctly preserved during conversion.
-func CalculatorTool() providers.Tool {
+func NewTestCalculatorTool(t *testing.T) providers.Tool {
+	t.Helper()
+
 	return providers.Tool{
 		Type: "function",
 		Function: providers.Function{
@@ -213,12 +216,16 @@ func CalculatorTool() providers.Tool {
 }
 
 // MockWeatherResult returns a mock weather result for testing agent loops.
-func MockWeatherResult(location string) string {
+func MockWeatherResult(t *testing.T, location string) string {
+	t.Helper()
+
 	return `{"location": "` + location + `", "temperature": 22, "unit": "celsius", "condition": "sunny"}`
 }
 
 // MockCalculatorResult returns a mock calculator result for testing agent loops.
-func MockCalculatorResult(a, b float64, operation string) string {
+func MockCalculatorResult(t *testing.T, a float64, b float64, operation string) string {
+	t.Helper()
+
 	var result float64
 	switch operation {
 	case "add":

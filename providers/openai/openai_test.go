@@ -386,7 +386,7 @@ func TestConvertTools(t *testing.T) {
 	t.Run("converts tool with multiple parameters", func(t *testing.T) {
 		t.Parallel()
 
-		tools := []providers.Tool{testutil.CalculatorTool()}
+		tools := []providers.Tool{testutil.NewTestCalculatorTool(t)}
 		result := convertTools(tools)
 
 		require.Len(t, result, 1)
@@ -588,7 +588,7 @@ func TestIntegrationAgentLoop(t *testing.T) {
 	messages = append(messages, resp.Choices[0].Message)
 	messages = append(messages, providers.Message{
 		Role:       providers.RoleTool,
-		Content:    testutil.MockWeatherResult(args.Location),
+		Content:    testutil.MockWeatherResult(t, args.Location),
 		ToolCallID: tc.ID,
 	})
 
@@ -619,7 +619,7 @@ func TestIntegrationAgentLoopMultipleParams(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	tools := []providers.Tool{testutil.CalculatorTool()}
+	tools := []providers.Tool{testutil.NewTestCalculatorTool(t)}
 
 	// Ask the model to use the calculator with specific values.
 	messages := []providers.Message{
@@ -659,7 +659,7 @@ func TestIntegrationAgentLoopMultipleParams(t *testing.T) {
 	messages = append(messages, resp.Choices[0].Message)
 	messages = append(messages, providers.Message{
 		Role:       providers.RoleTool,
-		Content:    testutil.MockCalculatorResult(args.A, args.B, args.Operation),
+		Content:    testutil.MockCalculatorResult(t, args.A, args.B, args.Operation),
 		ToolCallID: tc.ID,
 	})
 
