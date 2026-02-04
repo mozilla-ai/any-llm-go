@@ -222,6 +222,36 @@ func TestIntegrationEmbedding(t *testing.T) {
 	require.NotEmpty(t, resp.Data[0].Embedding)
 }
 
+func TestIntegrationCompletionWithTools(t *testing.T) {
+	t.Parallel()
+	skipIfLlamafileUnavailable(t)
+
+	provider, err := New()
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	params := providers.CompletionParams{
+		Model:      testutil.TestModel(providerName),
+		Messages:   testutil.ToolCallMessages(),
+		Tools:      []providers.Tool{testutil.WeatherTool()},
+		ToolChoice: "auto",
+	}
+
+	resp, err := provider.Completion(ctx, params)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, resp.ID)
+	require.Len(t, resp.Choices, 1)
+
+	// The model should call the weather tool.
+	if len(resp.Choices[0].Message.ToolCalls) > 0 {
+		tc := resp.Choices[0].Message.ToolCalls[0]
+		require.Equal(t, "get_weather", tc.Function.Name)
+		require.Contains(t, tc.Function.Arguments, "Paris")
+		require.Equal(t, providers.FinishReasonToolCalls, resp.Choices[0].FinishReason)
+	}
+}
+
 // skipIfLlamafileUnavailable skips the test if Llamafile is not running.
 func skipIfLlamafileUnavailable(t *testing.T) {
 	t.Helper()
