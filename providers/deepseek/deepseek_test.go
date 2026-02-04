@@ -333,6 +333,7 @@ func TestPreprocessMessagesForJSONSchema(t *testing.T) {
 		}
 		schema := map[string]any{"type": "object"}
 
+		// Return values intentionally ignored; we only verify the original isn't mutated.
 		_, _ = preprocessMessagesForJSONSchema(messages, schema)
 
 		// Original should be unchanged.
@@ -568,7 +569,7 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 	// Should either have tool calls or content.
 	choice := resp.Choices[0]
 	hasToolCalls := len(choice.Message.ToolCalls) > 0
-	hasContent := choice.Message.Content != nil && choice.Message.Content != ""
+	hasContent := choice.Message.ContentString() != ""
 	require.True(t, hasToolCalls || hasContent, "Expected tool calls or content")
 
 	if hasToolCalls {

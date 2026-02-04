@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/providers"
@@ -193,8 +194,7 @@ Return the JSON object only, no other text, do not wrap it in `+"```json"+` or `
 %s`, string(schemaJSON), originalContent)
 
 	// Create a copy of messages to avoid mutating the original.
-	result := make([]providers.Message, len(messages))
-	copy(result, messages)
+	result := slices.Clone(messages)
 
 	// Update the message, preserving all fields from the original.
 	result[lastUserIdx] = providers.Message{
