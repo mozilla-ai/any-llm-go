@@ -49,6 +49,18 @@ cd multi-provider
 go run main.go
 ```
 
+### Llamafile Tool Calling
+
+Use tool calling with Llamafile, a local LLM that requires no API key.
+
+```bash
+# First, start your llamafile server:
+# ./your-model.llamafile --server --port 8080
+
+cd llamafile-tools
+go run main.go
+```
+
 ## Running All Examples
 
 From the examples directory:
