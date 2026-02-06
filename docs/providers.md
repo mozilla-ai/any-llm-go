@@ -4,13 +4,14 @@ any-llm-go supports multiple LLM providers through a unified interface. Each pro
 
 ## Provider Status
 
-| Provider | ID | Completion | Streaming | Tools | Reasoning | Embeddings | List Models |
-|----------|:---|:----------:|:---------:|:-----:|:---------:|:----------:|:-----------:|
-| [OpenAI](#openai) | `openai` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| [Anthropic](#anthropic) | `anthropic` | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| [Ollama](#ollama) | `ollama` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| [Gemini](#gemini) | `gemini` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| [Llamafile](#llamafile) | `llamafile` | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Provider                | ID          | Completion | Streaming | Tools | Reasoning | Embeddings | List Models |
+|-------------------------|:------------|:----------:|:---------:|:-----:|:---------:|:----------:|:-----------:|
+| [Anthropic](#anthropic) | `anthropic` |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |      ❌      |
+| [DeepSeek](#deepseek)   | `deepseek`  |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |      ✅      |
+| [Gemini](#gemini)       | `gemini`    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |      ✅      |
+| [Llamafile](#llamafile) | `llamafile` |     ✅      |     ✅     |   ✅   |     ❌     |     ✅      |      ✅      |
+| [Ollama](#ollama)       | `ollama`    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |      ✅      |
+| [OpenAI](#openai)       | `openai`    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |      ✅      |
 
 ### Legend
 
@@ -22,40 +23,6 @@ any-llm-go supports multiple LLM providers through a unified interface. Each pro
 - **List Models** - API to list available models
 
 ## Provider Details
-
-### OpenAI
-
-```go
-import (
-    anyllm "github.com/mozilla-ai/any-llm-go"
-    "github.com/mozilla-ai/any-llm-go/providers/openai"
-)
-
-// Using environment variable (OPENAI_API_KEY).
-provider, err := openai.New()
-
-// Or with explicit API key.
-provider, err := openai.New(anyllm.WithAPIKey("sk-..."))
-
-// Or with custom base URL (for Azure, proxies, etc.).
-provider, err := openai.New(
-    anyllm.WithAPIKey("your-key"),
-    anyllm.WithBaseURL("https://your-endpoint.openai.azure.com"),
-)
-```
-
-**Environment Variable:** `OPENAI_API_KEY`
-
-**Popular Models:**
-- `gpt-4o` - Most capable model
-- `gpt-4o-mini` - Fast and cost-effective
-- `gpt-4-turbo` - Previous generation flagship
-- `o1-preview` - Reasoning model
-- `o1-mini` - Smaller reasoning model
-
-**Embedding Models:**
-- `text-embedding-3-small` - Cost-effective embeddings
-- `text-embedding-3-large` - Higher quality embeddings
 
 ### Anthropic
 
@@ -97,6 +64,47 @@ if response.Choices[0].Message.Reasoning != nil {
 }
 ```
 
+### DeepSeek
+
+```go
+import (
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/deepseek"
+)
+
+// Using environment variable (DEEPSEEK_API_KEY).
+provider, err := deepseek.New()
+
+// Or with explicit API key.
+provider, err := deepseek.New(anyllm.WithAPIKey("sk-..."))
+```
+
+**Environment Variable:** `DEEPSEEK_API_KEY`
+
+**Popular Models:**
+- `deepseek-chat` - General-purpose chat model
+- `deepseek-reasoner` - Reasoning model (DeepSeek R1)
+
+**Reasoning/Thinking:**
+
+DeepSeek R1 supports extended thinking for complex reasoning tasks:
+
+```go
+response, err := provider.Completion(ctx, anyllm.CompletionParams{
+    Model: "deepseek-reasoner",
+    Messages: messages,
+    ReasoningEffort: anyllm.ReasoningEffortMedium,
+})
+
+if response.Choices[0].Message.Reasoning != nil {
+    fmt.Println("Thinking:", response.Choices[0].Message.Reasoning.Content)
+}
+```
+
+**JSON Schema:**
+
+DeepSeek doesn't support `json_schema` response format directly. The provider automatically handles this by injecting the schema into the user message and using `json_object` mode instead.
+
 ### Gemini
 
 ```go
@@ -136,67 +144,6 @@ response, err := provider.Completion(ctx, anyllm.CompletionParams{
 // Access the thinking content.
 if response.Choices[0].Message.Reasoning != nil {
     fmt.Println("Thinking:", response.Choices[0].Message.Reasoning.Content)
-}
-```
-
-### Ollama
-
-Ollama is a local LLM server that allows you to run models on your own hardware. No API key is required.
-
-```go
-import (
-    anyllm "github.com/mozilla-ai/any-llm-go"
-    "github.com/mozilla-ai/any-llm-go/providers/ollama"
-)
-
-// Using default settings (localhost:11434).
-provider, err := ollama.New()
-
-// Or with custom base URL.
-provider, err := ollama.New(anyllm.WithBaseURL("http://localhost:11435"))
-```
-
-**Environment Variable:** `OLLAMA_HOST` (optional, defaults to `http://localhost:11434`)
-
-**Popular Models:**
-- `llama3.2` - Meta's Llama 3.2
-- `mistral` - Mistral 7B
-- `codellama` - Code-focused Llama
-- `deepseek-r1` - DeepSeek reasoning model
-
-**Reasoning/Thinking:**
-
-Ollama supports extended thinking for models that support it:
-
-```go
-response, err := provider.Completion(ctx, anyllm.CompletionParams{
-    Model: "deepseek-r1",
-    Messages: messages,
-    ReasoningEffort: anyllm.ReasoningEffortMedium,
-})
-
-if response.Choices[0].Message.Reasoning != nil {
-    fmt.Println("Thinking:", response.Choices[0].Message.Reasoning.Content)
-}
-```
-
-**Embeddings:**
-
-```go
-provider, _ := ollama.New()
-resp, err := provider.Embedding(ctx, anyllm.EmbeddingParams{
-    Model: "nomic-embed-text",
-    Input: "Hello, world!",
-})
-```
-
-**List Models:**
-
-```go
-provider, _ := ollama.New()
-models, err := provider.ListModels(ctx)
-for _, model := range models.Data {
-    fmt.Println(model.ID)
 }
 ```
 
@@ -269,17 +216,112 @@ for _, model := range models.Data {
 }
 ```
 
+### Ollama
+
+Ollama is a local LLM server that allows you to run models on your own hardware. No API key is required.
+
+```go
+import (
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/ollama"
+)
+
+// Using default settings (localhost:11434).
+provider, err := ollama.New()
+
+// Or with custom base URL.
+provider, err := ollama.New(anyllm.WithBaseURL("http://localhost:11435"))
+```
+
+**Environment Variable:** `OLLAMA_HOST` (optional, defaults to `http://localhost:11434`)
+
+**Popular Models:**
+- `llama3.2` - Meta's Llama 3.2
+- `mistral` - Mistral 7B
+- `codellama` - Code-focused Llama
+- `deepseek-r1` - DeepSeek reasoning model
+
+**Reasoning/Thinking:**
+
+Ollama supports extended thinking for models that support it:
+
+```go
+response, err := provider.Completion(ctx, anyllm.CompletionParams{
+    Model: "deepseek-r1",
+    Messages: messages,
+    ReasoningEffort: anyllm.ReasoningEffortMedium,
+})
+
+if response.Choices[0].Message.Reasoning != nil {
+    fmt.Println("Thinking:", response.Choices[0].Message.Reasoning.Content)
+}
+```
+
+**Embeddings:**
+
+```go
+provider, _ := ollama.New()
+resp, err := provider.Embedding(ctx, anyllm.EmbeddingParams{
+    Model: "nomic-embed-text",
+    Input: "Hello, world!",
+})
+```
+
+**List Models:**
+
+```go
+provider, _ := ollama.New()
+models, err := provider.ListModels(ctx)
+for _, model := range models.Data {
+    fmt.Println(model.ID)
+}
+```
+
+### OpenAI
+
+```go
+import (
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/openai"
+)
+
+// Using environment variable (OPENAI_API_KEY).
+provider, err := openai.New()
+
+// Or with explicit API key.
+provider, err := openai.New(anyllm.WithAPIKey("sk-..."))
+
+// Or with custom base URL (for Azure, proxies, etc.).
+provider, err := openai.New(
+    anyllm.WithAPIKey("your-key"),
+    anyllm.WithBaseURL("https://your-endpoint.openai.azure.com"),
+)
+```
+
+**Environment Variable:** `OPENAI_API_KEY`
+
+**Popular Models:**
+- `gpt-4o` - Most capable model
+- `gpt-4o-mini` - Fast and cost-effective
+- `gpt-4-turbo` - Previous generation flagship
+- `o1-preview` - Reasoning model
+- `o1-mini` - Smaller reasoning model
+
+**Embedding Models:**
+- `text-embedding-3-small` - Cost-effective embeddings
+- `text-embedding-3-large` - Higher quality embeddings
+
 ## Coming Soon
 
 The following providers are planned for future releases:
 
-| Provider | Status |
-|----------|--------|
-| Mistral | Planned |
-| Groq | Planned |
-| Cohere | Planned |
-| Together AI | Planned |
-| AWS Bedrock | Planned |
+| Provider     | Status                                            |
+|--------------|---------------------------------------------------|
+| Mistral      | Planned                                           |
+| Groq         | Planned                                           |
+| Cohere       | Planned                                           |
+| Together AI  | Planned                                           |
+| AWS Bedrock  | Planned                                           |
 | Azure OpenAI | Planned (use OpenAI with custom base URL for now) |
 
 ## Adding a New Provider

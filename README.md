@@ -14,7 +14,7 @@
 ![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-blue.svg)
 
 **Communicate with any LLM provider using a single, unified interface.**
-Switch between OpenAI, Anthropic, Mistral, Ollama, and more without changing your code.
+Switch between OpenAI, Anthropic, DeepSeek, Ollama, and more without changing your code.
 
 [Documentation](docs/) | [Examples](examples/) | [Contributing](CONTRIBUTING.md)
 
@@ -96,7 +96,7 @@ Set environment variables for your chosen providers:
 ```bash
 export OPENAI_API_KEY="your-key-here"
 export ANTHROPIC_API_KEY="your-key-here"
-export MISTRAL_API_KEY="your-key-here"
+export DEEPSEEK_API_KEY="your-key-here"
 # ... etc
 ```
 
@@ -276,13 +276,14 @@ for _, model := range models.Data {
 
 ## Supported Providers
 
-| Provider  | Completion | Streaming | Tools | Reasoning | Embeddings |
-|-----------|:----------:|:---------:|:-----:|:---------:|:----------:|
-| OpenAI    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |
-| Anthropic |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |
-| Gemini    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |
-| Ollama    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |
-| Llamafile |     ✅      |     ✅     |   ✅   |     ❌     |     ✅      |
+|  Provider  | Completion  |  Streaming  |  Tools |  Reasoning  |  Embeddings  |
+|:----------:|:-----------:|:-----------:|-------:|:-----------:|:------------:|
+| Anthropic  |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
+|  DeepSeek  |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
+|   Gemini   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
+| Llamafile  |      ✅      |      ✅      |      ✅ |      ❌      |      ✅       |
+|   Ollama   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
+|   OpenAI   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 
 More providers coming soon! See [docs/providers.md](docs/providers.md) for the full list.
 
