@@ -95,7 +95,6 @@ func getCurrentDatetime(timezone string) string {
 // calculate performs real mathematical operations.
 func calculate(operation string, a, b float64) string {
 	var result float64
-	var err string
 
 	switch operation {
 	case "add":
@@ -110,8 +109,7 @@ func calculate(operation string, a, b float64) string {
 		}
 		result = a / b
 	default:
-		err = fmt.Sprintf("unknown operation: %s", operation)
-		return fmt.Sprintf(`{"error": "%s"}`, err)
+		return fmt.Sprintf(`{"error": "unknown operation: %s"}`, operation)
 	}
 
 	return fmt.Sprintf(`{"operation": "%s", "a": %g, "b": %g, "result": %g}`, operation, a, b, result)

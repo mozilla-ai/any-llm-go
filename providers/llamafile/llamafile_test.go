@@ -243,12 +243,17 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 	require.NotEmpty(t, resp.ID)
 	require.Len(t, resp.Choices, 1)
 
-	// The model should call the weather tool.
-	if len(resp.Choices[0].Message.ToolCalls) > 0 {
-		tc := resp.Choices[0].Message.ToolCalls[0]
+	// Should either have tool calls or content.
+	choice := resp.Choices[0]
+	hasToolCalls := len(choice.Message.ToolCalls) > 0
+	hasContent := choice.Message.ContentString() != ""
+	require.True(t, hasToolCalls || hasContent, "Expected tool calls or content")
+
+	if hasToolCalls {
+		tc := choice.Message.ToolCalls[0]
 		require.Equal(t, "get_weather", tc.Function.Name)
 		require.Contains(t, tc.Function.Arguments, "Paris")
-		require.Equal(t, providers.FinishReasonToolCalls, resp.Choices[0].FinishReason)
+		require.Equal(t, providers.FinishReasonToolCalls, choice.FinishReason)
 	}
 }
 
