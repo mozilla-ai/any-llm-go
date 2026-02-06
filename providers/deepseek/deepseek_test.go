@@ -14,13 +14,6 @@ import (
 	"github.com/mozilla-ai/any-llm-go/providers"
 )
 
-// Expected object types in API responses.
-const (
-	objectChatCompletion      = "chat.completion"
-	objectChatCompletionChunk = "chat.completion.chunk"
-	objectList                = "list"
-)
-
 func TestNew(t *testing.T) {
 	// Note: Not using t.Parallel() here because child test uses t.Setenv.
 

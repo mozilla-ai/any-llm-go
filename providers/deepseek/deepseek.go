@@ -20,6 +20,13 @@ const (
 	providerName   = "deepseek"
 )
 
+// Object type constants for API responses.
+const (
+	objectChatCompletion      = "chat.completion"
+	objectChatCompletionChunk = "chat.completion.chunk"
+	objectList                = "list"
+)
+
 // Response format types.
 const (
 	responseFormatJSONObject = "json_object"
