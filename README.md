@@ -14,7 +14,7 @@
 ![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-blue.svg)
 
 **Communicate with any LLM provider using a single, unified interface.**
-Switch between OpenAI, Anthropic, DeepSeek, Ollama, and more without changing your code.
+Switch between OpenAI, Anthropic, DeepSeek, Mistral, Ollama, and more without changing your code.
 
 [Documentation](docs/) | [Examples](examples/) | [Contributing](CONTRIBUTING.md)
 
@@ -282,6 +282,7 @@ for _, model := range models.Data {
 |  DeepSeek  |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
 |   Gemini   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 | Llamafile  |      ✅      |      ✅      |      ✅ |      ❌      |      ✅       |
+|  Mistral   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |   Ollama   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |   OpenAI   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 
