@@ -281,6 +281,7 @@ for _, model := range models.Data {
 | Anthropic  |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
 |  DeepSeek  |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
 |   Gemini   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
+|    Groq    |      ✅      |      ✅      |      ✅ |      ❌      |      ❌       |
 | Llamafile  |      ✅      |      ✅      |      ✅ |      ❌      |      ✅       |
 |  Mistral   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |   Ollama   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
