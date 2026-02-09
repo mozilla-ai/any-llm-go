@@ -83,7 +83,7 @@ Providers implement `ErrorConverter` using `errors.As` with SDK typed errors (no
 ### Key Patterns
 
 - **Configuration**: Functional options with validation
-- **Constants**: Extract ALL magic strings to named constants (including response format types like `json_object`)
+- **Constants**: Extract ALL magic strings to named constants (including response format types like `json_object`). Constants belong in production code files, not test files
 - **Streaming**: Break monolithic handlers into focused methods (see `anthropic/anthropic.go`)
 - **Streaming Safety**: Always use `select` with `ctx.Done()` when sending to channels in goroutines to prevent blocking forever if consumer abandons
 - **ID Generation**: Use `crypto/rand`, not package-level mutable state
@@ -91,6 +91,12 @@ Providers implement `ErrorConverter` using `errors.As` with SDK typed errors (no
 - **Input Validation**: Validate required fields (Model non-empty, Messages has entries) before API calls
 - **Unknown Values**: Never silently convert unknown enum values (e.g., unknown role → user); error or log warning instead
 - **Struct Field Order**: Order struct fields A-Z (don't optimize for padding)
+- **Slice Cloning**: Prefer `slices.Clone` over manual `make` + `copy`
+- **Slice Capacity**: Use `make([]T, 0, len(source))` when building slices from known-size sources
+- **ContentString()**: Use `msg.ContentString()` instead of `msg.Content.(string)` type assertions
+- **Switch Completeness**: Switch statements should have a `default` case (error or explicit fallback)
+- **Variable Naming**: Don't shadow imported package names (e.g., use `imgURL` not `url` when `net/url` is imported)
+- **Error Messages**: Don't double-print provider name when the base error already includes it
 
 ### OpenAI-Compatible Providers
 
@@ -98,6 +104,7 @@ For providers that expose OpenAI-compatible APIs but don't have their own Go SDK
 - Use the compatible provider in `providers/openai/compatible.go`
 - Import: `"github.com/mozilla-ai/any-llm-go/providers/openai"`
 - Create thin wrapper that calls `openai.NewCompatible()` with provider-specific `CompatibleConfig`
+- Set ALL `CompatibleConfig` fields explicitly, including empty values (e.g., `BaseURLEnvVar: ""`, `DefaultAPIKey: ""`)
 - Add interface assertions in the wrapper package
 
 ### Testing
@@ -110,6 +117,8 @@ For providers that expose OpenAI-compatible APIs but don't have their own Go SDK
 - Skip integration tests gracefully when provider unavailable
 - Use constants (e.g., `objectChatCompletion`) instead of string literals in test assertions
 - Base packages need their own test suites, not just wrapper tests
+- No redundant assertions (e.g., `require.NotEmpty` already checks len > 0, don't follow with `require.Greater`)
+- Add a comment when intentionally discarding return values (e.g., `_, _ = fn()`)
 
 ## Adding a New Provider
 
