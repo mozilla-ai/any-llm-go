@@ -42,10 +42,11 @@ var ProviderReasoningModelMap = map[string]string{
 
 // ProviderImageModelMap maps providers to vision-capable models.
 var ProviderImageModelMap = map[string]string{
-	"openai":    "gpt-4o-mini",
 	"anthropic": "claude-3-5-haiku-latest",
 	"gemini":    "gemini-2.5-flash",
+	"mistral":   "pixtral-small-latest",
 	"ollama":    "llava",
+	"openai":    "gpt-4o-mini",
 }
 
 // EmbeddingProviderModelMap maps providers to embedding models.
