@@ -14,6 +14,7 @@
 ![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-blue.svg)
 
 **Communicate with any LLM provider using a single, unified interface.**
+
 Switch between OpenAI, Anthropic, DeepSeek, Mistral, Ollama, and more without changing your code.
 
 [Documentation](docs/) | [Examples](examples/) | [Contributing](CONTRIBUTING.md)
@@ -21,13 +22,14 @@ Switch between OpenAI, Anthropic, DeepSeek, Mistral, Ollama, and more without ch
 </div>
 
 ## Quickstart
+### Install Go Library
 
 ```bash
 go get github.com/mozilla-ai/any-llm-go
-
+# Set up your API key(s)
 export OPENAI_API_KEY="YOUR_KEY_HERE"  # or ANTHROPIC_API_KEY, etc
 ```
-
+### Send a Chat Completion Request
 ```go
 package main
 
@@ -70,12 +72,6 @@ func main() {
 
 - Go 1.25 or newer
 - API keys for whichever LLM providers you want to use
-
-### Basic Installation
-
-```bash
-go get github.com/mozilla-ai/any-llm-go
-```
 
 Import the main package and the providers you need:
 
