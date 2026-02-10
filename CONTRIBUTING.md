@@ -42,6 +42,55 @@ export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
+## Version Management
+
+The library version is managed using build-time injection via Go's `-ldflags` mechanism.
+
+### For Developers
+
+During development, the version defaults to `"dev"`. No special action is needed.
+
+```bash
+make build              # Builds with version from git tags
+go build ./...          # Builds with default version "dev"
+```
+
+### For Maintainers
+
+When creating a release:
+
+1. **Tag the release:**
+   ```bash
+   git tag -a v0.7.0 -m "Release v0.7.0"
+   git push origin v0.7.0
+   ```
+
+2. **Build with version:**
+   ```bash
+   # Automatic version detection from git tags
+   make build
+
+   # Or explicitly set version
+   make build VERSION=0.7.0
+
+   # Or using go build directly
+   go build -ldflags="-X github.com/mozilla-ai/any-llm-go/version.Version=0.7.0" ./...
+   ```
+
+3. **Verify version:**
+   ```bash
+   git describe --tags --always
+   ```
+
+The version is used in the `User-Agent` header for platform API requests: `go-any-llm/{version}`
+
+### Version Format
+
+- **Development builds**: `dev`
+- **Tagged releases**: `v0.7.0` (from git tags)
+- **Dirty builds**: `v0.7.0-dirty` (uncommitted changes)
+- **Between releases**: `v0.7.0-3-g6244a29` (3 commits after v0.7.0)
+
 ## Project Structure
 
 ```
