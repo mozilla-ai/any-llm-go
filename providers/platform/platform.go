@@ -21,6 +21,7 @@ import (
 	"github.com/mozilla-ai/any-llm-go/providers"
 	"github.com/mozilla-ai/any-llm-go/providers/anthropic"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
+	"github.com/mozilla-ai/any-llm-go/version"
 )
 
 const (
@@ -471,6 +472,7 @@ func (p *Provider) postUsageEvent(
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", fmt.Sprintf("go-any-llm/%s", version.Version))
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
