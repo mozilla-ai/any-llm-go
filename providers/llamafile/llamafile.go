@@ -58,6 +58,7 @@ func capabilities() providers.Capabilities {
 		CompletionPDF:       false,
 		CompletionReasoning: false, // Llamafile doesn't support reasoning natively.
 		CompletionStreaming: true,
+		CompletionTools:     true,
 		Embedding:           true,
 		ListModels:          true,
 	}
