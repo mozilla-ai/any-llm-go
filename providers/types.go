@@ -79,6 +79,7 @@ type Capabilities struct {
 	CompletionPDF       bool
 	CompletionReasoning bool
 	CompletionStreaming bool
+	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
 }
