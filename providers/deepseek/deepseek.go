@@ -93,6 +93,7 @@ func capabilities() providers.Capabilities {
 		CompletionPDF:       false,
 		CompletionReasoning: true, // DeepSeek R1 supports reasoning.
 		CompletionStreaming: true,
+		CompletionTools:     true,
 		Embedding:           false, // DeepSeek doesn't host embedding models.
 		ListModels:          true,
 	}
