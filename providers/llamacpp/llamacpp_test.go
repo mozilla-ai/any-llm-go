@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	// testModel is the name typically returned by /v1/models when only one model is loaded
+	// testModel is the name typically returned by /v1/models when only one model is loaded.
 	testModel = "llama.cpp"
 
-	// testLlamacppAvailabilityTimeout is how long we wait to check if the server is alive
+	// testLlamacppAvailabilityTimeout is how long we wait to check if the server is alive.
 	testLlamacppAvailabilityTimeout = 5 * time.Second
 )
 
@@ -73,12 +73,16 @@ func TestIntegration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("ListModels returns at least one model", func(t *testing.T) {
+		t.Parallel()
+
 		models, err := p.ListModels(ctx)
 		require.NoError(t, err)
-		require.NotEmpty(t, models.Data, "should return at least one loaded model")
+		require.NotEmpty(t, models.Data)
 	})
 
 	t.Run("Completion generates text", func(t *testing.T) {
+		t.Parallel()
+
 		resp, err := p.Completion(ctx, anyllm.CompletionParams{
 			Model:    testModel,
 			Messages: testutil.MessagesWithSystem(),
@@ -89,12 +93,14 @@ func TestIntegration(t *testing.T) {
 	})
 
 	t.Run("Embedding generates vectors", func(t *testing.T) {
+		t.Parallel()
+
 		resp, err := p.Embedding(ctx, anyllm.EmbeddingParams{
 			Model: testModel,
 			Input: []string{"test"},
 		})
 		require.NoError(t, err)
-		require.NotEmpty(t, resp.Data, "should return at least one embedding")
+		require.NotEmpty(t, resp.Data)
 	})
 }
 

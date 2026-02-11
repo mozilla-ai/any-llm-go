@@ -12,10 +12,14 @@ import (
 )
 
 const (
+	// defaultAPIKey is a dummy key for the OpenAI-compatible client.
+	defaultAPIKey = "llama-cpp-dummy-key"
+
 	// defaultBaseURL is where most people run llama-server locally.
 	defaultBaseURL = "http://127.0.0.1:8080/v1"
-	providerName   = "llamacpp"
-	defaultAPIKey  = "llama-cpp-dummy-key"
+
+	// providerName identifies this provider in error messages and lookups.
+	providerName = "llamacpp"
 )
 
 // Ensure Provider implements the required interfaces.
@@ -36,13 +40,13 @@ type Provider struct {
 // New returns a Provider that communicates with a llama.cpp server.
 func New(opts ...config.Option) (*Provider, error) {
 	base, err := openai.NewCompatible(openai.CompatibleConfig{
-		APIKeyEnvVar:   "", // we don't read from env by default
+		APIKeyEnvVar:   "",
 		BaseURLEnvVar:  "",
-		Capabilities:   llamacppCapabilities(),
+		Capabilities:   capabilities(),
 		DefaultAPIKey:  defaultAPIKey,
 		DefaultBaseURL: defaultBaseURL,
 		Name:           providerName,
-		RequireAPIKey:  false, // llama.cpp doesn't care
+		RequireAPIKey:  false,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -51,9 +55,9 @@ func New(opts ...config.Option) (*Provider, error) {
 	return &Provider{CompatibleProvider: base}, nil
 }
 
-// llamacppCapabilities returns the feature set that a typical recent llama.cpp
+// capabilities returns the feature set that a typical recent llama.cpp
 // server actually implements reliably through its /v1 endpoint.
-func llamacppCapabilities() providers.Capabilities {
+func capabilities() providers.Capabilities {
 	return providers.Capabilities{
 		Completion:          true,
 		CompletionStreaming: true,
