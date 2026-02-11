@@ -91,6 +91,7 @@ func capabilities() providers.Capabilities {
 		CompletionPDF:       false,
 		CompletionReasoning: true, // Magistral models support reasoning.
 		CompletionStreaming: true,
+		CompletionTools:     true,
 		Embedding:           true, // mistral-embed model.
 		ListModels:          true,
 	}
