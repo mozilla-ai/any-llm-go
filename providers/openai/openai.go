@@ -51,6 +51,7 @@ func capabilities() providers.Capabilities {
 		CompletionPDF:       false,
 		CompletionReasoning: true,
 		CompletionStreaming: true,
+		CompletionTools:     true,
 		Embedding:           true,
 		ListModels:          true,
 	}
