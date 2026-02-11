@@ -41,7 +41,7 @@ func New(opts ...config.Option) (*Provider, error) {
 	base, err := openai.NewCompatible(openai.CompatibleConfig{
 		APIKeyEnvVar:   envAPIKey,
 		BaseURLEnvVar:  "",
-		Capabilities:   groqCapabilities(),
+		Capabilities:   capabilities(),
 		DefaultAPIKey:  "",
 		DefaultBaseURL: defaultBaseURL,
 		Name:           providerName,
@@ -54,8 +54,8 @@ func New(opts ...config.Option) (*Provider, error) {
 	return &Provider{CompatibleProvider: base}, nil
 }
 
-// groqCapabilities returns the capabilities for the Groq provider.
-func groqCapabilities() providers.Capabilities {
+// capabilities returns the capabilities for the Groq provider.
+func capabilities() providers.Capabilities {
 	return providers.Capabilities{
 		Completion:          true,
 		CompletionImage:     false, // Groq doesn't support image inputs.

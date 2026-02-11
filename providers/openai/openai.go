@@ -31,7 +31,7 @@ type Provider struct {
 func New(opts ...config.Option) (*Provider, error) {
 	base, err := NewCompatible(CompatibleConfig{
 		APIKeyEnvVar:   envAPIKey,
-		Capabilities:   openAICapabilities(),
+		Capabilities:   capabilities(),
 		DefaultBaseURL: defaultBaseURL,
 		Name:           providerName,
 		RequireAPIKey:  true,
@@ -43,8 +43,8 @@ func New(opts ...config.Option) (*Provider, error) {
 	return &Provider{CompatibleProvider: base}, nil
 }
 
-// openAICapabilities returns the capabilities for the OpenAI provider.
-func openAICapabilities() providers.Capabilities {
+// capabilities returns the capabilities for the OpenAI provider.
+func capabilities() providers.Capabilities {
 	return providers.Capabilities{
 		Completion:          true,
 		CompletionImage:     true,

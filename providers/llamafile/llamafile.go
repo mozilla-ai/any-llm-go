@@ -37,7 +37,7 @@ func New(opts ...config.Option) (*Provider, error) {
 	base, err := openai.NewCompatible(openai.CompatibleConfig{
 		APIKeyEnvVar:   "", // Llamafile doesn't use an API key env var.
 		BaseURLEnvVar:  envBaseURL,
-		Capabilities:   llamafileCapabilities(),
+		Capabilities:   capabilities(),
 		DefaultAPIKey:  defaultAPIKey,
 		DefaultBaseURL: defaultBaseURL,
 		Name:           providerName,
@@ -50,8 +50,8 @@ func New(opts ...config.Option) (*Provider, error) {
 	return &Provider{CompatibleProvider: base}, nil
 }
 
-// llamafileCapabilities returns the capabilities for the Llamafile provider.
-func llamafileCapabilities() providers.Capabilities {
+// capabilities returns the capabilities for the Llamafile provider.
+func capabilities() providers.Capabilities {
 	return providers.Capabilities{
 		Completion:          true,
 		CompletionImage:     true, // Depends on the model loaded.

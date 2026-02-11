@@ -50,7 +50,7 @@ func New(opts ...config.Option) (*Provider, error) {
 	base, err := openai.NewCompatible(openai.CompatibleConfig{
 		APIKeyEnvVar:   envAPIKey,
 		BaseURLEnvVar:  "",
-		Capabilities:   mistralCapabilities(),
+		Capabilities:   capabilities(),
 		DefaultAPIKey:  "",
 		DefaultBaseURL: defaultBaseURL,
 		Name:           providerName,
@@ -83,8 +83,8 @@ func (p *Provider) CompletionStream(
 	return p.CompatibleProvider.CompletionStream(ctx, params)
 }
 
-// mistralCapabilities returns the capabilities for the Mistral provider.
-func mistralCapabilities() providers.Capabilities {
+// capabilities returns the capabilities for the Mistral provider.
+func capabilities() providers.Capabilities {
 	return providers.Capabilities{
 		Completion:          true,
 		CompletionImage:     true, // Pixtral models support vision.

@@ -52,7 +52,7 @@ func New(opts ...config.Option) (*Provider, error) {
 	base, err := openai.NewCompatible(openai.CompatibleConfig{
 		APIKeyEnvVar:   envAPIKey,
 		BaseURLEnvVar:  "",
-		Capabilities:   deepseekCapabilities(),
+		Capabilities:   capabilities(),
 		DefaultAPIKey:  "",
 		DefaultBaseURL: defaultBaseURL,
 		Name:           providerName,
@@ -85,8 +85,8 @@ func (p *Provider) CompletionStream(
 	return p.CompatibleProvider.CompletionStream(ctx, params)
 }
 
-// deepseekCapabilities returns the capabilities for the DeepSeek provider.
-func deepseekCapabilities() providers.Capabilities {
+// capabilities returns the capabilities for the DeepSeek provider.
+func capabilities() providers.Capabilities {
 	return providers.Capabilities{
 		Completion:          true,
 		CompletionImage:     false, // DeepSeek doesn't support images.
