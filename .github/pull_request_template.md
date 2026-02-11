@@ -13,7 +13,7 @@
 
 ## Checklist
 
-- [ ] Tests pass locally (`go test -short ./...`)
-- [ ] Linting passes (`golangci-lint run ./...`)
+- [ ] Linting passes (`make lint`)
+- [ ] Tests pass locally (`make test`)
 - [ ] Documentation updated (if needed)
 - [ ] No breaking changes (or documented in summary)
