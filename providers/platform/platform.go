@@ -120,10 +120,11 @@ func (p *Provider) Capabilities() providers.Capabilities {
 	// Return full capabilities since we can proxy to any provider.
 	return providers.Capabilities{
 		Completion:          true,
-		CompletionStreaming: true,
-		CompletionReasoning: true,
 		CompletionImage:     true,
 		CompletionPDF:       true,
+		CompletionReasoning: true,
+		CompletionStreaming: true,
+		CompletionTools:     true,
 		Embedding:           true,
 		ListModels:          true,
 	}
