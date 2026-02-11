@@ -145,7 +145,7 @@ func New(opts ...config.Option) (*Provider, error) {
 	base, err := openai.NewCompatible(openai.CompatibleConfig{
 		APIKeyEnvVar:   envAPIKey,
 		BaseURLEnvVar:  "",
-		Capabilities:   newproviderCapabilities(),
+		Capabilities:   capabilities(),
 		DefaultAPIKey:  "",
 		DefaultBaseURL: defaultBaseURL,
 		Name:           providerName,
