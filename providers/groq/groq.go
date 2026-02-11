@@ -62,6 +62,7 @@ func capabilities() providers.Capabilities {
 		CompletionPDF:       false,
 		CompletionReasoning: false, // Groq doesn't support reasoning parameters.
 		CompletionStreaming: true,
+		CompletionTools:     true,
 		Embedding:           false, // Groq doesn't host embedding models.
 		ListModels:          true,
 	}

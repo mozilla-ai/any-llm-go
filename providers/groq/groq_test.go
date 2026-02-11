@@ -60,10 +60,11 @@ func TestCapabilities(t *testing.T) {
 	caps := provider.Capabilities()
 
 	require.True(t, caps.Completion)
-	require.True(t, caps.CompletionStreaming)
-	require.False(t, caps.CompletionReasoning)
 	require.False(t, caps.CompletionImage)
 	require.False(t, caps.CompletionPDF)
+	require.False(t, caps.CompletionReasoning)
+	require.True(t, caps.CompletionStreaming)
+	require.True(t, caps.CompletionTools)
 	require.False(t, caps.Embedding)
 	require.True(t, caps.ListModels)
 }
