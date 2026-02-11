@@ -116,7 +116,7 @@ func New(opts ...config.Option) (*Provider, error) {
 
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
-		baseURL = cfg.ResolveAPIKey(envBaseURL) // OLLAMA_HOST env var
+		baseURL = cfg.ResolveEnv(envBaseURL)
 	}
 	if baseURL == "" {
 		baseURL = defaultBaseURL
