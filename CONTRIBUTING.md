@@ -158,8 +158,8 @@ func New(opts ...config.Option) (*Provider, error) {
 	return &Provider{CompatibleProvider: base}, nil
 }
 
-// newproviderCapabilities returns the capabilities for the provider.
-func newproviderCapabilities() providers.Capabilities {
+// capabilities returns the capabilities for the provider.
+func capabilities() providers.Capabilities {
 	return providers.Capabilities{
 		Completion:          true,
 		CompletionImage:     false,
