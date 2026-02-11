@@ -20,6 +20,7 @@ import (
 const (
 	defaultMaxTokens = 4096
 	envAPIKey        = "ANTHROPIC_API_KEY"
+	envBaseURL       = "ANTHROPIC_BASE_URL"
 	providerName     = "anthropic"
 )
 
@@ -104,12 +105,17 @@ func New(opts ...config.Option) (*Provider, error) {
 		return nil, errors.NewMissingAPIKeyError(providerName, envAPIKey)
 	}
 
+	baseURL, err := cfg.ResolveBaseURL(envBaseURL, "")
+	if err != nil {
+		return nil, err
+	}
+
 	clientOpts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
 	}
 
-	if cfg.BaseURL != "" {
-		clientOpts = append(clientOpts, option.WithBaseURL(cfg.BaseURL))
+	if baseURL != "" {
+		clientOpts = append(clientOpts, option.WithBaseURL(baseURL))
 	}
 
 	client := anthropic.NewClient(clientOpts...)
