@@ -57,10 +57,11 @@ func TestCapabilities(t *testing.T) {
 	caps := provider.Capabilities()
 
 	require.True(t, caps.Completion)
-	require.True(t, caps.CompletionStreaming)
-	require.True(t, caps.CompletionReasoning)
 	require.True(t, caps.CompletionImage)
 	require.True(t, caps.CompletionPDF)
+	require.True(t, caps.CompletionReasoning)
+	require.True(t, caps.CompletionStreaming)
+	require.True(t, caps.CompletionTools)
 	require.False(t, caps.Embedding) // Anthropic doesn't support embeddings.
 	require.False(t, caps.ListModels)
 }
