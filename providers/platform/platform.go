@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 	"github.com/mozilla-ai/any-llm-go/providers"
 	"github.com/mozilla-ai/any-llm-go/providers/anthropic"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
-	"github.com/mozilla-ai/any-llm-go/version"
+	"github.com/mozilla-ai/any-llm-go/sdk"
 )
 
 const (
@@ -472,7 +473,7 @@ func (p *Provider) postUsageEvent(
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("User-Agent", fmt.Sprintf("go-any-llm/%s", version.Version))
+	req.Header.Set("User-Agent", userAgent())
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -482,4 +483,10 @@ func (p *Provider) postUsageEvent(
 	// Drain and close the response body to allow connection reuse
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
+}
+
+// userAgent returns the formatted User-Agent header value per RFC 9110 section 10.1.5.
+func userAgent() string {
+	goVersion := strings.TrimPrefix(runtime.Version(), "go")
+	return fmt.Sprintf("%s/%s go/%s", sdk.Name, strings.TrimPrefix(sdk.Version, "v"), goVersion)
 }

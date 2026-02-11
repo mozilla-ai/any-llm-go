@@ -44,52 +44,34 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 ## Version Management
 
-The library version is managed using build-time injection via Go's `-ldflags` mechanism.
+The library version is a `const` in `sdk/version.go`. This is the single source of truth.
 
-### For Developers
-
-During development, the version defaults to `"dev"`. No special action is needed.
-
-```bash
-make build              # Builds with version from git tags
-go build ./...          # Builds with default version "dev"
-```
+The version is used in the `User-Agent` header for API requests using the `platform` provider: `go-any-llm/{version}`
 
 ### For Maintainers
 
 When creating a release:
 
-1. **Tag the release:**
+1. **Create a release branch and bump the version const** in `sdk/version.go`:
    ```bash
-   git tag -a v0.7.0 -m "Release v0.7.0"
-   git push origin v0.7.0
+   git checkout -b release/v0.8.0
+   # Edit sdk/version.go: const Version = "v0.8.0"
+   git add sdk/version.go
+   git commit -m "release: v0.8.0"
+   git push -u origin release/v0.8.0
    ```
 
-2. **Build with version:**
+2. **Create a PR** and merge into `main`.
+
+3. **Tag the release** from `main` after the PR is merged:
    ```bash
-   # Automatic version detection from git tags
-   make build
-
-   # Or explicitly set version
-   make build VERSION=0.7.0
-
-   # Or using go build directly
-   go build -ldflags="-X github.com/mozilla-ai/any-llm-go/version.Version=0.7.0" ./...
+   git checkout main
+   git pull
+   git tag -a v0.8.0 -m "Release v0.8.0"
+   git push origin v0.8.0
    ```
 
-3. **Verify version:**
-   ```bash
-   git describe --tags --always
-   ```
-
-The version is used in the `User-Agent` header for platform API requests: `go-any-llm/{version}`
-
-### Version Format
-
-- **Development builds**: `dev`
-- **Tagged releases**: `v0.7.0` (from git tags)
-- **Dirty builds**: `v0.7.0-dirty` (uncommitted changes)
-- **Between releases**: `v0.7.0-3-g6244a29` (3 commits after v0.7.0)
+A CI workflow (`.github/workflows/version.yaml`) validates that the pushed tag matches the `Version` const. If they differ, the workflow deletes the mismatched tag and fails the job.
 
 ## Project Structure
 

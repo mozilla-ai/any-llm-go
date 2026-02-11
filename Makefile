@@ -1,17 +1,12 @@
 .PHONY: lint test build clean fmt
 
-# Version management
-# Automatically detected from git tags, or "dev" for development builds
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS := -X github.com/mozilla-ai/any-llm-go/version.Version=$(VERSION)
-
 # Run linting with auto-fix
 lint:
 	golangci-lint run --fix ./...
 
 # Run all tests
 test: lint
-	go test -v -race ./...
+	go test -race ./...
 
 # Run tests without linting (faster)
 test-only:
@@ -21,9 +16,9 @@ test-only:
 test-unit:
 	go test -v -race -short ./...
 
-# Build and verify compilation with version injection
+# Build and verify compilation
 build:
-	go build -ldflags="$(LDFLAGS)" ./...
+	go build ./...
 
 # Format code
 fmt:

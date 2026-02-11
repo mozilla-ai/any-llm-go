@@ -1,0 +1,39 @@
+name: Check Version Consistency
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Validate tag matches version const
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          code=$(sed -n 's/^const Version = "\(.*\)"/\1/p' sdk/version.go)
+
+          if [[ -z "$code" ]]; then
+            echo "::error::Could not extract Version const from sdk/version.go."
+            exit 1
+          fi
+
+          if [[ "$TAG" != "$code" ]]; then
+            echo "::error::Tag ($TAG) does not match sdk/version.go const ($code). Update the Version const before tagging."
+            echo "Deleting mismatched tag $TAG to prevent inconsistent releases."
+            git push origin --delete "$TAG"
+            exit 1
+          fi
+
+          echo "Tag $TAG matches sdk/version.go const."

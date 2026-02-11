@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/errors"
 	"github.com/mozilla-ai/any-llm-go/providers"
+	"github.com/mozilla-ai/any-llm-go/sdk"
 )
 
 func TestNew(t *testing.T) {
@@ -91,6 +93,22 @@ func TestParseModelString(t *testing.T) {
 			require.Equal(t, tc.wantModel, model)
 		})
 	}
+}
+
+func TestUserAgent(t *testing.T) {
+	t.Parallel()
+
+	ua := userAgent()
+
+	// Verify RFC 9110 product/version format: "any-llm/X.Y.Z go/X.Y.Z".
+	parts := strings.SplitN(ua, " ", 2)
+	require.Len(t, parts, 2, "expected sdk/version and language/version pair")
+
+	require.True(t, strings.HasPrefix(parts[0], sdk.Name+"/"), "first token should start with library name")
+	require.NotContains(t, parts[0], "/v", "version should not have v prefix")
+
+	require.True(t, strings.HasPrefix(parts[1], "go/"), "second token should be the go runtime product")
+	require.Contains(t, parts[1], strings.TrimPrefix(runtime.Version(), "go"), "should contain the go runtime version")
 }
 
 func TestCompletionDoesNotMutateParams(t *testing.T) {
