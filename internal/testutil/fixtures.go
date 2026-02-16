@@ -29,6 +29,7 @@ var ProviderModelMap = map[string]string{
 	"cerebras":   "llama3.1-8b",
 	"openrouter": "meta-llama/llama-3.1-8b-instruct",
 	"llamacpp":   "Qwen2.5-7B-Instruct",
+	"zai":        "glm-4-32b-0414-128k",
 }
 
 // ProviderReasoningModelMap maps providers to reasoning-capable models.
@@ -39,6 +40,7 @@ var ProviderReasoningModelMap = map[string]string{
 	"mistral":   "magistral-small-latest",
 	"deepseek":  "deepseek-reasoner",
 	"ollama":    "deepseek-r1",
+	"zai":       "glm-4.5",
 }
 
 // ProviderImageModelMap maps providers to vision-capable models.
@@ -48,6 +50,7 @@ var ProviderImageModelMap = map[string]string{
 	"mistral":   "pixtral-small-latest",
 	"ollama":    "llava",
 	"openai":    "gpt-4o-mini",
+	"zai":       "glm-4.5v",
 }
 
 // EmbeddingProviderModelMap maps providers to embedding models.
@@ -90,6 +93,7 @@ var providerEnvKeys = map[string]string{
 	"perplexity": "PERPLEXITY_API_KEY",
 	"together":   "TOGETHER_API_KEY",
 	"xai":        "XAI_API_KEY",
+	"zai":        "ZAI_API_KEY",
 }
 
 // SimpleMessages returns a simple test message.

@@ -283,6 +283,7 @@ for _, model := range models.Data {
 |  Mistral   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |   Ollama   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |   OpenAI   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
+|    z.ai    |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
 
 More providers coming soon! See [docs/providers.md](docs/providers.md) for the full list.
 

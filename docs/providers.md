@@ -15,6 +15,7 @@ any-llm-go supports multiple LLM providers through a unified interface. Each pro
 | [Mistral](#mistral)     | `mistral`   |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |      ✅      |
 | [Ollama](#ollama)       | `ollama`    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |      ✅      |
 | [OpenAI](#openai)       | `openai`    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |      ✅      |
+| [z.ai](#zai)            | `zai`       |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |      ✅      |
 
 ### Legend
 
@@ -458,6 +459,44 @@ provider, err := openai.New(
 **Embedding Models:**
 - `text-embedding-3-small` - Cost-effective embeddings
 - `text-embedding-3-large` - Higher quality embeddings
+
+### z.ai
+
+z.ai provides access to the GLM model family through an OpenAI-compatible API.
+
+```go
+import (
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/zai"
+)
+
+// Using environment variable (ZAI_API_KEY).
+provider, err := zai.New()
+
+// Or with explicit API key.
+provider, err := zai.New(anyllm.WithAPIKey("your-key"))
+```
+
+**Environment Variable:** `ZAI_API_KEY`
+
+**Popular Models:**
+- `glm-4.5-air` - Fast and cost-effective
+- `glm-4.5` - Capable general model
+- `glm-4.6` - Vision-capable model
+- `glm-4.7` - Advanced model
+- `glm-5` - Most capable model
+
+**Completion:**
+
+```go
+provider, _ := zai.New()
+resp, err := provider.Completion(ctx, anyllm.CompletionParams{
+    Model: "glm-4.6",
+    Messages: []anyllm.Message{
+        {Role: anyllm.RoleUser, Content: "Hello!"},
+    },
+})
+```
 
 ## Coming Soon
 
