@@ -698,8 +698,6 @@ func TestConvertError(t *testing.T) {
 // Integration tests - only run if z.ai API key is available.
 
 func TestIntegrationCompletion(t *testing.T) {
-	t.Parallel()
-
 	if testutil.SkipIfNoAPIKey(providerName) {
 		t.Skip("ZAI_API_KEY not set")
 	}
@@ -724,8 +722,6 @@ func TestIntegrationCompletion(t *testing.T) {
 }
 
 func TestIntegrationCompletionWithSystemMessage(t *testing.T) {
-	t.Parallel()
-
 	if testutil.SkipIfNoAPIKey(providerName) {
 		t.Skip("ZAI_API_KEY not set")
 	}
@@ -748,8 +744,6 @@ func TestIntegrationCompletionWithSystemMessage(t *testing.T) {
 }
 
 func TestIntegrationCompletionStream(t *testing.T) {
-	t.Parallel()
-
 	if testutil.SkipIfNoAPIKey(providerName) {
 		t.Skip("ZAI_API_KEY not set")
 	}
@@ -785,8 +779,6 @@ func TestIntegrationCompletionStream(t *testing.T) {
 }
 
 func TestIntegrationListModels(t *testing.T) {
-	t.Parallel()
-
 	if testutil.SkipIfNoAPIKey(providerName) {
 		t.Skip("ZAI_API_KEY not set")
 	}
@@ -803,8 +795,6 @@ func TestIntegrationListModels(t *testing.T) {
 }
 
 func TestIntegrationCompletionConversation(t *testing.T) {
-	t.Parallel()
-
 	if testutil.SkipIfNoAPIKey(providerName) {
 		t.Skip("ZAI_API_KEY not set")
 	}
@@ -829,8 +819,6 @@ func TestIntegrationCompletionConversation(t *testing.T) {
 }
 
 func TestIntegrationCompletionWithTools(t *testing.T) {
-	t.Parallel()
-
 	if testutil.SkipIfNoAPIKey(providerName) {
 		t.Skip("ZAI_API_KEY not set")
 	}
@@ -864,8 +852,6 @@ func TestIntegrationCompletionWithTools(t *testing.T) {
 }
 
 func TestIntegrationAgentLoop(t *testing.T) {
-	t.Parallel()
-
 	if testutil.SkipIfNoAPIKey(providerName) {
 		t.Skip("ZAI_API_KEY not set")
 	}
@@ -930,8 +916,6 @@ func TestIntegrationAgentLoop(t *testing.T) {
 }
 
 func TestIntegrationAgentLoopMultipleParams(t *testing.T) {
-	t.Parallel()
-
 	if testutil.SkipIfNoAPIKey(providerName) {
 		t.Skip("ZAI_API_KEY not set")
 	}
@@ -996,8 +980,6 @@ func TestIntegrationAgentLoopMultipleParams(t *testing.T) {
 }
 
 func TestIntegrationCompletionReasoning(t *testing.T) {
-	t.Parallel()
-
 	if testutil.SkipIfNoAPIKey(providerName) {
 		t.Skip("ZAI_API_KEY not set")
 	}
@@ -1033,8 +1015,6 @@ func TestIntegrationCompletionReasoning(t *testing.T) {
 }
 
 func TestIntegrationAuthenticationError(t *testing.T) {
-	t.Parallel()
-
 	provider, err := New(config.WithAPIKey("invalid-api-key"))
 	require.NoError(t, err)
 
@@ -1053,8 +1033,6 @@ func TestIntegrationAuthenticationError(t *testing.T) {
 }
 
 func TestIntegrationAgentLoopContinuation(t *testing.T) {
-	t.Parallel()
-
 	if testutil.SkipIfNoAPIKey(providerName) {
 		t.Skip("ZAI_API_KEY not set")
 	}
