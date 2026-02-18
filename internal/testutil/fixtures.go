@@ -29,7 +29,7 @@ var ProviderModelMap = map[string]string{
 	"cerebras":   "llama3.1-8b",
 	"openrouter": "meta-llama/llama-3.1-8b-instruct",
 	"llamacpp":   "Qwen2.5-7B-Instruct",
-	"zai":        "glm-4-32b-0414-128k",
+	"zai":        "glm-4.7-flash",
 }
 
 // ProviderReasoningModelMap maps providers to reasoning-capable models.
@@ -40,7 +40,7 @@ var ProviderReasoningModelMap = map[string]string{
 	"mistral":   "magistral-small-latest",
 	"deepseek":  "deepseek-reasoner",
 	"ollama":    "deepseek-r1",
-	"zai":       "glm-4.5",
+	"zai":       "glm-4.7-flash",
 }
 
 // ProviderImageModelMap maps providers to vision-capable models.
@@ -50,7 +50,7 @@ var ProviderImageModelMap = map[string]string{
 	"mistral":   "pixtral-small-latest",
 	"ollama":    "llava",
 	"openai":    "gpt-4o-mini",
-	"zai":       "glm-4.5v",
+	"zai":       "glm-4.6v-flash",
 }
 
 // EmbeddingProviderModelMap maps providers to embedding models.
