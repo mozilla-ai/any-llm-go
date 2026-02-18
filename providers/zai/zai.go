@@ -23,6 +23,8 @@ const (
 	defaultBaseURL = "https://api.z.ai/api/paas/v4/"
 	envAPIKey      = "ZAI_API_KEY"
 	providerName   = "zai"
+	dataURIPrefix  = "data:image/"
+	base64Prefix   = "base64,"
 )
 
 // Object type constants.
@@ -284,9 +286,9 @@ func (p *Provider) createRequest(params providers.CompletionParams, stream bool)
 				if part.ImageURL != nil {
 					// Strip Data URI prefix for z.ai image format.
 					url := part.ImageURL.URL
-					if strings.HasPrefix(url, "data:image/") {
-						if idx := strings.Index(url, "base64,"); idx != -1 {
-							url = url[idx+7:]
+					if strings.HasPrefix(url, dataURIPrefix) {
+						if idx := strings.Index(url, base64Prefix); idx != -1 {
+							url = url[idx+len(base64Prefix):]
 						}
 					}
 					newParts[j].ImageURL = map[string]string{
