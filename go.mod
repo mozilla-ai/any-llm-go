@@ -3,7 +3,7 @@ module github.com/mozilla-ai/any-llm-go
 go 1.25
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.21.0
+	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/google/uuid v1.6.0
 	github.com/mozilla-ai/any-llm-platform-client-go v0.0.1
 	github.com/ollama/ollama v0.15.4
@@ -36,6 +36,7 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect
