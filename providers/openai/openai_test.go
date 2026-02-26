@@ -441,6 +441,68 @@ func TestConvertTools(t *testing.T) {
 	})
 }
 
+func TestCompletionSendsMaxCompletionTokensOnWire(t *testing.T) {
+	t.Parallel()
+
+	serverURL, capturedBody := testutil.FakeCompletionServer(t)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(serverURL),
+	)
+	require.NoError(t, err)
+
+	maxTokens := 1024
+	params := providers.CompletionParams{
+		Model:     "gpt-4",
+		Messages:  testutil.SimpleMessages(),
+		MaxTokens: &maxTokens,
+	}
+
+	_, err = provider.Completion(context.Background(), params)
+	require.NoError(t, err)
+
+	body := capturedBody()
+
+	// OpenAI requires max_completion_tokens (not max_tokens) for current models.
+	require.Contains(t, body, "max_completion_tokens")
+	require.NotContains(t, body, "max_tokens")
+	require.Equal(t, float64(1024), body["max_completion_tokens"])
+}
+
+func TestCompletionStreamSendsMaxCompletionTokensOnWire(t *testing.T) {
+	t.Parallel()
+
+	serverURL, capturedBody := testutil.FakeStreamingServer(t)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(serverURL),
+	)
+	require.NoError(t, err)
+
+	maxTokens := 1024
+	params := providers.CompletionParams{
+		Model:     "gpt-4",
+		Messages:  testutil.SimpleMessages(),
+		MaxTokens: &maxTokens,
+		Stream:    true,
+	}
+
+	chunks, errs := provider.CompletionStream(context.Background(), params)
+	for range chunks {
+		// Drain the channel.
+	}
+	require.NoError(t, <-errs)
+
+	body := capturedBody()
+
+	// OpenAI requires max_completion_tokens (not max_tokens) for current models.
+	require.Contains(t, body, "max_completion_tokens")
+	require.NotContains(t, body, "max_tokens")
+	require.Equal(t, float64(1024), body["max_completion_tokens"])
+}
+
 // Integration tests - only run if API key is available.
 
 func TestIntegrationCompletion(t *testing.T) {

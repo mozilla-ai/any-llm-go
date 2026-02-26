@@ -77,53 +77,8 @@ func TestProviderName(t *testing.T) {
 	require.Equal(t, providerName, provider.Name())
 }
 
-func TestPreprocessParams(t *testing.T) {
+func TestPatchMessageParams(t *testing.T) {
 	t.Parallel()
-
-	t.Run("strips user field from params", func(t *testing.T) {
-		t.Parallel()
-
-		params := providers.CompletionParams{
-			Model:    "mistral-small-latest",
-			Messages: testutil.SimpleMessages(),
-			User:     "test-user",
-		}
-
-		result := preprocessParams(params)
-
-		require.Equal(t, params.Model, result.Model)
-		require.Empty(t, result.User)
-	})
-
-	t.Run("strips reasoning effort from params", func(t *testing.T) {
-		t.Parallel()
-
-		params := providers.CompletionParams{
-			Model:           "magistral-small-latest",
-			Messages:        testutil.SimpleMessages(),
-			ReasoningEffort: providers.ReasoningEffortLow,
-		}
-
-		result := preprocessParams(params)
-
-		require.Equal(t, params.Model, result.Model)
-		require.Empty(t, result.ReasoningEffort)
-	})
-
-	t.Run("passes through params without user field", func(t *testing.T) {
-		t.Parallel()
-
-		params := providers.CompletionParams{
-			Model:    "mistral-small-latest",
-			Messages: testutil.SimpleMessages(),
-		}
-
-		result := preprocessParams(params)
-
-		require.Equal(t, params.Model, result.Model)
-		require.Equal(t, len(params.Messages), len(result.Messages))
-		require.Empty(t, result.User)
-	})
 
 	t.Run("patches messages with tool-to-user sequence", func(t *testing.T) {
 		t.Parallel()
@@ -136,7 +91,7 @@ func TestPreprocessParams(t *testing.T) {
 			},
 		}
 
-		result := preprocessParams(params)
+		result := patchMessageParams(params)
 
 		require.Len(t, result.Messages, 3)
 		require.Equal(t, providers.RoleTool, result.Messages[0].Role)
@@ -157,7 +112,7 @@ func TestPreprocessParams(t *testing.T) {
 			MaxTokens:   &maxTokens,
 		}
 
-		result := preprocessParams(params)
+		result := patchMessageParams(params)
 
 		require.Equal(t, params.Model, result.Model)
 		require.Equal(t, params.Temperature, result.Temperature)
@@ -274,6 +229,125 @@ func TestPatchMessages(t *testing.T) {
 
 		require.Equal(t, original, messages)
 	})
+}
+
+func TestCompletionSendsMaxTokensOnWire(t *testing.T) {
+	t.Parallel()
+
+	serverURL, capturedBody := testutil.FakeCompletionServer(t)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(serverURL),
+	)
+	require.NoError(t, err)
+
+	maxTokens := 256
+	params := providers.CompletionParams{
+		Model:     "mistral-small-latest",
+		Messages:  testutil.SimpleMessages(),
+		MaxTokens: &maxTokens,
+	}
+
+	_, err = provider.Completion(context.Background(), params)
+	require.NoError(t, err)
+
+	body := capturedBody()
+
+	// Mistral is not fully OpenAI-compatible.
+	// The wire request must use max_tokens (not max_completion_tokens)
+	// because that is what the Mistral API accepts.
+	// See: https://docs.mistral.ai/api?property=operation-chat_completion_v1_chat_completions_post_request_max_tokens
+	require.Contains(t, body, "max_tokens")
+	require.NotContains(t, body, "max_completion_tokens")
+	require.Equal(t, float64(256), body["max_tokens"])
+}
+
+func TestCompletionStripsUserField(t *testing.T) {
+	t.Parallel()
+
+	serverURL, capturedBody := testutil.FakeCompletionServer(t)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(serverURL),
+	)
+	require.NoError(t, err)
+
+	params := providers.CompletionParams{
+		Model:    "mistral-small-latest",
+		Messages: testutil.SimpleMessages(),
+		User:     "test-user",
+	}
+
+	_, err = provider.Completion(context.Background(), params)
+	require.NoError(t, err)
+
+	body := capturedBody()
+
+	// Mistral doesn't support the user field; it must not appear on the wire.
+	require.NotContains(t, body, "user")
+}
+
+func TestCompletionStripsReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	serverURL, capturedBody := testutil.FakeCompletionServer(t)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(serverURL),
+	)
+	require.NoError(t, err)
+
+	params := providers.CompletionParams{
+		Model:           "magistral-small-latest",
+		Messages:        testutil.SimpleMessages(),
+		ReasoningEffort: providers.ReasoningEffortHigh,
+	}
+
+	_, err = provider.Completion(context.Background(), params)
+	require.NoError(t, err)
+
+	body := capturedBody()
+
+	// Mistral doesn't support reasoning_effort; it must not appear on the wire.
+	require.NotContains(t, body, "reasoning_effort")
+}
+
+func TestCompletionStreamSendsMaxTokensOnWire(t *testing.T) {
+	t.Parallel()
+
+	serverURL, capturedBody := testutil.FakeStreamingServer(t)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(serverURL),
+	)
+	require.NoError(t, err)
+
+	maxTokens := 256
+	params := providers.CompletionParams{
+		Model:     "mistral-small-latest",
+		Messages:  testutil.SimpleMessages(),
+		MaxTokens: &maxTokens,
+		Stream:    true,
+	}
+
+	chunks, errs := provider.CompletionStream(context.Background(), params)
+	for range chunks {
+		// Drain the channel.
+	}
+	require.NoError(t, <-errs)
+
+	body := capturedBody()
+
+	// Mistral is not fully OpenAI-compatible.
+	// The streaming wire request must also use max_tokens (not max_completion_tokens).
+	// See: https://docs.mistral.ai/api/#tag/chat/operation/chat_completion_v1_chat_completions_post
+	require.Contains(t, body, "max_tokens")
+	require.NotContains(t, body, "max_completion_tokens")
+	require.Equal(t, float64(256), body["max_tokens"])
 }
 
 // Integration tests - only run if Mistral API key is available.

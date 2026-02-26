@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"slices"
 
+	oaisdk "github.com/openai/openai-go"
+	"github.com/openai/openai-go/packages/param"
+
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/providers"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
@@ -50,13 +53,14 @@ type Provider struct {
 // New creates a new DeepSeek provider.
 func New(opts ...config.Option) (*Provider, error) {
 	base, err := openai.NewCompatible(openai.CompatibleConfig{
-		APIKeyEnvVar:   envAPIKey,
-		BaseURLEnvVar:  "",
-		Capabilities:   capabilities(),
-		DefaultAPIKey:  "",
-		DefaultBaseURL: defaultBaseURL,
-		Name:           providerName,
-		RequireAPIKey:  true,
+		APIKeyEnvVar:                   envAPIKey,
+		BaseURLEnvVar:                  "",
+		Capabilities:                   capabilities(),
+		ChatCompletionRequestTransform: transformRequest,
+		DefaultAPIKey:                  "",
+		DefaultBaseURL:                 defaultBaseURL,
+		Name:                           providerName,
+		RequireAPIKey:                  true,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -154,6 +158,20 @@ func preprocessParams(params providers.CompletionParams) providers.CompletionPar
 		User:            params.User,
 		Extra:           params.Extra,
 	}
+}
+
+// transformRequest adjusts the OpenAI SDK request for DeepSeek's API.
+// DeepSeek uses max_tokens, not max_completion_tokens.
+// If both are set, MaxCompletionTokens takes precedence over MaxTokens.
+// See: https://api-docs.deepseek.com/api/create-chat-completion
+func transformRequest(req *oaisdk.ChatCompletionNewParams) {
+	if req.MaxCompletionTokens.Valid() {
+		// Set max_tokens using max_completion_tokens value.
+		req.MaxTokens = oaisdk.Int(req.MaxCompletionTokens.Value)
+	}
+
+	// Clear unsupported fields from the request.
+	req.MaxCompletionTokens = param.Opt[int64]{}
 }
 
 // preprocessMessagesForJSONSchema injects the JSON schema into the last user message.

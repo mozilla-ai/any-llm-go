@@ -354,6 +354,73 @@ func TestPreprocessMessagesForJSONSchema(t *testing.T) {
 	})
 }
 
+func TestCompletionSendsMaxTokensOnWire(t *testing.T) {
+	t.Parallel()
+
+	serverURL, capturedBody := testutil.FakeCompletionServer(t)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(serverURL),
+	)
+	require.NoError(t, err)
+
+	maxTokens := 512
+	params := providers.CompletionParams{
+		Model:     "deepseek-chat",
+		Messages:  testutil.SimpleMessages(),
+		MaxTokens: &maxTokens,
+	}
+
+	_, err = provider.Completion(context.Background(), params)
+	require.NoError(t, err)
+
+	body := capturedBody()
+
+	// DeepSeek is not fully OpenAI-compatible.
+	// The wire request must use max_tokens (not max_completion_tokens)
+	// because that is what the DeepSeek API accepts.
+	// See: https://api-docs.deepseek.com/api/create-chat-completion
+	require.Contains(t, body, "max_tokens")
+	require.NotContains(t, body, "max_completion_tokens")
+	require.Equal(t, float64(512), body["max_tokens"])
+}
+
+func TestCompletionStreamSendsMaxTokensOnWire(t *testing.T) {
+	t.Parallel()
+
+	serverURL, capturedBody := testutil.FakeStreamingServer(t)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(serverURL),
+	)
+	require.NoError(t, err)
+
+	maxTokens := 512
+	params := providers.CompletionParams{
+		Model:     "deepseek-chat",
+		Messages:  testutil.SimpleMessages(),
+		MaxTokens: &maxTokens,
+		Stream:    true,
+	}
+
+	chunks, errs := provider.CompletionStream(context.Background(), params)
+	for range chunks {
+		// Drain the channel.
+	}
+	require.NoError(t, <-errs)
+
+	body := capturedBody()
+
+	// DeepSeek is not fully OpenAI-compatible.
+	// The streaming wire request must also use max_tokens (not max_completion_tokens).
+	// See: https://api-docs.deepseek.com/api/create-chat-completion
+	require.Contains(t, body, "max_tokens")
+	require.NotContains(t, body, "max_completion_tokens")
+	require.Equal(t, float64(512), body["max_tokens"])
+}
+
 // Integration tests - only run if DeepSeek API key is available.
 
 func TestIntegrationCompletion(t *testing.T) {
