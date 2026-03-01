@@ -263,6 +263,13 @@ type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
+
+	// ThoughtSignature holds the raw Gemini "thought signature" bytes associated
+	// with this tool call. Gemini 2.5+ thinking models attach a per-call signature
+	// that must be echoed back verbatim on the next turn to avoid a 400 error.
+	// This field is excluded from JSON serialization; the caller is responsible for
+	// round-tripping it through whatever storage mechanism is appropriate.
+	ThoughtSignature []byte `json:"-"`
 }
 
 // ToolChoice represents a specific tool choice.

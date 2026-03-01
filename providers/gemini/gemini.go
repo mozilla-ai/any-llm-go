@@ -73,6 +73,16 @@ const (
 // Default MIME type for image URLs when type cannot be determined.
 const defaultImageMIMEType = "image/jpeg"
 
+// geminiThoughtSignatureBypass is a sentinel value that can be used as a
+// ThoughtSignature when no real signature is available. Gemini 2.5+ thinking
+// models require a ThoughtSignature on every tool-call part when replaying
+// conversation history. If a call was recorded without a signature (e.g. from
+// an earlier session or a non-thinking model), supplying this bypass value
+// tells the API to skip signature validation for that part.
+//
+// Reference: https://ai.google.dev/gemini-api/docs/thinking#thought-signatures
+const geminiThoughtSignatureBypass = "context_engineering_is_the_way_to_go"
+
 // Error message patterns for 400 error classification.
 // The Gemini SDK doesn't expose typed errors for these conditions,
 // so we rely on message matching as a pragmatic fallback.
@@ -246,6 +256,11 @@ func (p *Provider) ConvertError(err error) error {
 	case 404:
 		return errors.NewModelNotFoundError(providerName, err)
 	case 429:
+		return errors.NewRateLimitError(providerName, err)
+	case 500, 502, 503, 529:
+		// Transient server-side errors: internal error, bad gateway, service
+		// unavailable, and overloaded (529). Return as RateLimitError so callers
+		// with retry logic (checking the "rate_limit" code) can back off and retry.
 		return errors.NewRateLimitError(providerName, err)
 	case 400:
 		// The Gemini SDK doesn't expose typed errors for context length or content
@@ -455,6 +470,10 @@ func (s *streamState) processResponse(resp *genai.GenerateContentResponse) ([]pr
 			if err != nil {
 				return nil, err
 			}
+			// Capture the thought signature so callers can echo it back on the next turn.
+			if len(part.ThoughtSignature) > 0 {
+				toolCall.ThoughtSignature = part.ThoughtSignature
+			}
 			s.toolCalls = append(s.toolCalls, toolCall)
 			result = append(result, s.chunk(providers.ChunkDelta{
 				ToolCalls: []providers.ToolCall{toolCall},
@@ -511,7 +530,18 @@ func convertAssistantMessage(msg providers.Message) *genai.Content {
 	for _, tc := range msg.ToolCalls {
 		var args map[string]any
 		_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-		parts = append(parts, genai.NewPartFromFunctionCall(tc.Function.Name, args))
+		part := genai.NewPartFromFunctionCall(tc.Function.Name, args)
+		// Echo the ThoughtSignature that Gemini returned on the original turn.
+		// Thinking models (Gemini 2.5+) require this to be present; if absent
+		// the API returns a 400. Fall back to the bypass sentinel when no real
+		// signature is stored so that older entries replayed from history remain
+		// compatible.
+		if len(tc.ThoughtSignature) > 0 {
+			part.ThoughtSignature = tc.ThoughtSignature
+		} else {
+			part.ThoughtSignature = []byte(geminiThoughtSignatureBypass)
+		}
+		parts = append(parts, part)
 	}
 
 	if len(parts) == 0 {
@@ -674,6 +704,10 @@ func extractResponseContent(
 			toolCall, err := convertFunctionCallToToolCall(part.FunctionCall)
 			if err != nil {
 				return "", nil, nil, "", err
+			}
+			// Capture the thought signature so callers can echo it back on the next turn.
+			if len(part.ThoughtSignature) > 0 {
+				toolCall.ThoughtSignature = part.ThoughtSignature
 			}
 			toolCalls = append(toolCalls, toolCall)
 		case part.Thought:
