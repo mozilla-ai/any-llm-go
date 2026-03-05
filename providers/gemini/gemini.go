@@ -79,6 +79,10 @@ const (
 // Default MIME type for image URLs when type cannot be determined.
 const defaultImageMIMEType = "image/jpeg"
 
+// Bypass value for tool calls that lack a real ThoughtSignature.
+// See https://ai.google.dev/gemini-api/docs/thought-signatures#faqs
+const thoughtSignatureBypass = "skip_thought_signature_validator"
+
 // Error message patterns for 400 error classification.
 // The Gemini SDK doesn't expose typed errors for these conditions,
 // so we rely on message matching as a pragmatic fallback.
@@ -523,7 +527,31 @@ func convertAssistantMessage(msg providers.Message) *genai.Content {
 	for _, tc := range msg.ToolCalls {
 		var args map[string]any
 		_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-		parts = append(parts, genai.NewPartFromFunctionCall(tc.Function.Name, args))
+
+		part := genai.NewPartFromFunctionCall(tc.Function.Name, args)
+
+		// Replay the thought signature that Gemini returned on the original turn.
+		// Thinking models (2.5+) require this on every function call part when
+		// replaying conversation history; omitting it causes a 400 error.
+		// If no real signature was captured, use the documented bypass value.
+		//
+		// NOTE: The Go SDK declares Part.ThoughtSignature as []byte, and Go's
+		// encoding/json automatically base64-encodes []byte fields — so the
+		// bypass reaches the API as "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
+		// rather than the literal string. In testing the API appears to accept
+		// the base64-encoded form transparently, but this behaviour is
+		// undocumented and the wire format differs from what the docs describe.
+		// The Python SDK uses str, avoiding this entirely.
+		//
+		// Upstream issue: https://github.com/googleapis/go-genai/issues/711
+		// See also: https://github.com/langchain-ai/langchain-google/issues/1570
+		if sig := thoughtSignatureFromExtra(tc.Extra); sig != nil {
+			part.ThoughtSignature = sig
+		} else {
+			part.ThoughtSignature = []byte(thoughtSignatureBypass)
+		}
+
+		parts = append(parts, part)
 	}
 
 	if len(parts) == 0 {
@@ -881,6 +909,31 @@ func setProviderExtra(tc *providers.ToolCall, provider string, key string, value
 		tc.Extra[provider] = make(providers.ProviderData)
 	}
 	tc.Extra[provider][key] = value
+}
+
+// thoughtSignatureFromExtra extracts and base64-decodes a ThoughtSignature
+// from ToolCall Extra data. Returns nil if not present or invalid.
+func thoughtSignatureFromExtra(extra map[string]providers.ProviderData) []byte {
+	if extra == nil {
+		return nil
+	}
+
+	googleData, ok := extra[extraKeyProvider]
+	if !ok {
+		return nil
+	}
+
+	sigStr, ok := googleData[extraKeyThoughtSignature].(string)
+	if !ok {
+		return nil
+	}
+
+	sig, err := base64.StdEncoding.DecodeString(sigStr)
+	if err != nil {
+		return nil
+	}
+
+	return sig
 }
 
 // thinkingBudget returns the token budget for the given reasoning effort.

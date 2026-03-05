@@ -227,6 +227,67 @@ func TestConvertMessages(t *testing.T) {
 		require.Nil(t, system)
 	})
 
+	t.Run("replays thought signature from Extra", func(t *testing.T) {
+		t.Parallel()
+
+		sig := base64.StdEncoding.EncodeToString([]byte("real-signature"))
+		messages := []providers.Message{
+			{Role: providers.RoleUser, Content: "What's the weather?"},
+			{
+				Role:    providers.RoleAssistant,
+				Content: "",
+				ToolCalls: []providers.ToolCall{
+					{
+						ID:   "call_123",
+						Type: "function",
+						Function: providers.FunctionCall{
+							Name:      "get_weather",
+							Arguments: `{"location": "Paris"}`,
+						},
+						Extra: map[string]providers.ProviderData{
+							extraKeyProvider: {extraKeyThoughtSignature: sig},
+						},
+					},
+				},
+			},
+		}
+
+		result, _ := convertMessages(messages)
+
+		require.Len(t, result, 2)
+		require.Equal(t, roleModel, result[1].Role)
+		require.NotNil(t, result[1].Parts[0].FunctionCall)
+		require.Equal(t, []byte("real-signature"), result[1].Parts[0].ThoughtSignature)
+	})
+
+	t.Run("tool call without signature uses bypass value", func(t *testing.T) {
+		t.Parallel()
+
+		messages := []providers.Message{
+			{Role: providers.RoleUser, Content: "What's the weather?"},
+			{
+				Role:    providers.RoleAssistant,
+				Content: "",
+				ToolCalls: []providers.ToolCall{
+					{
+						ID:   "call_123",
+						Type: "function",
+						Function: providers.FunctionCall{
+							Name:      "get_weather",
+							Arguments: `{"location": "Paris"}`,
+						},
+					},
+				},
+			},
+		}
+
+		result, _ := convertMessages(messages)
+
+		require.Len(t, result, 2)
+		require.NotNil(t, result[1].Parts[0].FunctionCall)
+		require.Equal(t, []byte(thoughtSignatureBypass), result[1].Parts[0].ThoughtSignature)
+	})
+
 	t.Run("unknown role returns nil", func(t *testing.T) {
 		t.Parallel()
 
@@ -727,6 +788,111 @@ func TestSetProviderExtra(t *testing.T) {
 			require.Equal(t, tc.expected, toolCall.Extra)
 		})
 	}
+}
+
+func TestThoughtSignatureFromExtra(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		extra    map[string]providers.ProviderData
+		expected []byte
+	}{
+		{
+			name:     "nil extra returns nil",
+			extra:    nil,
+			expected: nil,
+		},
+		{
+			name:     "missing provider returns nil",
+			extra:    map[string]providers.ProviderData{"other": {"key": "value"}},
+			expected: nil,
+		},
+		{
+			name: "missing key returns nil",
+			extra: map[string]providers.ProviderData{
+				extraKeyProvider: {"other_key": "value"},
+			},
+			expected: nil,
+		},
+		{
+			name: "wrong type returns nil",
+			extra: map[string]providers.ProviderData{
+				extraKeyProvider: {extraKeyThoughtSignature: 12345},
+			},
+			expected: nil,
+		},
+		{
+			name: "invalid base64 returns nil",
+			extra: map[string]providers.ProviderData{
+				extraKeyProvider: {extraKeyThoughtSignature: "not-valid-base64!!!"},
+			},
+			expected: nil,
+		},
+		{
+			name: "valid signature decodes correctly",
+			extra: map[string]providers.ProviderData{
+				extraKeyProvider: {
+					extraKeyThoughtSignature: base64.StdEncoding.EncodeToString([]byte("test-sig")),
+				},
+			},
+			expected: []byte("test-sig"),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := thoughtSignatureFromExtra(tc.extra)
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestThoughtSignatureRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	// Simulate an API response with a ThoughtSignature on a function call.
+	originalSig := []byte("opaque-signature-from-gemini-api-xyz123")
+
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content: &genai.Content{
+				Parts: []*genai.Part{{
+					FunctionCall: &genai.FunctionCall{
+						Name: "search",
+						Args: map[string]any{"query": "test"},
+					},
+					ThoughtSignature: originalSig,
+				}},
+			},
+			FinishReason: genai.FinishReasonStop,
+		}},
+	}
+
+	// Capture via non-streaming path.
+	result, err := convertResponse(resp, "gemini-2.5-pro")
+	require.NoError(t, err)
+	require.Len(t, result.Choices[0].Message.ToolCalls, 1)
+
+	capturedTC := result.Choices[0].Message.ToolCalls[0]
+	require.NotNil(t, capturedTC.Extra)
+
+	// Build a message with the captured tool call (as a caller would).
+	assistantMsg := providers.Message{
+		Role:      providers.RoleAssistant,
+		Content:   "",
+		ToolCalls: []providers.ToolCall{capturedTC},
+	}
+
+	// Replay via convertAssistantMessage.
+	content := convertAssistantMessage(assistantMsg)
+	require.NotNil(t, content)
+	require.Len(t, content.Parts, 1)
+
+	// Verify the signature round-tripped identically.
+	require.Equal(t, originalSig, content.Parts[0].ThoughtSignature)
 }
 
 func TestStreamStateProcessResponse(t *testing.T) {
