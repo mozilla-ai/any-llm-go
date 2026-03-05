@@ -69,6 +69,9 @@ type Provider interface {
 	CompletionStream(ctx context.Context, params CompletionParams) (<-chan ChatCompletionChunk, <-chan error)
 }
 
+// ProviderData holds provider-specific metadata keyed by field name.
+type ProviderData map[string]any
+
 // ReasoningEffort levels for extended thinking.
 type ReasoningEffort string
 
@@ -260,9 +263,13 @@ type Tool struct {
 
 // ToolCall represents a tool call made by the assistant.
 type ToolCall struct {
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
-	Function FunctionCall `json:"function"`
+	// Extra holds provider-specific metadata for round-tripping across
+	// multi-turn conversations. Keyed by provider name (e.g. "google").
+	// Excluded from JSON; callers preserve this through their own storage.
+	Extra    map[string]ProviderData `json:"-"`
+	Function FunctionCall            `json:"function"`
+	ID       string                  `json:"id"`
+	Type     string                  `json:"type"`
 }
 
 // ToolChoice represents a specific tool choice.
