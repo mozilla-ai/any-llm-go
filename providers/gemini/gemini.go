@@ -70,11 +70,8 @@ const (
 	idPrefixToolCall   = "call_"
 )
 
-// Provider-specific Extra keys for round-tripping metadata in ToolCall.Extra.
-const (
-	extraKeyProvider         = "google"
-	extraKeyThoughtSignature = "thought_signature"
-)
+// Extra key for round-tripping ThoughtSignature metadata in ToolCall.Extra.
+const extraKeyThoughtSignature = "thought_signature"
 
 // Default MIME type for image URLs when type cannot be determined.
 const defaultImageMIMEType = "image/jpeg"
@@ -468,7 +465,7 @@ func (s *streamState) processResponse(resp *genai.GenerateContentResponse) ([]pr
 
 			// Preserve the thought signature so callers can echo it back on the next turn.
 			if len(part.ThoughtSignature) > 0 {
-				setProviderExtra(&toolCall, extraKeyProvider, extraKeyThoughtSignature,
+				setProviderExtra(&toolCall, providerName, extraKeyThoughtSignature,
 					base64.StdEncoding.EncodeToString(part.ThoughtSignature))
 			}
 			s.toolCalls = append(s.toolCalls, toolCall)
@@ -718,7 +715,7 @@ func extractResponseContent(
 
 			// Preserve the thought signature so callers can echo it back on the next turn.
 			if len(part.ThoughtSignature) > 0 {
-				setProviderExtra(&toolCall, extraKeyProvider, extraKeyThoughtSignature,
+				setProviderExtra(&toolCall, providerName, extraKeyThoughtSignature,
 					base64.StdEncoding.EncodeToString(part.ThoughtSignature))
 			}
 			toolCalls = append(toolCalls, toolCall)
@@ -918,12 +915,12 @@ func thoughtSignatureFromExtra(extra map[string]providers.ProviderData) []byte {
 		return nil
 	}
 
-	googleData, ok := extra[extraKeyProvider]
+	geminiData, ok := extra[providerName]
 	if !ok {
 		return nil
 	}
 
-	sigStr, ok := googleData[extraKeyThoughtSignature].(string)
+	sigStr, ok := geminiData[extraKeyThoughtSignature].(string)
 	if !ok {
 		return nil
 	}

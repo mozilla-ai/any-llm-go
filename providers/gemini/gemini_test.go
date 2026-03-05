@@ -245,7 +245,7 @@ func TestConvertMessages(t *testing.T) {
 							Arguments: `{"location": "Paris"}`,
 						},
 						Extra: map[string]providers.ProviderData{
-							extraKeyProvider: {extraKeyThoughtSignature: sig},
+							providerName: {extraKeyThoughtSignature: sig},
 						},
 					},
 				},
@@ -811,28 +811,28 @@ func TestThoughtSignatureFromExtra(t *testing.T) {
 		{
 			name: "missing key returns nil",
 			extra: map[string]providers.ProviderData{
-				extraKeyProvider: {"other_key": "value"},
+				providerName: {"other_key": "value"},
 			},
 			expected: nil,
 		},
 		{
 			name: "wrong type returns nil",
 			extra: map[string]providers.ProviderData{
-				extraKeyProvider: {extraKeyThoughtSignature: 12345},
+				providerName: {extraKeyThoughtSignature: 12345},
 			},
 			expected: nil,
 		},
 		{
 			name: "invalid base64 returns nil",
 			extra: map[string]providers.ProviderData{
-				extraKeyProvider: {extraKeyThoughtSignature: "not-valid-base64!!!"},
+				providerName: {extraKeyThoughtSignature: "not-valid-base64!!!"},
 			},
 			expected: nil,
 		},
 		{
 			name: "valid signature decodes correctly",
 			extra: map[string]providers.ProviderData{
-				extraKeyProvider: {
+				providerName: {
 					extraKeyThoughtSignature: base64.StdEncoding.EncodeToString([]byte("test-sig")),
 				},
 			},
@@ -1014,10 +1014,10 @@ func TestStreamStateProcessResponse(t *testing.T) {
 
 		tc := chunks[0].Choices[0].Delta.ToolCalls[0]
 		require.NotNil(t, tc.Extra)
-		googleData, ok := tc.Extra[extraKeyProvider]
+		geminiData, ok := tc.Extra[providerName]
 		require.True(t, ok, "expected google provider data in Extra")
 
-		sig, ok := googleData[extraKeyThoughtSignature].(string)
+		sig, ok := geminiData[extraKeyThoughtSignature].(string)
 		require.True(t, ok, "expected thought_signature to be a string")
 
 		// Value should be base64-encoded.
@@ -1198,8 +1198,8 @@ func TestConvertResponse(t *testing.T) {
 
 		tc := result.Choices[0].Message.ToolCalls[0]
 		require.NotNil(t, tc.Extra)
-		googleData := tc.Extra[extraKeyProvider]
-		sig, ok := googleData[extraKeyThoughtSignature].(string)
+		geminiData := tc.Extra[providerName]
+		sig, ok := geminiData[extraKeyThoughtSignature].(string)
 		require.True(t, ok)
 
 		decoded, err := base64.StdEncoding.DecodeString(sig)

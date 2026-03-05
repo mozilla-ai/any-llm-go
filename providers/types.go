@@ -264,7 +264,7 @@ type Tool struct {
 // ToolCall represents a tool call made by the assistant.
 type ToolCall struct {
 	// Extra holds provider-specific metadata for round-tripping across
-	// multi-turn conversations. Keyed by provider name (e.g. "google").
+	// multi-turn conversations. Keyed by provider name (e.g. "gemini").
 	// Excluded from JSON; callers preserve this through their own storage.
 	Extra    map[string]ProviderData `json:"-"`
 	Function FunctionCall            `json:"function"`
