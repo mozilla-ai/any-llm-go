@@ -720,33 +720,33 @@ func TestSetProviderExtra(t *testing.T) {
 		{
 			name:     "nil Extra initialises both maps",
 			initial:  nil,
-			provider: "google",
+			provider: providerName,
 			key:      "thought_signature",
 			value:    "abc123",
 			expected: map[string]providers.ProviderData{
-				"google": {"thought_signature": "abc123"},
+				providerName: {"thought_signature": "abc123"},
 			},
 		},
 		{
 			name:     "nil provider map initialises inner map",
 			initial:  map[string]providers.ProviderData{},
-			provider: "google",
+			provider: providerName,
 			key:      "thought_signature",
 			value:    "abc123",
 			expected: map[string]providers.ProviderData{
-				"google": {"thought_signature": "abc123"},
+				providerName: {"thought_signature": "abc123"},
 			},
 		},
 		{
 			name: "preserves existing provider keys",
 			initial: map[string]providers.ProviderData{
-				"google": {"existing_key": "existing_value"},
+				providerName: {"existing_key": "existing_value"},
 			},
-			provider: "google",
+			provider: providerName,
 			key:      "thought_signature",
 			value:    "abc123",
 			expected: map[string]providers.ProviderData{
-				"google": {
+				providerName: {
 					"existing_key":      "existing_value",
 					"thought_signature": "abc123",
 				},
@@ -757,24 +757,24 @@ func TestSetProviderExtra(t *testing.T) {
 			initial: map[string]providers.ProviderData{
 				"other": {"key": "value"},
 			},
-			provider: "google",
+			provider: providerName,
 			key:      "thought_signature",
 			value:    "abc123",
 			expected: map[string]providers.ProviderData{
-				"other":  {"key": "value"},
-				"google": {"thought_signature": "abc123"},
+				"other":      {"key": "value"},
+				providerName: {"thought_signature": "abc123"},
 			},
 		},
 		{
 			name: "overwrites existing key",
 			initial: map[string]providers.ProviderData{
-				"google": {"thought_signature": "old"},
+				providerName: {"thought_signature": "old"},
 			},
-			provider: "google",
+			provider: providerName,
 			key:      "thought_signature",
 			value:    "new",
 			expected: map[string]providers.ProviderData{
-				"google": {"thought_signature": "new"},
+				providerName: {"thought_signature": "new"},
 			},
 		},
 	}
