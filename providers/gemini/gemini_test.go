@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"context"
+	"encoding/base64"
 	stderrors "errors"
 	"strings"
 	"testing"
@@ -644,6 +645,90 @@ func TestNewStreamState(t *testing.T) {
 	require.Nil(t, state.usage)
 }
 
+func TestSetProviderExtra(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		initial  map[string]providers.ProviderData
+		provider string
+		key      string
+		value    any
+		expected map[string]providers.ProviderData
+	}{
+		{
+			name:     "nil Extra initialises both maps",
+			initial:  nil,
+			provider: "google",
+			key:      "thought_signature",
+			value:    "abc123",
+			expected: map[string]providers.ProviderData{
+				"google": {"thought_signature": "abc123"},
+			},
+		},
+		{
+			name:     "nil provider map initialises inner map",
+			initial:  map[string]providers.ProviderData{},
+			provider: "google",
+			key:      "thought_signature",
+			value:    "abc123",
+			expected: map[string]providers.ProviderData{
+				"google": {"thought_signature": "abc123"},
+			},
+		},
+		{
+			name: "preserves existing provider keys",
+			initial: map[string]providers.ProviderData{
+				"google": {"existing_key": "existing_value"},
+			},
+			provider: "google",
+			key:      "thought_signature",
+			value:    "abc123",
+			expected: map[string]providers.ProviderData{
+				"google": {
+					"existing_key":      "existing_value",
+					"thought_signature": "abc123",
+				},
+			},
+		},
+		{
+			name: "preserves other providers",
+			initial: map[string]providers.ProviderData{
+				"other": {"key": "value"},
+			},
+			provider: "google",
+			key:      "thought_signature",
+			value:    "abc123",
+			expected: map[string]providers.ProviderData{
+				"other":  {"key": "value"},
+				"google": {"thought_signature": "abc123"},
+			},
+		},
+		{
+			name: "overwrites existing key",
+			initial: map[string]providers.ProviderData{
+				"google": {"thought_signature": "old"},
+			},
+			provider: "google",
+			key:      "thought_signature",
+			value:    "new",
+			expected: map[string]providers.ProviderData{
+				"google": {"thought_signature": "new"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			toolCall := providers.ToolCall{Extra: tc.initial}
+			setProviderExtra(&toolCall, tc.provider, tc.key, tc.value)
+			require.Equal(t, tc.expected, toolCall.Extra)
+		})
+	}
+}
+
 func TestStreamStateProcessResponse(t *testing.T) {
 	t.Parallel()
 
@@ -736,6 +821,69 @@ func TestStreamStateProcessResponse(t *testing.T) {
 		require.Equal(t, 10, state.usage.PromptTokens)
 		require.Equal(t, 5, state.usage.CompletionTokens)
 		require.Equal(t, 15, state.usage.TotalTokens)
+	})
+
+	t.Run("captures thought signature on function call", func(t *testing.T) {
+		t.Parallel()
+
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
+		resp := &genai.GenerateContentResponse{
+			Candidates: []*genai.Candidate{{
+				Content: &genai.Content{
+					Parts: []*genai.Part{{
+						FunctionCall: &genai.FunctionCall{
+							Name: "get_weather",
+							Args: map[string]any{"location": "Paris"},
+						},
+						ThoughtSignature: []byte("test-signature-bytes"),
+					}},
+				},
+			}},
+		}
+
+		chunks, err := state.processResponse(resp)
+		require.NoError(t, err)
+		require.Len(t, chunks, 1)
+
+		tc := chunks[0].Choices[0].Delta.ToolCalls[0]
+		require.NotNil(t, tc.Extra)
+		googleData, ok := tc.Extra[extraKeyProvider]
+		require.True(t, ok, "expected google provider data in Extra")
+
+		sig, ok := googleData[extraKeyThoughtSignature].(string)
+		require.True(t, ok, "expected thought_signature to be a string")
+
+		// Value should be base64-encoded.
+		decoded, err := base64.StdEncoding.DecodeString(sig)
+		require.NoError(t, err)
+		require.Equal(t, []byte("test-signature-bytes"), decoded)
+	})
+
+	t.Run("no thought signature leaves Extra nil", func(t *testing.T) {
+		t.Parallel()
+
+		state, err := newStreamState("test-model")
+		require.NoError(t, err)
+		resp := &genai.GenerateContentResponse{
+			Candidates: []*genai.Candidate{{
+				Content: &genai.Content{
+					Parts: []*genai.Part{{
+						FunctionCall: &genai.FunctionCall{
+							Name: "get_weather",
+							Args: map[string]any{"location": "Paris"},
+						},
+					}},
+				},
+			}},
+		}
+
+		chunks, err := state.processResponse(resp)
+		require.NoError(t, err)
+		require.Len(t, chunks, 1)
+
+		tc := chunks[0].Choices[0].Delta.ToolCalls[0]
+		require.Nil(t, tc.Extra)
 	})
 
 	t.Run("returns empty slice for empty candidates", func(t *testing.T) {
@@ -858,6 +1006,39 @@ func TestConvertResponse(t *testing.T) {
 		require.Len(t, result.Choices[0].Message.ToolCalls, 1)
 		require.Equal(t, "get_weather", result.Choices[0].Message.ToolCalls[0].Function.Name)
 		require.Equal(t, providers.FinishReasonToolCalls, result.Choices[0].FinishReason)
+	})
+
+	t.Run("captures thought signature on function call", func(t *testing.T) {
+		t.Parallel()
+
+		resp := &genai.GenerateContentResponse{
+			Candidates: []*genai.Candidate{{
+				Content: &genai.Content{
+					Parts: []*genai.Part{{
+						FunctionCall: &genai.FunctionCall{
+							Name: "get_weather",
+							Args: map[string]any{"location": "Paris"},
+						},
+						ThoughtSignature: []byte("non-stream-sig"),
+					}},
+				},
+				FinishReason: genai.FinishReasonStop,
+			}},
+		}
+
+		result, err := convertResponse(resp, "gemini-2.5-pro")
+		require.NoError(t, err)
+		require.Len(t, result.Choices[0].Message.ToolCalls, 1)
+
+		tc := result.Choices[0].Message.ToolCalls[0]
+		require.NotNil(t, tc.Extra)
+		googleData := tc.Extra[extraKeyProvider]
+		sig, ok := googleData[extraKeyThoughtSignature].(string)
+		require.True(t, ok)
+
+		decoded, err := base64.StdEncoding.DecodeString(sig)
+		require.NoError(t, err)
+		require.Equal(t, []byte("non-stream-sig"), decoded)
 	})
 
 	t.Run("converts thinking response", func(t *testing.T) {

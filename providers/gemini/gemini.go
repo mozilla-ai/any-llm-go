@@ -70,6 +70,12 @@ const (
 	idPrefixToolCall   = "call_"
 )
 
+// Provider-specific Extra keys for round-tripping metadata in ToolCall.Extra.
+const (
+	extraKeyProvider         = "google"
+	extraKeyThoughtSignature = "thought_signature"
+)
+
 // Default MIME type for image URLs when type cannot be determined.
 const defaultImageMIMEType = "image/jpeg"
 
@@ -455,6 +461,12 @@ func (s *streamState) processResponse(resp *genai.GenerateContentResponse) ([]pr
 			if err != nil {
 				return nil, err
 			}
+
+			// Preserve the thought signature so callers can echo it back on the next turn.
+			if len(part.ThoughtSignature) > 0 {
+				setProviderExtra(&toolCall, extraKeyProvider, extraKeyThoughtSignature,
+					base64.StdEncoding.EncodeToString(part.ThoughtSignature))
+			}
 			s.toolCalls = append(s.toolCalls, toolCall)
 			result = append(result, s.chunk(providers.ChunkDelta{
 				ToolCalls: []providers.ToolCall{toolCall},
@@ -675,6 +687,12 @@ func extractResponseContent(
 			if err != nil {
 				return "", nil, nil, "", err
 			}
+
+			// Preserve the thought signature so callers can echo it back on the next turn.
+			if len(part.ThoughtSignature) > 0 {
+				setProviderExtra(&toolCall, extraKeyProvider, extraKeyThoughtSignature,
+					base64.StdEncoding.EncodeToString(part.ThoughtSignature))
+			}
 			toolCalls = append(toolCalls, toolCall)
 		case part.Thought:
 			reasoningBuilder.WriteString(part.Text)
@@ -850,6 +868,19 @@ func generateID(prefix string) (string, error) {
 		return "", fmt.Errorf("generating ID: %w", err)
 	}
 	return prefix + hex.EncodeToString(b), nil
+}
+
+// setProviderExtra safely sets a key in a ToolCall's provider-specific Extra data.
+// Initialises the maps if nil, and preserves existing keys.
+// NOTE: This lives in the gemini package for now; lift to providers if other providers need it.
+func setProviderExtra(tc *providers.ToolCall, provider string, key string, value any) {
+	if tc.Extra == nil {
+		tc.Extra = make(map[string]providers.ProviderData)
+	}
+	if tc.Extra[provider] == nil {
+		tc.Extra[provider] = make(providers.ProviderData)
+	}
+	tc.Extra[provider][key] = value
 }
 
 // thinkingBudget returns the token budget for the given reasoning effort.
