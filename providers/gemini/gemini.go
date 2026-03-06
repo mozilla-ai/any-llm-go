@@ -532,6 +532,11 @@ func convertAssistantMessage(msg providers.Message) *genai.Content {
 		// replaying conversation history; omitting it causes a 400 error.
 		// If no real signature was captured, use the documented bypass value.
 		//
+		// This applies unconditionally to all models, including non-thinking
+		// ones. In testing, non-thinking models accept the field without issue.
+		// The Python any-llm library follows the same pattern, so we mirror it
+		// here. Revisit if this causes problems with specific models.
+		//
 		// NOTE: The Go SDK declares Part.ThoughtSignature as []byte, and Go's
 		// encoding/json automatically base64-encodes []byte fields — so the
 		// bypass reaches the API as "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="

@@ -3,6 +3,7 @@ package gemini
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	stderrors "errors"
 	"strings"
 	"testing"
@@ -893,6 +894,82 @@ func TestThoughtSignatureRoundTrip(t *testing.T) {
 
 	// Verify the signature round-tripped identically.
 	require.Equal(t, originalSig, content.Parts[0].ThoughtSignature)
+}
+
+func TestThoughtSignatureWireFormat(t *testing.T) {
+	t.Parallel()
+
+	t.Run("bypass value is base64-encoded by json.Marshal", func(t *testing.T) {
+		t.Parallel()
+
+		// Build a message with no Extra — should get the bypass.
+		msg := providers.Message{
+			Role: providers.RoleAssistant,
+			ToolCalls: []providers.ToolCall{{
+				ID:   "call_1",
+				Type: "function",
+				Function: providers.FunctionCall{
+					Name:      "search",
+					Arguments: `{"q":"test"}`,
+				},
+			}},
+		}
+
+		content := convertAssistantMessage(msg)
+		require.Len(t, content.Parts, 1)
+
+		// Marshal the Part as the SDK would before sending.
+		raw, err := json.Marshal(content.Parts[0])
+		require.NoError(t, err)
+
+		wireJSON := string(raw)
+
+		// The literal bypass must NOT appear — json.Marshal base64-encodes []byte.
+		require.NotContains(t, wireJSON, thoughtSignatureBypass)
+
+		// The base64-encoded form must appear instead.
+		encoded := base64.StdEncoding.EncodeToString([]byte(thoughtSignatureBypass))
+		require.Contains(t, wireJSON, encoded)
+	})
+
+	t.Run("real signature is base64-encoded by json.Marshal", func(t *testing.T) {
+		t.Parallel()
+
+		realSig := []byte("opaque-gemini-signature-abc123")
+		storedB64 := base64.StdEncoding.EncodeToString(realSig)
+
+		msg := providers.Message{
+			Role: providers.RoleAssistant,
+			ToolCalls: []providers.ToolCall{{
+				ID:   "call_1",
+				Type: "function",
+				Function: providers.FunctionCall{
+					Name:      "search",
+					Arguments: `{"q":"test"}`,
+				},
+				Extra: map[string]providers.ProviderData{
+					providerName: {extraKeyThoughtSignature: storedB64},
+				},
+			}},
+		}
+
+		content := convertAssistantMessage(msg)
+		require.Len(t, content.Parts, 1)
+
+		// The Part should have the raw bytes.
+		require.Equal(t, realSig, content.Parts[0].ThoughtSignature)
+
+		// When marshaled, json.Marshal base64-encodes the raw bytes — which
+		// produces a double-encoded value on the wire. This is the expected
+		// (if unfortunate) behaviour until the upstream SDK changes
+		// ThoughtSignature from []byte to string.
+		raw, err := json.Marshal(content.Parts[0])
+		require.NoError(t, err)
+
+		wireJSON := string(raw)
+		doubleEncoded := base64.StdEncoding.EncodeToString(realSig)
+		require.Contains(t, wireJSON, doubleEncoded)
+	})
 }
 
 func TestStreamStateProcessResponse(t *testing.T) {
