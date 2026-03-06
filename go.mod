@@ -6,7 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/google/uuid v1.6.0
 	github.com/mozilla-ai/any-llm-platform-client-go v0.0.1
-	github.com/ollama/ollama v0.17.3
+	github.com/ollama/ollama v0.17.6
 	github.com/openai/openai-go v1.12.0
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/genai v1.48.0
