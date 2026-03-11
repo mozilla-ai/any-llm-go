@@ -118,6 +118,7 @@ func New(opts ...config.Option) (*Provider, error) {
 
 	clientOpts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(cfg.HTTPClient()),
 	}
 
 	if baseURL != "" {

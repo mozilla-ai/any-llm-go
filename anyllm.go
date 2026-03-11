@@ -156,6 +156,7 @@ var (
 	WithAPIKey     = config.WithAPIKey
 	WithBaseURL    = config.WithBaseURL
 	WithExtra      = config.WithExtra
+	WithHeader     = config.WithHeader
 	WithHTTPClient = config.WithHTTPClient
 	WithTimeout    = config.WithTimeout
 )

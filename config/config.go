@@ -18,6 +18,11 @@ type Config struct {
 	// BaseURL is the base URL for the API. If empty, the provider's default is used.
 	BaseURL string
 
+	// Headers holds extra HTTP headers to include on every request.
+	// Useful for proxy authentication (e.g., Cloudflare AI Gateway's
+	// cf-aig-authorization header).
+	Headers map[string]string
+
 	// Extra holds provider-specific configuration options.
 	Extra map[string]any
 
@@ -90,6 +95,26 @@ func WithBaseURL(baseURL string) Option {
 	}
 }
 
+
+// WithHeader adds an HTTP header that will be included on every request.
+// Useful for proxy/gateway authentication (e.g., cf-aig-authorization for
+// Cloudflare AI Gateway). Can be called multiple times to add multiple headers.
+func WithHeader(key, value string) Option {
+	return func(c *Config) error {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return fmt.Errorf("header key cannot be empty")
+		}
+
+		if c.Headers == nil {
+			c.Headers = make(map[string]string)
+		}
+
+		c.Headers[key] = value
+		return nil
+	}
+}
+
 // WithExtra sets extra provider-specific configuration.
 // Whitespace is automatically trimmed from the key.
 func WithExtra(key string, value any) Option {
@@ -155,9 +180,41 @@ func (c *Config) HTTPClient() *http.Client {
 		if c.httpClient == nil {
 			c.httpClient = &http.Client{Timeout: c.Timeout}
 		}
+
+		// Wrap the transport to inject custom headers on every request.
+		if len(c.Headers) > 0 {
+			c.httpClient = &http.Client{
+				Transport: &headerTransport{
+					base:    c.httpClient.Transport,
+					headers: c.Headers,
+				},
+				Timeout:       c.httpClient.Timeout,
+				CheckRedirect: c.httpClient.CheckRedirect,
+				Jar:           c.httpClient.Jar,
+			}
+		}
 	})
 
 	return c.httpClient
+}
+
+// headerTransport is an http.RoundTripper that injects headers on every request.
+type headerTransport struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	for key, value := range t.headers {
+		req.Header.Set(key, value)
+	}
+
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+
+	return base.RoundTrip(req)
 }
 
 // ResolveAPIKey returns the API key from config if set, otherwise falls back
