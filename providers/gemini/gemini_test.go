@@ -1194,6 +1194,68 @@ func TestStreamStateFinalChunk(t *testing.T) {
 	})
 }
 
+func TestConvertParams(t *testing.T) {
+	t.Parallel()
+
+	provider, err := New(config.WithAPIKey("test-key"))
+	require.NoError(t, err)
+
+	t.Run("json_object sets mime type", func(t *testing.T) {
+		t.Parallel()
+
+		_, cfg := provider.convertParams(providers.CompletionParams{
+			Model:    "gemini-2.0-flash",
+			Messages: []providers.Message{{Role: providers.RoleUser, Content: "hi"}},
+			ResponseFormat: &providers.ResponseFormat{
+				Type: responseFormatJSON,
+			},
+		})
+
+		require.Equal(t, responseMIMETypeJSON, cfg.ResponseMIMEType)
+		require.Nil(t, cfg.ResponseJsonSchema)
+	})
+
+	t.Run("json_schema sets mime type and schema", func(t *testing.T) {
+		t.Parallel()
+
+		schema := map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":       map[string]any{"type": "string"},
+				"population": map[string]any{"type": "integer"},
+			},
+			"required": []string{"name", "population"},
+		}
+
+		_, cfg := provider.convertParams(providers.CompletionParams{
+			Model:    "gemini-2.0-flash",
+			Messages: []providers.Message{{Role: providers.RoleUser, Content: "hi"}},
+			ResponseFormat: &providers.ResponseFormat{
+				Type: responseFormatJSONSchema,
+				JSONSchema: &providers.JSONSchema{
+					Name:   "city_info",
+					Schema: schema,
+				},
+			},
+		})
+
+		require.Equal(t, responseMIMETypeJSON, cfg.ResponseMIMEType)
+		require.Equal(t, schema, cfg.ResponseJsonSchema)
+	})
+
+	t.Run("nil response format leaves config unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		_, cfg := provider.convertParams(providers.CompletionParams{
+			Model:    "gemini-2.0-flash",
+			Messages: []providers.Message{{Role: providers.RoleUser, Content: "hi"}},
+		})
+
+		require.Empty(t, cfg.ResponseMIMEType)
+		require.Nil(t, cfg.ResponseJsonSchema)
+	})
+}
+
 func TestConvertResponse(t *testing.T) {
 	t.Parallel()
 
@@ -1324,6 +1386,48 @@ func TestApplyResponseFormat(t *testing.T) {
 		cfg := &genai.GenerateContentConfig{}
 		applyResponseFormat(cfg, &providers.ResponseFormat{Type: "text"})
 		require.Empty(t, cfg.ResponseMIMEType)
+	})
+
+	t.Run("json_schema sets mime type and schema", func(t *testing.T) {
+		t.Parallel()
+
+		schema := map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string"},
+			},
+		}
+		cfg := &genai.GenerateContentConfig{}
+		applyResponseFormat(cfg, &providers.ResponseFormat{
+			Type: "json_schema",
+			JSONSchema: &providers.JSONSchema{
+				Name:   "test_schema",
+				Schema: schema,
+			},
+		})
+		require.Equal(t, "application/json", cfg.ResponseMIMEType)
+		require.Equal(t, schema, cfg.ResponseJsonSchema)
+	})
+
+	t.Run("json_schema with nil JSONSchema does not set mime type", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &genai.GenerateContentConfig{}
+		applyResponseFormat(cfg, &providers.ResponseFormat{Type: "json_schema"})
+		require.Empty(t, cfg.ResponseMIMEType)
+		require.Nil(t, cfg.ResponseJsonSchema)
+	})
+
+	t.Run("json_schema with nil Schema does not set mime type", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &genai.GenerateContentConfig{}
+		applyResponseFormat(cfg, &providers.ResponseFormat{
+			Type:       "json_schema",
+			JSONSchema: &providers.JSONSchema{Name: "test"},
+		})
+		require.Empty(t, cfg.ResponseMIMEType)
+		require.Nil(t, cfg.ResponseJsonSchema)
 	})
 }
 

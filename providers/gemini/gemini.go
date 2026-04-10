@@ -58,10 +58,11 @@ const (
 
 // Response format and tool type constants.
 const (
-	responseMIMETypeJSON = "application/json"
-	responseFormatJSON   = "json_object"
-	toolCallFallbackName = "function"
-	toolCallType         = "function"
+	responseMIMETypeJSON     = "application/json"
+	responseFormatJSON       = "json_object"
+	responseFormatJSONSchema = "json_schema"
+	toolCallFallbackName     = "function"
+	toolCallType             = "function"
 )
 
 // ID prefix constants for generated identifiers.
@@ -489,8 +490,20 @@ func (s *streamState) processResponse(resp *genai.GenerateContentResponse) ([]pr
 }
 
 // applyResponseFormat configures the response format on the config.
+// For json_schema, Gemini requires both responseMimeType application/json and
+// responseJsonSchema (see https://ai.google.dev/gemini-api/docs/structured-output).
 func applyResponseFormat(cfg *genai.GenerateContentConfig, format *providers.ResponseFormat) {
-	if format.Type == responseFormatJSON {
+	if format == nil {
+		return
+	}
+	switch format.Type {
+	case responseFormatJSONSchema:
+		if format.JSONSchema == nil || format.JSONSchema.Schema == nil {
+			return
+		}
+		cfg.ResponseMIMEType = responseMIMETypeJSON
+		cfg.ResponseJsonSchema = format.JSONSchema.Schema
+	case responseFormatJSON:
 		cfg.ResponseMIMEType = responseMIMETypeJSON
 	}
 }
