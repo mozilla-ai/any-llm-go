@@ -85,7 +85,8 @@ func New(opts ...config.Option) (*Provider, error) {
 }
 
 // WithGatewayKey sets the gateway API key for non-platform mode authentication.
-// The key is sent via the X-AnyLLM-Key header.
+// The key is sent as a Bearer-formatted value in the X-AnyLLM-Key header
+// (i.e., "X-AnyLLM-Key: Bearer <key>").
 func WithGatewayKey(key string) config.Option {
 	return config.WithExtra("gateway_key", key)
 }
@@ -98,7 +99,8 @@ func WithPlatformMode() config.Option {
 }
 
 // ConvertError extends the base OpenAI error conversion with gateway-specific
-// HTTP status codes (402, 502, 504).
+// HTTP status codes (402, 502, 504). This method handles raw (unconverted)
+// errors and implements the providers.ErrorConverter interface.
 func (p *Provider) ConvertError(err error) error {
 	if err == nil {
 		return nil
@@ -106,7 +108,7 @@ func (p *Provider) ConvertError(err error) error {
 
 	var apiErr *openai.Error
 	if stderrors.As(err, &apiErr) {
-		if converted := convertGatewayError(apiErr, err); converted != nil {
+		if converted := convertGatewayError(apiErr); converted != nil {
 			return converted
 		}
 	}
@@ -115,29 +117,25 @@ func (p *Provider) ConvertError(err error) error {
 }
 
 // Completion performs a chat completion request.
-// In platform mode, gateway-specific errors are converted to typed errors.
+// Gateway-specific errors (402, 502, 504) are converted to typed errors.
 func (p *Provider) Completion(
 	ctx context.Context,
 	params providers.CompletionParams,
 ) (*providers.ChatCompletion, error) {
 	resp, err := p.CompatibleProvider.Completion(ctx, params)
-	if err != nil && p.platformMode {
-		return nil, p.ConvertError(err)
+	if err != nil {
+		return nil, p.reclassifyError(err)
 	}
 
-	return resp, err
+	return resp, nil
 }
 
 // CompletionStream performs a streaming chat completion request.
-// In platform mode, gateway-specific errors are converted to typed errors.
+// Gateway-specific errors (402, 502, 504) are converted to typed errors.
 func (p *Provider) CompletionStream(
 	ctx context.Context,
 	params providers.CompletionParams,
 ) (<-chan providers.ChatCompletionChunk, <-chan error) {
-	if !p.platformMode {
-		return p.CompatibleProvider.CompletionStream(ctx, params)
-	}
-
 	upstreamChunks, upstreamErrs := p.CompatibleProvider.CompletionStream(ctx, params)
 
 	chunks := make(chan providers.ChatCompletionChunk)
@@ -156,7 +154,7 @@ func (p *Provider) CompletionStream(
 		}
 
 		if err := <-upstreamErrs; err != nil {
-			errs <- p.ConvertError(err)
+			errs <- p.reclassifyError(err)
 		}
 	}()
 
@@ -164,28 +162,43 @@ func (p *Provider) CompletionStream(
 }
 
 // Embedding generates embeddings for the given input.
-// In platform mode, gateway-specific errors are converted to typed errors.
+// Gateway-specific errors (402, 502, 504) are converted to typed errors.
 func (p *Provider) Embedding(
 	ctx context.Context,
 	params providers.EmbeddingParams,
 ) (*providers.EmbeddingResponse, error) {
 	resp, err := p.CompatibleProvider.Embedding(ctx, params)
-	if err != nil && p.platformMode {
-		return nil, p.ConvertError(err)
+	if err != nil {
+		return nil, p.reclassifyError(err)
 	}
 
-	return resp, err
+	return resp, nil
 }
 
 // ListModels returns a list of available models from the gateway.
-// In platform mode, gateway-specific errors are converted to typed errors.
+// Gateway-specific errors (402, 502, 504) are converted to typed errors.
 func (p *Provider) ListModels(ctx context.Context) (*providers.ModelsResponse, error) {
 	resp, err := p.CompatibleProvider.ListModels(ctx)
-	if err != nil && p.platformMode {
-		return nil, p.ConvertError(err)
+	if err != nil {
+		return nil, p.reclassifyError(err)
 	}
 
-	return resp, err
+	return resp, nil
+}
+
+// reclassifyError checks if an already-converted error originated from a
+// gateway-specific HTTP status code and re-classifies it. Non-gateway errors
+// pass through unchanged, avoiding double-wrapping of errors that were
+// already converted by CompatibleProvider.ConvertError.
+func (p *Provider) reclassifyError(err error) error {
+	var apiErr *openai.Error
+	if stderrors.As(err, &apiErr) {
+		if converted := convertGatewayError(apiErr); converted != nil {
+			return converted
+		}
+	}
+
+	return err
 }
 
 // headerTransport wraps an http.RoundTripper to inject custom headers into
@@ -203,16 +216,17 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // convertGatewayError converts gateway-specific HTTP status codes to typed
-// errors. Returns nil if the status code is not gateway-specific, allowing
-// the caller to fall through to the base error converter.
-func convertGatewayError(apiErr *openai.Error, originalErr error) error {
+// errors. The apiErr is wrapped directly to avoid double-wrapping when the
+// error has already been converted by the base provider. Returns nil if the
+// status code is not gateway-specific, allowing the caller to fall through.
+func convertGatewayError(apiErr *openai.Error) error {
 	switch apiErr.StatusCode {
 	case http.StatusPaymentRequired:
-		return errors.NewInsufficientFundsError(providerName, originalErr)
+		return errors.NewInsufficientFundsError(providerName, apiErr)
 	case http.StatusBadGateway:
-		return errors.NewUpstreamProviderError(providerName, originalErr)
+		return errors.NewUpstreamProviderError(providerName, apiErr)
 	case http.StatusGatewayTimeout:
-		return errors.NewGatewayTimeoutError(providerName, originalErr)
+		return errors.NewGatewayTimeoutError(providerName, apiErr)
 	default:
 		return nil
 	}
@@ -223,14 +237,19 @@ func convertGatewayError(apiErr *openai.Error, originalErr error) error {
 func newNonPlatformProvider(cfg *config.Config, baseURL string) (*Provider, error) {
 	gatewayKey := resolveGatewayKey(cfg)
 
-	var compatOpts []config.Option
-	compatOpts = append(compatOpts, config.WithBaseURL(baseURL))
+	compatOpts := forwardConfigOptions(cfg, baseURL)
 
 	if gatewayKey != "" {
+		baseClient := cfg.HTTPClient()
+		baseTransport := baseClient.Transport
+		if baseTransport == nil {
+			baseTransport = http.DefaultTransport
+		}
+
 		httpClient := &http.Client{
-			Timeout: cfg.Timeout,
+			Timeout: baseClient.Timeout,
 			Transport: &headerTransport{
-				base:   http.DefaultTransport,
+				base:   baseTransport,
 				header: gatewayHeader,
 				value:  "Bearer " + gatewayKey,
 			},
@@ -268,6 +287,9 @@ func newPlatformProvider(cfg *config.Config, baseURL, token string) (*Provider, 
 		)
 	}
 
+	compatOpts := forwardConfigOptions(cfg, baseURL)
+	compatOpts = append(compatOpts, config.WithAPIKey(token))
+
 	base, err := openaiProvider.NewCompatible(openaiProvider.CompatibleConfig{
 		APIKeyEnvVar:   "",
 		BaseURLEnvVar:  "",
@@ -276,7 +298,7 @@ func newPlatformProvider(cfg *config.Config, baseURL, token string) (*Provider, 
 		DefaultBaseURL: "",
 		Name:           providerName,
 		RequireAPIKey:  false,
-	}, config.WithAPIKey(token), config.WithBaseURL(baseURL))
+	}, compatOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -285,6 +307,20 @@ func newPlatformProvider(cfg *config.Config, baseURL, token string) (*Provider, 
 		CompatibleProvider: base,
 		platformMode:       true,
 	}, nil
+}
+
+// forwardConfigOptions builds a slice of config options that forwards
+// user-supplied settings (base URL, timeout, HTTP client) to the underlying
+// CompatibleProvider. This ensures settings like WithTimeout and
+// WithHTTPClient are not silently dropped.
+func forwardConfigOptions(cfg *config.Config, baseURL string) []config.Option {
+	opts := []config.Option{config.WithBaseURL(baseURL)}
+
+	if cfg.Timeout > 0 {
+		opts = append(opts, config.WithTimeout(cfg.Timeout))
+	}
+
+	return opts
 }
 
 // resolveGatewayKey resolves the gateway API key from config extras or
@@ -313,9 +349,12 @@ func resolvePlatformMode(cfg *config.Config) (platformMode bool, token string) {
 		}
 	}
 
-	// Auto-detect: GATEWAY_PLATFORM_TOKEN set and no explicit API key.
+	// Auto-detect: GATEWAY_PLATFORM_TOKEN set and no explicit API key or
+	// gateway key. If a gateway key is configured, the caller intends
+	// non-platform mode even when a platform token is present in the env.
 	platformToken := cfg.ResolveEnv(envPlatformToken)
-	if platformToken != "" && cfg.APIKey == "" {
+	gatewayKey := resolveGatewayKey(cfg)
+	if platformToken != "" && cfg.APIKey == "" && gatewayKey == "" {
 		return true, platformToken
 	}
 

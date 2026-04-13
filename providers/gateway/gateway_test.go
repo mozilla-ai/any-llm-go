@@ -199,6 +199,17 @@ func TestResolvePlatformMode(t *testing.T) {
 		mode, _ := resolvePlatformMode(cfg)
 		require.False(t, mode)
 	})
+
+	t.Run("does not auto-detect when gateway key is set", func(t *testing.T) {
+		t.Setenv(envPlatformToken, "tk_auto")
+		t.Setenv(envAPIKey, "")
+
+		cfg, err := config.New(WithGatewayKey("gw_key"))
+		require.NoError(t, err)
+
+		mode, _ := resolvePlatformMode(cfg)
+		require.False(t, mode)
+	})
 }
 
 func TestResolveGatewayKey(t *testing.T) {
@@ -494,7 +505,7 @@ func TestPlatformModeErrorConversion(t *testing.T) {
 	}
 }
 
-func TestNonPlatformModePassesThroughErrors(t *testing.T) {
+func TestNonPlatformModeAlsoConvertsGatewayErrors(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -516,12 +527,12 @@ func TestNonPlatformModePassesThroughErrors(t *testing.T) {
 		Messages: []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
 	})
 
-	// Non-platform mode uses base error conversion, which maps 502 to ProviderError.
+	// Gateway error conversion applies in both modes.
 	require.Error(t, err)
-	require.ErrorIs(t, err, errors.ErrProvider)
+	require.ErrorIs(t, err, errors.ErrUpstreamProvider)
 }
 
-func TestStreamingPlatformModeErrorConversion(t *testing.T) {
+func TestStreamingErrorConversion(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
