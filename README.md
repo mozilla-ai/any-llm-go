@@ -1,35 +1,34 @@
 <p align="center">
   <picture>
-    <img src="https://raw.githubusercontent.com/mozilla-ai/any-llm/refs/heads/main/docs/images/any-llm-logo-mark.png" width="20%" alt="Project logo"/>
+    <img src="https://raw.githubusercontent.com/mozilla-ai/any-llm/refs/heads/main/docs/public/images/any-llm-logo-mark.png" width="20%" alt="Project logo"/>
   </picture>
 </p>
 
 <div align="center">
 
-# any-llm-go
+# any-llm (Go)
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/mozilla-ai/any-llm-go.svg)](https://pkg.go.dev/github.com/mozilla-ai/any-llm-go)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mozilla-ai/any-llm-go)](https://goreportcard.com/report/github.com/mozilla-ai/any-llm-go)
-
 ![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-blue.svg)
+<a href="https://discord.gg/4gf3zXrQUc">
+    <img src="https://img.shields.io/static/v1?label=Chat%20on&message=Discord&color=blue&logo=Discord&style=flat-square" alt="Discord">
+</a>
 
 **Communicate with any LLM provider using a single, unified interface.**
+Switch between OpenAI, Anthropic, Mistral, Ollama, and more without changing your code.
 
-Switch between OpenAI, Anthropic, DeepSeek, Mistral, Ollama, and more without changing your code.
-
-[Documentation](docs/) | [Examples](examples/) | [Contributing](CONTRIBUTING.md)
+[Python SDK](https://github.com/mozilla-ai/any-llm) | [Documentation](https://mozilla-ai.github.io/any-llm/) | [Platform (Beta)](https://any-llm.ai/)
 
 </div>
 
 ## Quickstart
-### Install Go Library
 
 ```bash
 go get github.com/mozilla-ai/any-llm-go
-# Set up your API key(s)
 export OPENAI_API_KEY="YOUR_KEY_HERE"  # or ANTHROPIC_API_KEY, etc
 ```
-### Send a Chat Completion Request
+
 ```go
 package main
 
@@ -83,7 +82,7 @@ import (
 )
 ```
 
-See our [list of supported providers](docs/providers.md) to choose which ones you need.
+See our [list of supported providers](https://mozilla-ai.github.io/any-llm/providers/) to choose which ones you need.
 
 ### Setting Up API Keys
 
@@ -92,24 +91,42 @@ Set environment variables for your chosen providers:
 ```bash
 export OPENAI_API_KEY="your-key-here"
 export ANTHROPIC_API_KEY="your-key-here"
-export DEEPSEEK_API_KEY="your-key-here"
+export MISTRAL_API_KEY="your-key-here"
 # ... etc
 ```
 
-Alternatively, pass API keys directly in your code using options:
+Alternatively, pass API keys directly in your code:
 
 ```go
 provider, err := openai.New(anyllm.WithAPIKey("your-key-here"))
 ```
 
-## Why choose `any-llm-go`?
+## any-llm-gateway
 
-- **Simple, unified interface** - Same types and patterns across all providers
-- **Idiomatic Go** - Follows Go conventions with proper error handling and context support
-- **Leverages official provider SDKs** - Uses `github.com/openai/openai-go` and `github.com/anthropics/anthropic-sdk-go`
-- **Type-safe** - Full type definitions for all request and response types
-- **Streaming support** - Channel-based streaming that's natural in Go
-- **Battle-tested patterns** - Based on the proven [any-llm](https://github.com/mozilla-ai/any-llm) Python library
+any-llm-gateway is an **optional** FastAPI-based proxy server that adds enterprise-grade features on top of the core library:
+
+- **Budget Management** - Enforce spending limits with automatic daily, weekly, or monthly resets
+- **API Key Management** - Issue, revoke, and monitor virtual API keys without exposing provider credentials
+- **Usage Analytics** - Track every request with full token counts, costs, and metadata
+- **Multi-tenant Support** - Manage access and budgets across users and teams
+
+The gateway sits between your applications and LLM providers, exposing an OpenAI-compatible API that works with any supported provider.
+
+### Quick Start
+
+```bash
+docker run \
+  -e GATEWAY_MASTER_KEY="your-secure-master-key" \
+  -e OPENAI_API_KEY="your-api-key" \
+  -p 8000:8000 \
+  ghcr.io/mozilla-ai/any-llm/gateway:latest
+```
+
+> **Note:** You can use a specific release version instead of `latest` (e.g., `1.2.0`). See [available versions](https://github.com/orgs/mozilla-ai/packages/container/package/any-llm%2Fgateway).
+
+### Managed Platform (Beta)
+
+Prefer a hosted experience? The [any-llm platform](https://any-llm.ai/) provides a managed control plane for keys, usage tracking, and cost visibility across providers, while still building on the same `any-llm` interfaces.
 
 ## Usage
 
@@ -125,7 +142,6 @@ import (
     "github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
-// Create provider once, reuse for multiple requests.
 provider, err := openai.New(anyllm.WithAPIKey("your-api-key"))
 if err != nil {
     log.Fatal(err)
@@ -149,8 +165,6 @@ fmt.Println(response.Choices[0].Message.Content)
 Provider instances are reusable and recommended for production applications.
 
 ### Streaming
-
-Use channels for streaming responses:
 
 ```go
 chunks, errs := provider.CompletionStream(ctx, anyllm.CompletionParams{
@@ -227,6 +241,26 @@ if response.Choices[0].Message.Reasoning != nil {
 fmt.Println("Answer:", response.Choices[0].Message.Content)
 ```
 
+### Embeddings
+
+```go
+provider, _ := openai.New()
+result, err := provider.Embedding(ctx, anyllm.EmbeddingParams{
+    Model: "text-embedding-3-small",
+    Input: "Hello world",
+})
+```
+
+### Listing Models
+
+```go
+provider, _ := openai.New()
+models, err := provider.ListModels(ctx)
+for _, model := range models.Data {
+    fmt.Println(model.ID)
+}
+```
+
 ### Error Handling
 
 All provider errors are normalized to common error types:
@@ -247,64 +281,48 @@ if err != nil {
 }
 ```
 
-You can also use type assertions for more details:
-
-```go
-var rateLimitErr *anyllm.RateLimitError
-if errors.As(err, &rateLimitErr) {
-    fmt.Printf("Rate limited by %s: %s\n", rateLimitErr.Provider, rateLimitErr.Message)
-}
-```
-
-### Finding the Right Model
-
-Each provider uses its own model identifiers. To find available models:
-- Check the provider's documentation
-- Use the `ListModels` API (if the provider supports it):
-
-```go
-provider, _ := openai.New()
-models, err := provider.ListModels(ctx)
-for _, model := range models.Data {
-    fmt.Println(model.ID)
-}
-```
-
 ## Supported Providers
 
 |  Provider  | Completion  |  Streaming  |  Tools |  Reasoning  |  Embeddings  |
-|:----------:|:-----------:|:-----------:|-------:|:-----------:|:------------:|
+|:----------:|:-----------:|:-----------:|:------:|:-----------:|:------------:|
 | Anthropic  |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
 |  DeepSeek  |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
 |   Gemini   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |    Groq    |      ✅      |      ✅      |      ✅ |      ❌      |      ❌       |
-|  llama.cpp  |      ✅      |      ✅      |      ✅ |      ❌      |      ✅       |
+|  llama.cpp |      ✅      |      ✅      |      ✅ |      ❌      |      ✅       |
 | Llamafile  |      ✅      |      ✅      |      ✅ |      ❌      |      ✅       |
 |  Mistral   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |   Ollama   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |   OpenAI   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |    z.ai    |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
 
-More providers coming soon! See [docs/providers.md](docs/providers.md) for the full list.
+## Why choose `any-llm-go`?
+
+- **Simple, unified interface** - Same types and patterns across all providers, switch models with just a string change
+- **Developer friendly** - Full type definitions for better IDE support and clear, actionable error messages
+- **Leverages official provider SDKs** - Uses `github.com/openai/openai-go` and `github.com/anthropics/anthropic-sdk-go` for maximum compatibility
+- **Stays framework-agnostic** so it can be used across different projects and use cases
+- **Idiomatic Go** - Follows Go conventions with proper error handling and context support
+- **Streaming support** - Channel-based streaming that's natural in Go
+- **Battle-tested** - Based on the proven [any-llm](https://github.com/mozilla-ai/any-llm) Python library
+
+## Development
+
+```bash
+make lint       # Run linter with auto-fix
+make test       # Lint + run all tests
+make test-only  # Run tests without linting
+make test-unit  # Run unit tests only (skip integration)
+make build      # Verify compilation
+```
 
 ## Documentation
 
-- **[Quickstart Guide](docs/quickstart.md)** - Get up and running quickly
-- **[Supported Providers](docs/providers.md)** - List of all supported LLM providers
-- **[API Reference](docs/api/)** - Complete API documentation
-- **[Examples](examples/)** - Code examples for common use cases
-
-## Comparison with Python any-llm
-
-This is the official Go port of [any-llm](https://github.com/mozilla-ai/any-llm). Key differences:
-
-| Feature        | Python any-llm   | Go any-llm            |
-|----------------|------------------|-----------------------|
-| Async support  | `async`/`await`  | Goroutines + channels |
-| Streaming      | Iterators        | Channels              |
-| Error handling | Exceptions       | `error` return values |
-| Type hints     | Type annotations | Static types          |
-| Provider usage | String-based     | Direct instantiation  |
+- **[Full Documentation](https://mozilla-ai.github.io/any-llm/)** - Complete guides and API reference
+- **[Supported Providers](https://mozilla-ai.github.io/any-llm/providers/)** - List of all supported LLM providers
+- **[Gateway Documentation](https://mozilla-ai.github.io/any-llm/gateway/overview/)** - Gateway setup and deployment
+- **[Python SDK](https://github.com/mozilla-ai/any-llm)** - The full Python SDK with direct provider access
+- **[any-llm Platform (Beta)](https://any-llm.ai/)** - Hosted control plane for key management, usage tracking, and cost visibility
 
 ## Contributing
 
