@@ -125,6 +125,8 @@ var (
 	ErrAuthentication      = errors.ErrAuthentication
 	ErrContentFilter       = errors.ErrContentFilter
 	ErrContextLength       = errors.ErrContextLength
+	ErrGatewayTimeout      = errors.ErrGatewayTimeout
+	ErrInsufficientFunds   = errors.ErrInsufficientFunds
 	ErrInvalidRequest      = errors.ErrInvalidRequest
 	ErrMissingAPIKey       = errors.ErrMissingAPIKey
 	ErrModelNotFound       = errors.ErrModelNotFound
@@ -132,6 +134,7 @@ var (
 	ErrRateLimit           = errors.ErrRateLimit
 	ErrUnsupportedParam    = errors.ErrUnsupportedParam
 	ErrUnsupportedProvider = errors.ErrUnsupportedProvider
+	ErrUpstreamProvider    = errors.ErrUpstreamProvider
 )
 
 // Error types.
@@ -140,6 +143,8 @@ type (
 	BaseError                = errors.BaseError
 	ContentFilterError       = errors.ContentFilterError
 	ContextLengthError       = errors.ContextLengthError
+	GatewayTimeoutError      = errors.GatewayTimeoutError
+	InsufficientFundsError   = errors.InsufficientFundsError
 	InvalidRequestError      = errors.InvalidRequestError
 	MissingAPIKeyError       = errors.MissingAPIKeyError
 	ModelNotFoundError       = errors.ModelNotFoundError
@@ -147,4 +152,5 @@ type (
 	RateLimitError           = errors.RateLimitError
 	UnsupportedParamError    = errors.UnsupportedParamError
 	UnsupportedProviderError = errors.UnsupportedProviderError
+	UpstreamProviderError    = errors.UpstreamProviderError
 )
