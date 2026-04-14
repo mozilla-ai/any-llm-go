@@ -17,6 +17,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/openai/openai-go"
 
@@ -28,26 +29,62 @@ import (
 
 // Provider configuration constants.
 const (
-	bearerPrefix          = "Bearer "
-	defaultNonPlatformKey = "gateway-no-key"
-	envAPIBase            = "GATEWAY_API_BASE"
-	envAPIKey             = "GATEWAY_API_KEY"
-	envPlatformToken      = "GATEWAY_PLATFORM_TOKEN"
-	extraKeyGatewayKey    = "gateway_key"
-	extraKeyPlatformMode  = "platform_mode"
-	gatewayHeader         = "X-AnyLLM-Key"
-	providerName          = "gateway"
+	// apiKeyHeaderName is the HTTP header that carries the gateway API key in
+	// non-platform mode.
+	apiKeyHeaderName = "X-AnyLLM-Key"
+
+	// bearerPrefix is the Authorization scheme prefix applied to the gateway
+	// key before it is placed in the gateway header (e.g. "Bearer <key>").
+	bearerPrefix = "Bearer "
+
+	// placeholderAPIKey satisfies the OpenAI SDK's requirement that an API key
+	// be set. In non-platform mode real auth is carried by the gateway header,
+	// so this value is never sent as a credential.
+	placeholderAPIKey = "gateway-no-key"
+
+	// envAPIBase is the environment variable read for the gateway base URL
+	// when WithBaseURL is not passed to New.
+	envAPIBase = "GATEWAY_API_BASE"
+
+	// envAPIKey is the environment variable read for the gateway API key used
+	// in non-platform mode when WithGatewayKey is not passed to New.
+	envAPIKey = "GATEWAY_API_KEY"
+
+	// envPlatformToken is the environment variable read for the platform
+	// token used as Bearer auth in platform mode.
+	envPlatformToken = "GATEWAY_PLATFORM_TOKEN"
+
+	// extraKeyGatewayKey is the config.Extra key used to coordinate
+	// WithGatewayKey (writer) with the resolver logic in New (reader).
+	extraKeyGatewayKey = "gateway_key"
+
+	// extraKeyPlatformMode is the config.Extra key used to coordinate
+	// WithPlatformMode (writer) with the resolver logic in New (reader).
+	extraKeyPlatformMode = "platform_mode"
+
+	// providerName is the value returned by Provider.Name and embedded in
+	// errors produced by this package.
+	providerName = "gateway"
 )
 
 // Gateway-specific error codes.
 const (
-	codeGatewayTimeout   = "gateway_timeout"
-	codeUpstreamProvider = "upstream_provider"
+	// errCodeTimeout is the BaseError.Code set on gateway timeout errors
+	// (HTTP 504).
+	errCodeTimeout = "gateway_timeout"
+
+	// errCodeUpstreamProvider is the BaseError.Code set on upstream provider
+	// errors (HTTP 502).
+	errCodeUpstreamProvider = "upstream_provider"
 )
 
 // Gateway-specific sentinel errors for type checking with errors.Is().
 var (
-	ErrGatewayTimeout   = stderrors.New("gateway timeout")
+	// ErrTimeout is matched by errors.Is on gateway timeout errors (HTTP 504).
+	ErrTimeout = stderrors.New("gateway timeout")
+
+	// ErrUpstreamProvider is matched by errors.Is on upstream provider errors
+	// (HTTP 502).
 	ErrUpstreamProvider = stderrors.New("upstream provider error")
 )
 
@@ -60,11 +97,27 @@ var (
 	_ providers.Provider           = (*Provider)(nil)
 )
 
+// TimeoutError is returned when the gateway times out (HTTP 504).
+type TimeoutError struct {
+	errors.BaseError
+}
+
+// UpstreamProviderError is returned when the upstream provider is
+// unreachable (HTTP 502).
+type UpstreamProviderError struct {
+	errors.BaseError
+}
+
 // Provider implements the providers.Provider interface for the any-llm gateway.
 // It embeds openai.CompatibleProvider since the gateway exposes an
 // OpenAI-compatible API.
 type Provider struct {
 	*openaiProvider.CompatibleProvider
+
+	// platformMode is used to indicate whether the provider is operating in
+	// platform mode (using platform token for Bearer auth) or non-platform mode
+	// (using gateway key in custom header).
+	// This affects how authentication is handled and how errors are converted.
 	platformMode bool
 }
 
@@ -75,25 +128,6 @@ type headerTransport struct {
 	base   http.RoundTripper
 	header string
 	value  string
-}
-
-// GatewayTimeoutError is returned when the gateway times out (HTTP 504).
-type GatewayTimeoutError struct {
-	errors.BaseError
-}
-
-// UpstreamProviderError is returned when the upstream provider is
-// unreachable (HTTP 502).
-type UpstreamProviderError struct {
-	errors.BaseError
-}
-
-// RoundTrip implements http.RoundTripper by cloning the request and injecting
-// the configured header before delegating to the base transport.
-func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	clone := req.Clone(req.Context())
-	clone.Header.Set(t.header, t.value)
-	return t.base.RoundTrip(clone)
 }
 
 // New creates a new gateway provider.
@@ -112,18 +146,6 @@ func New(opts ...config.Option) (*Provider, error) {
 	cfg, err := config.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("invalid options: %w", err)
-	}
-
-	// Validate that a base URL is provided (gateway requires it).
-	// Resolution itself is delegated to NewCompatible via BaseURLEnvVar.
-	baseURL, err := cfg.ResolveBaseURL(envAPIBase, "")
-	if err != nil {
-		return nil, err
-	}
-	if baseURL == "" {
-		return nil, fmt.Errorf(
-			"gateway base URL is required (set via WithBaseURL option or %s env var)", envAPIBase,
-		)
 	}
 
 	// Resolve gateway key from extras or GATEWAY_API_KEY env var.
@@ -169,28 +191,27 @@ func New(opts ...config.Option) (*Provider, error) {
 		)
 	}
 
-	// Build options for the underlying OpenAI-compatible provider.
-	compatOpts := []config.Option{config.WithBaseURL(baseURL)}
-	if cfg.Timeout > 0 {
-		compatOpts = append(compatOpts, config.WithTimeout(cfg.Timeout))
-	}
-
-	httpClient := cfg.HTTPClient()
+	// Pass the user's opts straight through and layer auth-specific opts on
+	// top (order matters: later options win). Base URL resolution and the
+	// required-URL check are delegated to NewCompatible via BaseURLEnvVar
+	// and RequireBaseURL.
+	compatOpts := slices.Clone(opts)
 	if platformMode {
 		compatOpts = append(compatOpts, config.WithAPIKey(platformToken))
 	} else if gatewayKey != "" {
-		httpClient = newHeaderClient(httpClient, bearerPrefix+gatewayKey)
+		client := newHeaderClient(cfg.HTTPClient(), bearerPrefix+gatewayKey)
+		compatOpts = append(compatOpts, config.WithHTTPClient(client))
 	}
-	compatOpts = append(compatOpts, config.WithHTTPClient(httpClient))
 
 	base, err := openaiProvider.NewCompatible(openaiProvider.CompatibleConfig{
 		APIKeyEnvVar:   "",         // Gateway uses its own key resolution.
 		BaseURLEnvVar:  envAPIBase, // Env var for base URL resolution.
 		Capabilities:   capabilities(),
-		DefaultAPIKey:  defaultNonPlatformKey, // Placeholder; non-platform doesn't need real auth.
-		DefaultBaseURL: "",                    // No default; base URL is required.
+		DefaultAPIKey:  placeholderAPIKey, // Placeholder; non-platform doesn't need real auth.
+		DefaultBaseURL: "",                // No default; base URL is required.
 		Name:           providerName,
 		RequireAPIKey:  false, // Gateway handles auth separately.
+		RequireBaseURL: true,  // Gateway has no sensible default endpoint.
 	}, compatOpts...)
 	if err != nil {
 		return nil, err
@@ -200,6 +221,24 @@ func New(opts ...config.Option) (*Provider, error) {
 		CompatibleProvider: base,
 		platformMode:       platformMode,
 	}, nil
+}
+
+// capabilities returns the full set of capabilities for the gateway provider.
+// Since the gateway proxies to any backend provider, all features are
+// optimistically marked as supported. Actual support depends on the
+// underlying provider behind the gateway; consumers should handle
+// unsupported-operation errors at call time.
+func capabilities() providers.Capabilities {
+	return providers.Capabilities{
+		Completion:          true,
+		CompletionImage:     true,
+		CompletionPDF:       true,
+		CompletionReasoning: true,
+		CompletionStreaming: true,
+		CompletionTools:     true,
+		Embedding:           true,
+		ListModels:          true,
+	}
 }
 
 // WithGatewayKey sets the gateway API key for non-platform mode authentication.
@@ -278,9 +317,13 @@ func (p *Provider) ConvertError(err error) error {
 		case http.StatusPaymentRequired:
 			return errors.NewInsufficientFundsError(providerName, apiErr)
 		case http.StatusBadGateway:
-			return newUpstreamProviderError(providerName, apiErr)
+			return &UpstreamProviderError{
+				BaseError: errors.NewBaseError(errCodeUpstreamProvider, providerName, apiErr, ErrUpstreamProvider),
+			}
 		case http.StatusGatewayTimeout:
-			return newGatewayTimeoutError(providerName, apiErr)
+			return &TimeoutError{
+				BaseError: errors.NewBaseError(errCodeTimeout, providerName, apiErr, ErrTimeout),
+			}
 		}
 	}
 
@@ -320,29 +363,12 @@ func (p *Provider) ListModels(ctx context.Context) (*providers.ModelsResponse, e
 	return resp, nil
 }
 
-// capabilities returns the full set of capabilities for the gateway provider.
-// Since the gateway proxies to any backend provider, all features are
-// optimistically marked as supported. Actual support depends on the
-// underlying provider behind the gateway; consumers should handle
-// unsupported-operation errors at call time.
-func capabilities() providers.Capabilities {
-	return providers.Capabilities{
-		Completion:          true,
-		CompletionImage:     true,
-		CompletionPDF:       true,
-		CompletionReasoning: true,
-		CompletionStreaming: true,
-		CompletionTools:     true,
-		Embedding:           true,
-		ListModels:          true,
-	}
-}
-
-// newGatewayTimeoutError creates a new GatewayTimeoutError.
-func newGatewayTimeoutError(provider string, err error) *GatewayTimeoutError {
-	return &GatewayTimeoutError{
-		BaseError: errors.NewBaseError(codeGatewayTimeout, provider, err, ErrGatewayTimeout),
-	}
+// RoundTrip implements http.RoundTripper by cloning the request and injecting
+// the configured header before delegating to the base transport.
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header.Set(t.header, t.value)
+	return t.base.RoundTrip(clone)
 }
 
 // newHeaderClient wraps the given HTTP client's transport to inject the
@@ -357,15 +383,8 @@ func newHeaderClient(base *http.Client, headerValue string) *http.Client {
 		Timeout: base.Timeout,
 		Transport: &headerTransport{
 			base:   transport,
-			header: gatewayHeader,
+			header: apiKeyHeaderName,
 			value:  headerValue,
 		},
-	}
-}
-
-// newUpstreamProviderError creates a new UpstreamProviderError.
-func newUpstreamProviderError(provider string, err error) *UpstreamProviderError {
-	return &UpstreamProviderError{
-		BaseError: errors.NewBaseError(codeUpstreamProvider, provider, err, ErrUpstreamProvider),
 	}
 }
