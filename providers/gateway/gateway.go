@@ -4,7 +4,7 @@
 //
 // The gateway supports two authentication modes:
 //   - Platform mode: uses a platform token as standard Bearer auth
-//   - Non-platform mode: sends a gateway API key via the X-AnyLLM-Key header
+//   - Non-platform mode: sends a gateway API key via the gatewayHeader header
 package gateway
 
 import (
@@ -23,11 +23,15 @@ import (
 
 // Provider configuration constants.
 const (
-	envAPIBase       = "GATEWAY_API_BASE"
-	envAPIKey        = "GATEWAY_API_KEY"
-	envPlatformToken = "GATEWAY_PLATFORM_TOKEN"
-	gatewayHeader    = "X-AnyLLM-Key"
-	providerName     = "gateway"
+	bearerPrefix          = "Bearer "
+	defaultNonPlatformKey = "gateway-no-key"
+	envAPIBase            = "GATEWAY_API_BASE"
+	envAPIKey             = "GATEWAY_API_KEY"
+	envPlatformToken      = "GATEWAY_PLATFORM_TOKEN"
+	extraKeyGatewayKey    = "gateway_key"
+	extraKeyPlatformMode  = "platform_mode"
+	gatewayHeader         = "X-AnyLLM-Key"
+	providerName          = "gateway"
 )
 
 // Ensure Provider implements the required interfaces.
@@ -47,6 +51,22 @@ type Provider struct {
 	platformMode bool
 }
 
+// headerTransport wraps an http.RoundTripper to inject custom headers into
+// every request. Used in non-platform mode to add the gateway key header.
+type headerTransport struct {
+	base   http.RoundTripper
+	header string
+	value  string
+}
+
+// RoundTrip implements http.RoundTripper by cloning the request and injecting
+// the configured header before delegating to the base transport.
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header.Set(t.header, t.value)
+	return t.base.RoundTrip(clone)
+}
+
 // New creates a new gateway provider.
 //
 // The gateway base URL is required and can be set via config.WithBaseURL() or
@@ -58,7 +78,7 @@ type Provider struct {
 //   - If GATEWAY_PLATFORM_TOKEN is set and no explicit API key is provided,
 //     platform mode is auto-detected.
 //   - Otherwise, non-platform mode is used with the key from WithGatewayKey()
-//     or GATEWAY_API_KEY, sent via the X-AnyLLM-Key header.
+//     or GATEWAY_API_KEY, sent via the gatewayHeader header.
 func New(opts ...config.Option) (*Provider, error) {
 	cfg, err := config.New(opts...)
 	if err != nil {
@@ -76,44 +96,61 @@ func New(opts ...config.Option) (*Provider, error) {
 	}
 
 	platformMode, platformToken := resolvePlatformMode(cfg)
-
-	if platformMode {
-		return newPlatformProvider(cfg, baseURL, platformToken)
+	if platformMode && platformToken == "" {
+		return nil, fmt.Errorf(
+			"platform mode requires a token (pass WithAPIKey option or set %s env var)",
+			envPlatformToken,
+		)
 	}
 
-	return newNonPlatformProvider(cfg, baseURL)
+	// Build options for the underlying OpenAI-compatible provider.
+	compatOpts := []config.Option{config.WithBaseURL(baseURL)}
+	if cfg.Timeout > 0 {
+		compatOpts = append(compatOpts, config.WithTimeout(cfg.Timeout))
+	}
+
+	httpClient := cfg.HTTPClient()
+	if platformMode {
+		compatOpts = append(compatOpts, config.WithAPIKey(platformToken))
+	} else {
+		gatewayKey := resolveGatewayKey(cfg)
+		if gatewayKey != "" {
+			httpClient = newHeaderClient(httpClient, bearerPrefix+gatewayKey)
+		}
+	}
+	compatOpts = append(compatOpts, config.WithHTTPClient(httpClient))
+
+	base, err := openaiProvider.NewCompatible(openaiProvider.CompatibleConfig{
+		APIKeyEnvVar:   "", // Gateway uses its own key resolution.
+		BaseURLEnvVar:  "", // Already resolved above.
+		Capabilities:   capabilities(),
+		DefaultAPIKey:  defaultNonPlatformKey, // Placeholder; non-platform doesn't need real auth.
+		DefaultBaseURL: "",                    // No default; base URL is required.
+		Name:           providerName,
+		RequireAPIKey:  false, // Gateway handles auth separately.
+	}, compatOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Provider{
+		CompatibleProvider: base,
+		platformMode:       platformMode,
+	}, nil
 }
 
 // WithGatewayKey sets the gateway API key for non-platform mode authentication.
-// The key is sent as a Bearer-formatted value in the X-AnyLLM-Key header
+// The key is sent as a Bearer-formatted value in the gatewayHeader header
 // (i.e., "X-AnyLLM-Key: Bearer <key>").
 func WithGatewayKey(key string) config.Option {
-	return config.WithExtra("gateway_key", key)
+	return config.WithExtra(extraKeyGatewayKey, key)
 }
 
 // WithPlatformMode explicitly enables platform mode authentication.
 // In platform mode, the token (from config.WithAPIKey or GATEWAY_PLATFORM_TOKEN)
 // is used as standard Bearer authentication.
 func WithPlatformMode() config.Option {
-	return config.WithExtra("platform_mode", true)
-}
-
-// ConvertError extends the base OpenAI error conversion with gateway-specific
-// HTTP status codes (402, 502, 504). This method handles raw (unconverted)
-// errors and implements the providers.ErrorConverter interface.
-func (p *Provider) ConvertError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	var apiErr *openai.Error
-	if stderrors.As(err, &apiErr) {
-		if converted := convertGatewayError(apiErr); converted != nil {
-			return converted
-		}
-	}
-
-	return p.CompatibleProvider.ConvertError(err)
+	return config.WithExtra(extraKeyPlatformMode, true)
 }
 
 // Completion performs a chat completion request.
@@ -124,7 +161,7 @@ func (p *Provider) Completion(
 ) (*providers.ChatCompletion, error) {
 	resp, err := p.CompatibleProvider.Completion(ctx, params)
 	if err != nil {
-		return nil, p.reclassifyError(err)
+		return nil, p.ConvertError(err)
 	}
 
 	return resp, nil
@@ -149,16 +186,50 @@ func (p *Provider) CompletionStream(
 			select {
 			case chunks <- chunk:
 			case <-ctx.Done():
+				errs <- ctx.Err()
 				return
 			}
 		}
 
 		if err := <-upstreamErrs; err != nil {
-			errs <- p.reclassifyError(err)
+			errs <- p.ConvertError(err)
 		}
 	}()
 
 	return chunks, errs
+}
+
+// ConvertError converts errors to gateway-specific typed errors where
+// applicable, falling back to the base OpenAI error conversion for raw
+// errors. Already-converted errors (containing a BaseError) are not
+// double-wrapped.
+func (p *Provider) ConvertError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// Check for gateway-specific HTTP status codes.
+	var apiErr *openai.Error
+	if stderrors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusPaymentRequired:
+			return errors.NewInsufficientFundsError(providerName, apiErr)
+		case http.StatusBadGateway:
+			return errors.NewUpstreamProviderError(providerName, apiErr)
+		case http.StatusGatewayTimeout:
+			return errors.NewGatewayTimeoutError(providerName, apiErr)
+		}
+	}
+
+	// If the error was already converted (has a BaseError), return as-is
+	// to avoid double-wrapping.
+	var baseErr *errors.BaseError
+	if stderrors.As(err, &baseErr) {
+		return err
+	}
+
+	// Raw error: delegate to base OpenAI error conversion.
+	return p.CompatibleProvider.ConvertError(err)
 }
 
 // Embedding generates embeddings for the given input.
@@ -169,7 +240,7 @@ func (p *Provider) Embedding(
 ) (*providers.EmbeddingResponse, error) {
 	resp, err := p.CompatibleProvider.Embedding(ctx, params)
 	if err != nil {
-		return nil, p.reclassifyError(err)
+		return nil, p.ConvertError(err)
 	}
 
 	return resp, nil
@@ -180,153 +251,52 @@ func (p *Provider) Embedding(
 func (p *Provider) ListModels(ctx context.Context) (*providers.ModelsResponse, error) {
 	resp, err := p.CompatibleProvider.ListModels(ctx)
 	if err != nil {
-		return nil, p.reclassifyError(err)
+		return nil, p.ConvertError(err)
 	}
 
 	return resp, nil
 }
 
-// reclassifyError checks if an already-converted error originated from a
-// gateway-specific HTTP status code and re-classifies it. Non-gateway errors
-// pass through unchanged, avoiding double-wrapping of errors that were
-// already converted by CompatibleProvider.ConvertError.
-func (p *Provider) reclassifyError(err error) error {
-	var apiErr *openai.Error
-	if stderrors.As(err, &apiErr) {
-		if converted := convertGatewayError(apiErr); converted != nil {
-			return converted
-		}
-	}
-
-	return err
-}
-
-// headerTransport wraps an http.RoundTripper to inject custom headers into
-// every request. Used in non-platform mode to add the X-AnyLLM-Key header.
-type headerTransport struct {
-	base   http.RoundTripper
-	header string
-	value  string
-}
-
-func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	clone := req.Clone(req.Context())
-	clone.Header.Set(t.header, t.value)
-	return t.base.RoundTrip(clone)
-}
-
-// convertGatewayError converts gateway-specific HTTP status codes to typed
-// errors. The apiErr is wrapped directly to avoid double-wrapping when the
-// error has already been converted by the base provider. Returns nil if the
-// status code is not gateway-specific, allowing the caller to fall through.
-func convertGatewayError(apiErr *openai.Error) error {
-	switch apiErr.StatusCode {
-	case http.StatusPaymentRequired:
-		return errors.NewInsufficientFundsError(providerName, apiErr)
-	case http.StatusBadGateway:
-		return errors.NewUpstreamProviderError(providerName, apiErr)
-	case http.StatusGatewayTimeout:
-		return errors.NewGatewayTimeoutError(providerName, apiErr)
-	default:
-		return nil
+// capabilities returns the full set of capabilities for the gateway provider.
+// Since the gateway proxies to any backend provider, all features are
+// optimistically marked as supported. Actual support depends on the
+// underlying provider behind the gateway; consumers should handle
+// unsupported-operation errors at call time.
+func capabilities() providers.Capabilities {
+	return providers.Capabilities{
+		Completion:          true,
+		CompletionImage:     true,
+		CompletionPDF:       true,
+		CompletionReasoning: true,
+		CompletionStreaming: true,
+		CompletionTools:     true,
+		Embedding:           true,
+		ListModels:          true,
 	}
 }
 
-// newNonPlatformProvider creates a gateway provider in non-platform mode.
-// The gateway API key is sent via the X-AnyLLM-Key header.
-func newNonPlatformProvider(cfg *config.Config, baseURL string) (*Provider, error) {
-	gatewayKey := resolveGatewayKey(cfg)
-
-	compatOpts := forwardConfigOptions(cfg, baseURL)
-
-	if gatewayKey != "" {
-		baseClient := cfg.HTTPClient()
-		baseTransport := baseClient.Transport
-		if baseTransport == nil {
-			baseTransport = http.DefaultTransport
-		}
-
-		httpClient := &http.Client{
-			Timeout: baseClient.Timeout,
-			Transport: &headerTransport{
-				base:   baseTransport,
-				header: gatewayHeader,
-				value:  "Bearer " + gatewayKey,
-			},
-		}
-		compatOpts = append(compatOpts, config.WithHTTPClient(httpClient))
+// newHeaderClient wraps the given HTTP client's transport to inject the
+// gatewayHeader header into every request, preserving the base client's
+// timeout and transport settings.
+func newHeaderClient(base *http.Client, headerValue string) *http.Client {
+	transport := base.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
 	}
-
-	base, err := openaiProvider.NewCompatible(openaiProvider.CompatibleConfig{
-		APIKeyEnvVar:   "",
-		BaseURLEnvVar:  "",
-		Capabilities:   capabilities(),
-		DefaultAPIKey:  "gateway-no-key",
-		DefaultBaseURL: "",
-		Name:           providerName,
-		RequireAPIKey:  false,
-	}, compatOpts...)
-	if err != nil {
-		return nil, err
+	return &http.Client{
+		Timeout: base.Timeout,
+		Transport: &headerTransport{
+			base:   transport,
+			header: gatewayHeader,
+			value:  headerValue,
+		},
 	}
-
-	return &Provider{
-		CompatibleProvider: base,
-		platformMode:       false,
-	}, nil
-}
-
-// newPlatformProvider creates a gateway provider in platform mode.
-// The platform token is used as standard Bearer authentication via the
-// OpenAI SDK's api_key mechanism.
-func newPlatformProvider(cfg *config.Config, baseURL, token string) (*Provider, error) {
-	if token == "" {
-		return nil, fmt.Errorf(
-			"platform mode requires a token (pass WithAPIKey option or set %s env var)",
-			envPlatformToken,
-		)
-	}
-
-	compatOpts := forwardConfigOptions(cfg, baseURL)
-	compatOpts = append(compatOpts, config.WithAPIKey(token))
-
-	base, err := openaiProvider.NewCompatible(openaiProvider.CompatibleConfig{
-		APIKeyEnvVar:   "",
-		BaseURLEnvVar:  "",
-		Capabilities:   capabilities(),
-		DefaultAPIKey:  "",
-		DefaultBaseURL: "",
-		Name:           providerName,
-		RequireAPIKey:  false,
-	}, compatOpts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Provider{
-		CompatibleProvider: base,
-		platformMode:       true,
-	}, nil
-}
-
-// forwardConfigOptions builds a slice of config options that forwards
-// user-supplied settings (base URL, timeout, HTTP client) to the underlying
-// CompatibleProvider. This ensures settings like WithTimeout and
-// WithHTTPClient are not silently dropped.
-func forwardConfigOptions(cfg *config.Config, baseURL string) []config.Option {
-	opts := []config.Option{config.WithBaseURL(baseURL)}
-
-	if cfg.Timeout > 0 {
-		opts = append(opts, config.WithTimeout(cfg.Timeout))
-	}
-
-	return opts
 }
 
 // resolveGatewayKey resolves the gateway API key from config extras or
-// environment variable.
+// the GATEWAY_API_KEY environment variable.
 func resolveGatewayKey(cfg *config.Config) string {
-	if v, ok := cfg.ExtraValue("gateway_key"); ok {
+	if v, ok := cfg.ExtraValue(extraKeyGatewayKey); ok {
 		if key, ok := v.(string); ok && key != "" {
 			return key
 		}
@@ -339,7 +309,7 @@ func resolveGatewayKey(cfg *config.Config) string {
 // returns the platform token if applicable.
 func resolvePlatformMode(cfg *config.Config) (platformMode bool, token string) {
 	// Explicit opt-in via WithPlatformMode().
-	if v, ok := cfg.ExtraValue("platform_mode"); ok {
+	if v, ok := cfg.ExtraValue(extraKeyPlatformMode); ok {
 		if enabled, ok := v.(bool); ok && enabled {
 			token = cfg.APIKey
 			if token == "" {
@@ -359,20 +329,4 @@ func resolvePlatformMode(cfg *config.Config) (platformMode bool, token string) {
 	}
 
 	return false, ""
-}
-
-// capabilities returns the full set of capabilities for the gateway provider.
-// The gateway can proxy to any provider, so all features are marked as
-// supported. Actual support depends on the underlying provider being called.
-func capabilities() providers.Capabilities {
-	return providers.Capabilities{
-		Completion:          true,
-		CompletionImage:     true,
-		CompletionPDF:       true,
-		CompletionReasoning: true,
-		CompletionStreaming: true,
-		CompletionTools:     true,
-		Embedding:           true,
-		ListModels:          true,
-	}
 }

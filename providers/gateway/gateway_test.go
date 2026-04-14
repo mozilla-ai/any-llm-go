@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -115,6 +116,78 @@ func TestNew(t *testing.T) {
 		require.NotNil(t, provider)
 		require.False(t, provider.platformMode)
 	})
+
+	t.Run("forwards custom timeout to underlying provider", func(t *testing.T) {
+		t.Setenv(envAPIBase, "")
+		t.Setenv(envPlatformToken, "")
+
+		provider, err := New(
+			config.WithBaseURL("http://localhost:8000/v1"),
+			config.WithTimeout(30*time.Second),
+		)
+		require.NoError(t, err)
+		require.NotNil(t, provider)
+	})
+
+	t.Run("forwards custom HTTP client to platform mode provider", func(t *testing.T) {
+		t.Setenv(envAPIBase, "")
+		t.Setenv(envPlatformToken, "")
+
+		var capturedHeaders http.Header
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedHeaders = r.Header.Clone()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(mockCompletionResponse("test")))
+		}))
+		t.Cleanup(srv.Close)
+
+		customClient := &http.Client{Timeout: 5 * time.Second}
+		provider, err := New(
+			config.WithBaseURL(srv.URL),
+			config.WithAPIKey("tk_test"),
+			config.WithHTTPClient(customClient),
+			WithPlatformMode(),
+		)
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		_, err = provider.Completion(ctx, mockCompletionParams())
+		require.NoError(t, err)
+
+		// Platform mode: API key sent as standard Bearer auth.
+		require.Equal(t, bearerPrefix+"tk_test", capturedHeaders.Get("Authorization"))
+	})
+
+	t.Run("forwards custom HTTP client transport in non-platform mode", func(t *testing.T) {
+		t.Setenv(envAPIBase, "")
+		t.Setenv(envPlatformToken, "")
+
+		var capturedHeaders http.Header
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedHeaders = r.Header.Clone()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(mockCompletionResponse("test")))
+		}))
+		t.Cleanup(srv.Close)
+
+		customTransport := &mockRoundTripper{base: http.DefaultTransport}
+		customClient := &http.Client{Transport: customTransport}
+		provider, err := New(
+			config.WithBaseURL(srv.URL),
+			config.WithHTTPClient(customClient),
+			WithGatewayKey("gw_key"),
+		)
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		_, err = provider.Completion(ctx, mockCompletionParams())
+		require.NoError(t, err)
+
+		// Non-platform mode: gateway key sent via custom header.
+		require.Equal(t, bearerPrefix+"gw_key", capturedHeaders.Get(gatewayHeader))
+		// Custom transport should have been used (wrapped by headerTransport).
+		require.True(t, customTransport.called, "custom transport should be used as base")
+	})
 }
 
 func TestProviderName(t *testing.T) {
@@ -210,6 +283,18 @@ func TestResolvePlatformMode(t *testing.T) {
 		mode, _ := resolvePlatformMode(cfg)
 		require.False(t, mode)
 	})
+
+	t.Run("ignores non-bool platform_mode extra value", func(t *testing.T) {
+		t.Setenv(envPlatformToken, "")
+		t.Setenv(envAPIKey, "")
+
+		// Pass "true" as string instead of bool - should be ignored.
+		cfg, err := config.New(config.WithExtra(extraKeyPlatformMode, "true"))
+		require.NoError(t, err)
+
+		mode, _ := resolvePlatformMode(cfg)
+		require.False(t, mode)
+	})
 }
 
 func TestResolveGatewayKey(t *testing.T) {
@@ -244,6 +329,97 @@ func TestResolveGatewayKey(t *testing.T) {
 		key := resolveGatewayKey(cfg)
 		require.Empty(t, key)
 	})
+
+	t.Run("ignores non-string gateway_key extra value", func(t *testing.T) {
+		t.Setenv(envAPIKey, "")
+
+		// Pass 123 as int instead of string - should be ignored.
+		cfg, err := config.New(config.WithExtra(extraKeyGatewayKey, 123))
+		require.NoError(t, err)
+
+		key := resolveGatewayKey(cfg)
+		require.Empty(t, key)
+	})
+}
+
+func TestHeaderTransport(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		header     string
+		value      string
+		wantHeader string
+		wantValue  string
+	}{
+		{
+			name:       "injects gateway header",
+			header:     gatewayHeader,
+			value:      bearerPrefix + "test-key",
+			wantHeader: gatewayHeader,
+			wantValue:  bearerPrefix + "test-key",
+		},
+		{
+			name:       "overwrites existing header value",
+			header:     "Authorization",
+			value:      bearerPrefix + "new-token",
+			wantHeader: "Authorization",
+			wantValue:  bearerPrefix + "new-token",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedHeaders http.Header
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedHeaders = r.Header.Clone()
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(srv.Close)
+
+			transport := &headerTransport{
+				base:   http.DefaultTransport,
+				header: tc.header,
+				value:  tc.value,
+			}
+
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+			require.NoError(t, err)
+
+			resp, err := transport.RoundTrip(req)
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+
+			require.Equal(t, tc.wantValue, capturedHeaders.Get(tc.wantHeader))
+		})
+	}
+
+	t.Run("does not mutate original request", func(t *testing.T) {
+		t.Parallel()
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(srv.Close)
+
+		transport := &headerTransport{
+			base:   http.DefaultTransport,
+			header: gatewayHeader,
+			value:  bearerPrefix + "key",
+		}
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+		require.NoError(t, err)
+
+		resp, err := transport.RoundTrip(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		// Original request should not have the injected header.
+		require.Empty(t, req.Header.Get(gatewayHeader))
+	})
 }
 
 func TestNonPlatformModeSendsCustomHeader(t *testing.T) {
@@ -260,18 +436,7 @@ func TestNonPlatformModeSendsCustomHeader(t *testing.T) {
 		mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"id": "chatcmpl-test",
-			"object": "chat.completion",
-			"created": 1700000000,
-			"model": "test-model",
-			"choices": [{
-				"index": 0,
-				"message": {"role": "assistant", "content": "hello"},
-				"finish_reason": "stop"
-			}],
-			"usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
-		}`))
+		_, _ = w.Write([]byte(mockCompletionResponse("hello")))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -282,16 +447,13 @@ func TestNonPlatformModeSendsCustomHeader(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	_, err = provider.Completion(ctx, providers.CompletionParams{
-		Model:    "openai:gpt-4o-mini",
-		Messages: []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
-	})
+	_, err = provider.Completion(ctx, mockCompletionParams())
 	require.NoError(t, err)
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	require.Equal(t, "Bearer gw_test_key_123", capturedHeaders.Get(gatewayHeader))
+	require.Equal(t, bearerPrefix+"gw_test_key_123", capturedHeaders.Get(gatewayHeader))
 }
 
 func TestPlatformModeSendsBearerAuth(t *testing.T) {
@@ -308,18 +470,7 @@ func TestPlatformModeSendsBearerAuth(t *testing.T) {
 		mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"id": "chatcmpl-test",
-			"object": "chat.completion",
-			"created": 1700000000,
-			"model": "test-model",
-			"choices": [{
-				"index": 0,
-				"message": {"role": "assistant", "content": "hello"},
-				"finish_reason": "stop"
-			}],
-			"usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
-		}`))
+		_, _ = w.Write([]byte(mockCompletionResponse("hello")))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -331,17 +482,15 @@ func TestPlatformModeSendsBearerAuth(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	_, err = provider.Completion(ctx, providers.CompletionParams{
-		Model:    "openai:gpt-4o-mini",
-		Messages: []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
-	})
+	_, err = provider.Completion(ctx, mockCompletionParams())
 	require.NoError(t, err)
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	require.Equal(t, "Bearer tk_platform_token", capturedHeaders.Get("Authorization"))
-	require.Empty(t, capturedHeaders.Get(gatewayHeader), "platform mode should not send X-AnyLLM-Key header")
+	require.Equal(t, bearerPrefix+"tk_platform_token", capturedHeaders.Get("Authorization"))
+	require.Empty(t, capturedHeaders.Get(gatewayHeader),
+		"platform mode should not send gateway key header")
 }
 
 func TestCompletion(t *testing.T) {
@@ -428,7 +577,58 @@ func TestCompletionStream(t *testing.T) {
 	require.Equal(t, "hello", content.String())
 }
 
-func TestPlatformModeErrorConversion(t *testing.T) {
+func TestStreamingContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		// Send chunks slowly so context cancellation happens mid-stream.
+		for i := 0; i < 100; i++ {
+			chunk := fmt.Sprintf(
+				`{"id":"chatcmpl-gw","object":"chat.completion.chunk","created":1700000000,"model":"test-model","choices":[{"index":0,"delta":{"content":"chunk-%d"},"finish_reason":null}]}`,
+				i,
+			)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(config.WithBaseURL(srv.URL))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	chunks, errs := provider.CompletionStream(ctx, mockCompletionParams())
+
+	// Read a few chunks then cancel.
+	chunkCount := 0
+	for range chunks {
+		chunkCount++
+		if chunkCount >= 3 {
+			cancel()
+			break
+		}
+	}
+
+	// Drain remaining chunks (channel will close after goroutine detects cancellation).
+	for range chunks {
+	}
+
+	err = <-errs
+	// After context cancellation, we should get a context error, not nil.
+	if err != nil {
+		require.ErrorIs(t, err, context.Canceled)
+	}
+}
+
+func TestConvertError(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -494,10 +694,7 @@ func TestPlatformModeErrorConversion(t *testing.T) {
 			require.NoError(t, err)
 
 			ctx := context.Background()
-			_, err = provider.Completion(ctx, providers.CompletionParams{
-				Model:    "openai:gpt-4o-mini",
-				Messages: []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
-			})
+			_, err = provider.Completion(ctx, mockCompletionParams())
 
 			require.Error(t, err)
 			require.ErrorIs(t, err, tc.wantErr)
@@ -508,28 +705,54 @@ func TestPlatformModeErrorConversion(t *testing.T) {
 func TestNonPlatformModeAlsoConvertsGatewayErrors(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write(
-			[]byte(`{"error": {"message": "upstream error", "type": "upstream_error", "code": "upstream_error"}}`),
-		)
-	}))
-	t.Cleanup(srv.Close)
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantErr    error
+	}{
+		{
+			name:       "402 in non-platform mode",
+			statusCode: http.StatusPaymentRequired,
+			body:       `{"error": {"message": "payment required", "type": "insufficient_funds", "code": "insufficient_funds"}}`,
+			wantErr:    errors.ErrInsufficientFunds,
+		},
+		{
+			name:       "502 in non-platform mode",
+			statusCode: http.StatusBadGateway,
+			body:       `{"error": {"message": "upstream error", "type": "upstream_error", "code": "upstream_error"}}`,
+			wantErr:    errors.ErrUpstreamProvider,
+		},
+		{
+			name:       "504 in non-platform mode",
+			statusCode: http.StatusGatewayTimeout,
+			body:       `{"error": {"message": "gateway timeout", "type": "timeout", "code": "timeout"}}`,
+			wantErr:    errors.ErrGatewayTimeout,
+		},
+	}
 
-	provider, err := New(config.WithBaseURL(srv.URL))
-	require.NoError(t, err)
-	require.False(t, provider.platformMode)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	ctx := context.Background()
-	_, err = provider.Completion(ctx, providers.CompletionParams{
-		Model:    "openai:gpt-4o-mini",
-		Messages: []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
-	})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.statusCode)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
 
-	// Gateway error conversion applies in both modes.
-	require.Error(t, err)
-	require.ErrorIs(t, err, errors.ErrUpstreamProvider)
+			provider, err := New(config.WithBaseURL(srv.URL))
+			require.NoError(t, err)
+			require.False(t, provider.platformMode)
+
+			ctx := context.Background()
+			_, err = provider.Completion(ctx, mockCompletionParams())
+
+			require.Error(t, err)
+			require.ErrorIs(t, err, tc.wantErr)
+		})
+	}
 }
 
 func TestStreamingErrorConversion(t *testing.T) {
@@ -554,10 +777,7 @@ func TestStreamingErrorConversion(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	chunks, errs := provider.CompletionStream(ctx, providers.CompletionParams{
-		Model:    "openai:gpt-4o-mini",
-		Messages: []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
-	})
+	chunks, errs := provider.CompletionStream(ctx, mockCompletionParams())
 
 	// Drain chunks channel.
 	for range chunks {
@@ -588,18 +808,7 @@ func TestCompletionRequestBody(t *testing.T) {
 		mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"id": "chatcmpl-test",
-			"object": "chat.completion",
-			"created": 1700000000,
-			"model": "test-model",
-			"choices": [{
-				"index": 0,
-				"message": {"role": "assistant", "content": "ok"},
-				"finish_reason": "stop"
-			}],
-			"usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
-		}`))
+		_, _ = w.Write([]byte(mockCompletionResponse("ok")))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -650,6 +859,15 @@ func TestValidationErrors(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "at least one message is required")
 	})
+}
+
+func TestConvertErrorNilPassthrough(t *testing.T) {
+	t.Parallel()
+
+	provider, err := New(config.WithBaseURL("http://localhost:8000/v1"))
+	require.NoError(t, err)
+
+	require.Nil(t, provider.ConvertError(nil))
 }
 
 // Integration tests - only run if gateway is available.
@@ -732,6 +950,46 @@ func TestIntegrationCompletionStream(t *testing.T) {
 
 	t.Logf("Received %d chunks", chunkCount)
 	t.Logf("Content: %s", content.String())
+}
+
+// Test helpers.
+
+// mockRoundTripper records whether it was called and delegates to a base transport.
+type mockRoundTripper struct {
+	base   http.RoundTripper
+	called bool
+	mu     sync.Mutex
+}
+
+func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	m.mu.Lock()
+	m.called = true
+	m.mu.Unlock()
+	return m.base.RoundTrip(req)
+}
+
+// mockCompletionParams returns standard completion params for tests.
+func mockCompletionParams() providers.CompletionParams {
+	return providers.CompletionParams{
+		Model:    "openai:gpt-4o-mini",
+		Messages: []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
+	}
+}
+
+// mockCompletionResponse returns a minimal valid JSON completion response.
+func mockCompletionResponse(content string) string {
+	return fmt.Sprintf(`{
+		"id": "chatcmpl-test",
+		"object": "chat.completion",
+		"created": 1700000000,
+		"model": "test-model",
+		"choices": [{
+			"index": 0,
+			"message": {"role": "assistant", "content": %q},
+			"finish_reason": "stop"
+		}],
+		"usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+	}`, content)
 }
 
 // gatewayCredentials returns the gateway URL and platform token from
