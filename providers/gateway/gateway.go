@@ -2,9 +2,14 @@
 // It connects to an any-llm gateway server, which proxies requests to
 // underlying LLM providers.
 //
+// This package supersedes providers/platform. Where the platform provider
+// decrypts provider keys client-side and fans out to individual provider
+// SDKs, the gateway delegates everything to a single server-side endpoint.
+//
 // The gateway supports two authentication modes:
 //   - Platform mode: uses a platform token as standard Bearer auth
-//   - Non-platform mode: sends a gateway API key via the gatewayHeader header
+//   - Non-platform mode: sends a gateway API key via a custom authentication
+//     header (X-AnyLLM-Key)
 package gateway
 
 import (
@@ -34,6 +39,18 @@ const (
 	providerName          = "gateway"
 )
 
+// Gateway-specific error codes.
+const (
+	codeGatewayTimeout   = "gateway_timeout"
+	codeUpstreamProvider = "upstream_provider"
+)
+
+// Gateway-specific sentinel errors for type checking with errors.Is().
+var (
+	ErrGatewayTimeout   = stderrors.New("gateway timeout")
+	ErrUpstreamProvider = stderrors.New("upstream provider error")
+)
+
 // Ensure Provider implements the required interfaces.
 var (
 	_ providers.CapabilityProvider = (*Provider)(nil)
@@ -52,11 +69,23 @@ type Provider struct {
 }
 
 // headerTransport wraps an http.RoundTripper to inject custom headers into
-// every request. Used in non-platform mode to add the gateway key header.
+// every request. Used in non-platform mode to add the gateway authentication
+// header.
 type headerTransport struct {
 	base   http.RoundTripper
 	header string
 	value  string
+}
+
+// GatewayTimeoutError is returned when the gateway times out (HTTP 504).
+type GatewayTimeoutError struct {
+	errors.BaseError
+}
+
+// UpstreamProviderError is returned when the upstream provider is
+// unreachable (HTTP 502).
+type UpstreamProviderError struct {
+	errors.BaseError
 }
 
 // RoundTrip implements http.RoundTripper by cloning the request and injecting
@@ -75,16 +104,18 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // Authentication mode is determined as follows:
 //   - If WithPlatformMode() is passed, platform mode is used. The token is
 //     resolved from config.WithAPIKey() or GATEWAY_PLATFORM_TOKEN.
-//   - If GATEWAY_PLATFORM_TOKEN is set and no explicit API key is provided,
-//     platform mode is auto-detected.
+//   - If GATEWAY_PLATFORM_TOKEN is set and no explicit API key or gateway key
+//     is provided, platform mode is auto-detected.
 //   - Otherwise, non-platform mode is used with the key from WithGatewayKey()
-//     or GATEWAY_API_KEY, sent via the gatewayHeader header.
+//     or GATEWAY_API_KEY, sent via the gateway authentication header.
 func New(opts ...config.Option) (*Provider, error) {
 	cfg, err := config.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("invalid options: %w", err)
 	}
 
+	// Validate that a base URL is provided (gateway requires it).
+	// Resolution itself is delegated to NewCompatible via BaseURLEnvVar.
 	baseURL, err := cfg.ResolveBaseURL(envAPIBase, "")
 	if err != nil {
 		return nil, err
@@ -95,7 +126,42 @@ func New(opts ...config.Option) (*Provider, error) {
 		)
 	}
 
-	platformMode, platformToken := resolvePlatformMode(cfg)
+	// Resolve gateway key from extras or GATEWAY_API_KEY env var.
+	var gatewayKey string
+	if v, ok := cfg.ExtraValue(extraKeyGatewayKey); ok {
+		if key, ok := v.(string); ok && key != "" {
+			gatewayKey = key
+		}
+	}
+	if gatewayKey == "" {
+		gatewayKey = cfg.ResolveEnv(envAPIKey)
+	}
+
+	// Determine authentication mode.
+	platformMode := false
+	var platformToken string
+
+	// Explicit opt-in via WithPlatformMode().
+	if v, ok := cfg.ExtraValue(extraKeyPlatformMode); ok {
+		if enabled, ok := v.(bool); ok && enabled {
+			platformMode = true
+			platformToken = cfg.APIKey
+			if platformToken == "" {
+				platformToken = cfg.ResolveEnv(envPlatformToken)
+			}
+		}
+	}
+
+	// Auto-detect: GATEWAY_PLATFORM_TOKEN set and no explicit API key or
+	// gateway key configured. A gateway key signals non-platform intent.
+	if !platformMode {
+		envToken := cfg.ResolveEnv(envPlatformToken)
+		if envToken != "" && cfg.APIKey == "" && gatewayKey == "" {
+			platformMode = true
+			platformToken = envToken
+		}
+	}
+
 	if platformMode && platformToken == "" {
 		return nil, fmt.Errorf(
 			"platform mode requires a token (pass WithAPIKey option or set %s env var)",
@@ -112,17 +178,14 @@ func New(opts ...config.Option) (*Provider, error) {
 	httpClient := cfg.HTTPClient()
 	if platformMode {
 		compatOpts = append(compatOpts, config.WithAPIKey(platformToken))
-	} else {
-		gatewayKey := resolveGatewayKey(cfg)
-		if gatewayKey != "" {
-			httpClient = newHeaderClient(httpClient, bearerPrefix+gatewayKey)
-		}
+	} else if gatewayKey != "" {
+		httpClient = newHeaderClient(httpClient, bearerPrefix+gatewayKey)
 	}
 	compatOpts = append(compatOpts, config.WithHTTPClient(httpClient))
 
 	base, err := openaiProvider.NewCompatible(openaiProvider.CompatibleConfig{
-		APIKeyEnvVar:   "", // Gateway uses its own key resolution.
-		BaseURLEnvVar:  "", // Already resolved above.
+		APIKeyEnvVar:   "",         // Gateway uses its own key resolution.
+		BaseURLEnvVar:  envAPIBase, // Env var for base URL resolution.
 		Capabilities:   capabilities(),
 		DefaultAPIKey:  defaultNonPlatformKey, // Placeholder; non-platform doesn't need real auth.
 		DefaultBaseURL: "",                    // No default; base URL is required.
@@ -140,8 +203,8 @@ func New(opts ...config.Option) (*Provider, error) {
 }
 
 // WithGatewayKey sets the gateway API key for non-platform mode authentication.
-// The key is sent as a Bearer-formatted value in the gatewayHeader header
-// (i.e., "X-AnyLLM-Key: Bearer <key>").
+// The key is sent as a Bearer-formatted value in the gateway authentication
+// header (X-AnyLLM-Key).
 func WithGatewayKey(key string) config.Option {
 	return config.WithExtra(extraKeyGatewayKey, key)
 }
@@ -215,9 +278,9 @@ func (p *Provider) ConvertError(err error) error {
 		case http.StatusPaymentRequired:
 			return errors.NewInsufficientFundsError(providerName, apiErr)
 		case http.StatusBadGateway:
-			return errors.NewUpstreamProviderError(providerName, apiErr)
+			return newUpstreamProviderError(providerName, apiErr)
 		case http.StatusGatewayTimeout:
-			return errors.NewGatewayTimeoutError(providerName, apiErr)
+			return newGatewayTimeoutError(providerName, apiErr)
 		}
 	}
 
@@ -275,9 +338,16 @@ func capabilities() providers.Capabilities {
 	}
 }
 
+// newGatewayTimeoutError creates a new GatewayTimeoutError.
+func newGatewayTimeoutError(provider string, err error) *GatewayTimeoutError {
+	return &GatewayTimeoutError{
+		BaseError: errors.NewBaseError(codeGatewayTimeout, provider, err, ErrGatewayTimeout),
+	}
+}
+
 // newHeaderClient wraps the given HTTP client's transport to inject the
-// gatewayHeader header into every request, preserving the base client's
-// timeout and transport settings.
+// gateway authentication header into every request, preserving the base
+// client's timeout and transport settings.
 func newHeaderClient(base *http.Client, headerValue string) *http.Client {
 	transport := base.Transport
 	if transport == nil {
@@ -293,40 +363,9 @@ func newHeaderClient(base *http.Client, headerValue string) *http.Client {
 	}
 }
 
-// resolveGatewayKey resolves the gateway API key from config extras or
-// the GATEWAY_API_KEY environment variable.
-func resolveGatewayKey(cfg *config.Config) string {
-	if v, ok := cfg.ExtraValue(extraKeyGatewayKey); ok {
-		if key, ok := v.(string); ok && key != "" {
-			return key
-		}
+// newUpstreamProviderError creates a new UpstreamProviderError.
+func newUpstreamProviderError(provider string, err error) *UpstreamProviderError {
+	return &UpstreamProviderError{
+		BaseError: errors.NewBaseError(codeUpstreamProvider, provider, err, ErrUpstreamProvider),
 	}
-
-	return cfg.ResolveEnv(envAPIKey)
-}
-
-// resolvePlatformMode determines whether platform mode should be used and
-// returns the platform token if applicable.
-func resolvePlatformMode(cfg *config.Config) (platformMode bool, token string) {
-	// Explicit opt-in via WithPlatformMode().
-	if v, ok := cfg.ExtraValue(extraKeyPlatformMode); ok {
-		if enabled, ok := v.(bool); ok && enabled {
-			token = cfg.APIKey
-			if token == "" {
-				token = cfg.ResolveEnv(envPlatformToken)
-			}
-			return true, token
-		}
-	}
-
-	// Auto-detect: GATEWAY_PLATFORM_TOKEN set and no explicit API key or
-	// gateway key. If a gateway key is configured, the caller intends
-	// non-platform mode even when a platform token is present in the env.
-	platformToken := cfg.ResolveEnv(envPlatformToken)
-	gatewayKey := resolveGatewayKey(cfg)
-	if platformToken != "" && cfg.APIKey == "" && gatewayKey == "" {
-		return true, platformToken
-	}
-
-	return false, ""
 }

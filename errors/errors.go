@@ -18,8 +18,6 @@ const (
 	CodeUnsupportedProvider = "unsupported_provider"
 	CodeUnsupportedParam    = "unsupported_parameter"
 	CodeInsufficientFunds   = "insufficient_funds"
-	CodeUpstreamProvider    = "upstream_provider"
-	CodeGatewayTimeout      = "gateway_timeout"
 )
 
 // Sentinel errors for type checking with errors.Is().
@@ -35,8 +33,6 @@ var (
 	ErrUnsupportedProvider = stderrors.New("unsupported provider")
 	ErrUnsupportedParam    = stderrors.New("unsupported parameter")
 	ErrInsufficientFunds   = stderrors.New("insufficient funds")
-	ErrUpstreamProvider    = stderrors.New("upstream provider error")
-	ErrGatewayTimeout      = stderrors.New("gateway timeout")
 )
 
 // BaseError is the base error type for all any-llm errors.
@@ -133,16 +129,6 @@ type UnsupportedParamError struct {
 
 // InsufficientFundsError is returned when the account has insufficient funds (HTTP 402).
 type InsufficientFundsError struct {
-	BaseError
-}
-
-// UpstreamProviderError is returned when the upstream provider is unreachable (HTTP 502).
-type UpstreamProviderError struct {
-	BaseError
-}
-
-// GatewayTimeoutError is returned when the gateway times out (HTTP 504).
-type GatewayTimeoutError struct {
 	BaseError
 }
 
@@ -271,38 +257,20 @@ func NewUnsupportedParamError(provider string, param string) *UnsupportedParamEr
 	}
 }
 
+// NewBaseError creates a BaseError with the given fields. This allows provider
+// packages to define their own error types that embed BaseError with a sentinel.
+func NewBaseError(code, provider string, err, sentinel error) BaseError {
+	return BaseError{
+		Code:     code,
+		Provider: provider,
+		Err:      err,
+		sentinel: sentinel,
+	}
+}
+
 // NewInsufficientFundsError creates a new InsufficientFundsError.
 func NewInsufficientFundsError(provider string, err error) *InsufficientFundsError {
 	return &InsufficientFundsError{
-		BaseError: BaseError{
-			Code:     CodeInsufficientFunds,
-			Provider: provider,
-			Err:      err,
-			sentinel: ErrInsufficientFunds,
-		},
-	}
-}
-
-// NewUpstreamProviderError creates a new UpstreamProviderError.
-func NewUpstreamProviderError(provider string, err error) *UpstreamProviderError {
-	return &UpstreamProviderError{
-		BaseError: BaseError{
-			Code:     CodeUpstreamProvider,
-			Provider: provider,
-			Err:      err,
-			sentinel: ErrUpstreamProvider,
-		},
-	}
-}
-
-// NewGatewayTimeoutError creates a new GatewayTimeoutError.
-func NewGatewayTimeoutError(provider string, err error) *GatewayTimeoutError {
-	return &GatewayTimeoutError{
-		BaseError: BaseError{
-			Code:     CodeGatewayTimeout,
-			Provider: provider,
-			Err:      err,
-			sentinel: ErrGatewayTimeout,
-		},
+		BaseError: NewBaseError(CodeInsufficientFunds, provider, err, ErrInsufficientFunds),
 	}
 }

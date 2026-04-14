@@ -96,18 +96,6 @@ func TestErrorIs(t *testing.T) {
 			target:    ErrAuthentication,
 			wantMatch: false,
 		},
-		{
-			name:      "UpstreamProviderError matches ErrUpstreamProvider",
-			err:       NewUpstreamProviderError("gateway", originalErr),
-			target:    ErrUpstreamProvider,
-			wantMatch: true,
-		},
-		{
-			name:      "GatewayTimeoutError matches ErrGatewayTimeout",
-			err:       NewGatewayTimeoutError("gateway", originalErr),
-			target:    ErrGatewayTimeout,
-			wantMatch: true,
-		},
 	}
 
 	for _, tc := range tests {
@@ -159,16 +147,6 @@ func TestErrorMessage(t *testing.T) {
 			name:        "InsufficientFundsError includes provider and code",
 			err:         NewInsufficientFundsError("gateway", originalErr),
 			wantContain: []string{"[gateway]", "insufficient_funds", "something went wrong"},
-		},
-		{
-			name:        "UpstreamProviderError includes provider and code",
-			err:         NewUpstreamProviderError("gateway", originalErr),
-			wantContain: []string{"[gateway]", "upstream_provider", "something went wrong"},
-		},
-		{
-			name:        "GatewayTimeoutError includes provider and code",
-			err:         NewGatewayTimeoutError("gateway", originalErr),
-			wantContain: []string{"[gateway]", "gateway_timeout", "something went wrong"},
 		},
 	}
 
@@ -253,17 +231,6 @@ func TestErrorCodes(t *testing.T) {
 		require.Equal(t, CodeInsufficientFunds, err.Code)
 	})
 
-	t.Run("UpstreamProviderError has correct code", func(t *testing.T) {
-		t.Parallel()
-		err := NewUpstreamProviderError("gateway", nil)
-		require.Equal(t, CodeUpstreamProvider, err.Code)
-	})
-
-	t.Run("GatewayTimeoutError has correct code", func(t *testing.T) {
-		t.Parallel()
-		err := NewGatewayTimeoutError("gateway", nil)
-		require.Equal(t, CodeGatewayTimeout, err.Code)
-	})
 }
 
 func TestErrorAs(t *testing.T) {
@@ -313,23 +280,4 @@ func TestErrorAs(t *testing.T) {
 		require.Equal(t, "gateway", fundsErr.Provider)
 	})
 
-	t.Run("can extract UpstreamProviderError", func(t *testing.T) {
-		t.Parallel()
-
-		err := NewUpstreamProviderError("gateway", stderrors.New("bad gateway"))
-
-		var upstreamErr *UpstreamProviderError
-		require.True(t, stderrors.As(err, &upstreamErr))
-		require.Equal(t, "gateway", upstreamErr.Provider)
-	})
-
-	t.Run("can extract GatewayTimeoutError", func(t *testing.T) {
-		t.Parallel()
-
-		err := NewGatewayTimeoutError("gateway", stderrors.New("timed out"))
-
-		var timeoutErr *GatewayTimeoutError
-		require.True(t, stderrors.As(err, &timeoutErr))
-		require.Equal(t, "gateway", timeoutErr.Provider)
-	})
 }

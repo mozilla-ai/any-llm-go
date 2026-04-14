@@ -216,129 +216,48 @@ func TestCapabilities(t *testing.T) {
 	require.True(t, caps.ListModels)
 }
 
-func TestResolvePlatformMode(t *testing.T) {
+func TestPlatformModeDetection(t *testing.T) {
 	// Note: Not using t.Parallel() here because child tests use t.Setenv.
 
-	t.Run("returns false when no platform indicators", func(t *testing.T) {
-		t.Setenv(envPlatformToken, "")
-
-		cfg, err := config.New()
-		require.NoError(t, err)
-
-		mode, token := resolvePlatformMode(cfg)
-		require.False(t, mode)
-		require.Empty(t, token)
-	})
-
-	t.Run("returns true with explicit WithPlatformMode and API key", func(t *testing.T) {
-		t.Setenv(envPlatformToken, "")
-
-		cfg, err := config.New(config.WithAPIKey("tk_test"), WithPlatformMode())
-		require.NoError(t, err)
-
-		mode, token := resolvePlatformMode(cfg)
-		require.True(t, mode)
-		require.Equal(t, "tk_test", token)
-	})
-
-	t.Run("returns true with explicit WithPlatformMode and env token", func(t *testing.T) {
-		t.Setenv(envPlatformToken, "tk_from_env")
-
-		cfg, err := config.New(WithPlatformMode())
-		require.NoError(t, err)
-
-		mode, token := resolvePlatformMode(cfg)
-		require.True(t, mode)
-		require.Equal(t, "tk_from_env", token)
-	})
-
-	t.Run("auto-detects when GATEWAY_PLATFORM_TOKEN set and no API key", func(t *testing.T) {
-		t.Setenv(envPlatformToken, "tk_auto")
-
-		cfg, err := config.New()
-		require.NoError(t, err)
-
-		mode, token := resolvePlatformMode(cfg)
-		require.True(t, mode)
-		require.Equal(t, "tk_auto", token)
-	})
-
 	t.Run("does not auto-detect when API key is explicitly set", func(t *testing.T) {
+		t.Setenv(envAPIBase, "http://localhost:8000/v1")
 		t.Setenv(envPlatformToken, "tk_auto")
 
-		cfg, err := config.New(config.WithAPIKey("explicit_key"))
+		provider, err := New(config.WithAPIKey("explicit_key"))
 		require.NoError(t, err)
-
-		mode, _ := resolvePlatformMode(cfg)
-		require.False(t, mode)
+		require.False(t, provider.platformMode)
 	})
 
 	t.Run("does not auto-detect when gateway key is set", func(t *testing.T) {
+		t.Setenv(envAPIBase, "http://localhost:8000/v1")
 		t.Setenv(envPlatformToken, "tk_auto")
 		t.Setenv(envAPIKey, "")
 
-		cfg, err := config.New(WithGatewayKey("gw_key"))
+		provider, err := New(WithGatewayKey("gw_key"))
 		require.NoError(t, err)
-
-		mode, _ := resolvePlatformMode(cfg)
-		require.False(t, mode)
+		require.False(t, provider.platformMode)
 	})
 
 	t.Run("ignores non-bool platform_mode extra value", func(t *testing.T) {
+		t.Setenv(envAPIBase, "http://localhost:8000/v1")
 		t.Setenv(envPlatformToken, "")
 		t.Setenv(envAPIKey, "")
 
 		// Pass "true" as string instead of bool - should be ignored.
-		cfg, err := config.New(config.WithExtra(extraKeyPlatformMode, "true"))
+		provider, err := New(config.WithExtra(extraKeyPlatformMode, "true"))
 		require.NoError(t, err)
-
-		mode, _ := resolvePlatformMode(cfg)
-		require.False(t, mode)
-	})
-}
-
-func TestResolveGatewayKey(t *testing.T) {
-	// Note: Not using t.Parallel() here because child tests use t.Setenv.
-
-	t.Run("returns key from WithGatewayKey", func(t *testing.T) {
-		t.Setenv(envAPIKey, "")
-
-		cfg, err := config.New(WithGatewayKey("gw_explicit"))
-		require.NoError(t, err)
-
-		key := resolveGatewayKey(cfg)
-		require.Equal(t, "gw_explicit", key)
-	})
-
-	t.Run("falls back to GATEWAY_API_KEY env var", func(t *testing.T) {
-		t.Setenv(envAPIKey, "gw_from_env")
-
-		cfg, err := config.New()
-		require.NoError(t, err)
-
-		key := resolveGatewayKey(cfg)
-		require.Equal(t, "gw_from_env", key)
-	})
-
-	t.Run("returns empty when no key available", func(t *testing.T) {
-		t.Setenv(envAPIKey, "")
-
-		cfg, err := config.New()
-		require.NoError(t, err)
-
-		key := resolveGatewayKey(cfg)
-		require.Empty(t, key)
+		require.False(t, provider.platformMode)
 	})
 
 	t.Run("ignores non-string gateway_key extra value", func(t *testing.T) {
+		t.Setenv(envAPIBase, "http://localhost:8000/v1")
+		t.Setenv(envPlatformToken, "")
 		t.Setenv(envAPIKey, "")
 
 		// Pass 123 as int instead of string - should be ignored.
-		cfg, err := config.New(config.WithExtra(extraKeyGatewayKey, 123))
+		provider, err := New(config.WithExtra(extraKeyGatewayKey, 123))
 		require.NoError(t, err)
-
-		key := resolveGatewayKey(cfg)
-		require.Empty(t, key)
+		require.NotNil(t, provider)
 	})
 }
 
@@ -622,10 +541,9 @@ func TestStreamingContextCancellation(t *testing.T) {
 	}
 
 	err = <-errs
-	// After context cancellation, we should get a context error, not nil.
-	if err != nil {
-		require.ErrorIs(t, err, context.Canceled)
-	}
+	// After context cancellation, we must get a context error, not nil.
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestConvertError(t *testing.T) {
@@ -665,13 +583,13 @@ func TestConvertError(t *testing.T) {
 			name:       "502 returns UpstreamProviderError",
 			statusCode: http.StatusBadGateway,
 			body:       `{"error": {"message": "upstream error", "type": "upstream_error", "code": "upstream_error"}}`,
-			wantErr:    errors.ErrUpstreamProvider,
+			wantErr:    ErrUpstreamProvider,
 		},
 		{
 			name:       "504 returns GatewayTimeoutError",
 			statusCode: http.StatusGatewayTimeout,
 			body:       `{"error": {"message": "gateway timeout", "type": "timeout", "code": "timeout"}}`,
-			wantErr:    errors.ErrGatewayTimeout,
+			wantErr:    ErrGatewayTimeout,
 		},
 	}
 
@@ -721,13 +639,13 @@ func TestNonPlatformModeAlsoConvertsGatewayErrors(t *testing.T) {
 			name:       "502 in non-platform mode",
 			statusCode: http.StatusBadGateway,
 			body:       `{"error": {"message": "upstream error", "type": "upstream_error", "code": "upstream_error"}}`,
-			wantErr:    errors.ErrUpstreamProvider,
+			wantErr:    ErrUpstreamProvider,
 		},
 		{
 			name:       "504 in non-platform mode",
 			statusCode: http.StatusGatewayTimeout,
 			body:       `{"error": {"message": "gateway timeout", "type": "timeout", "code": "timeout"}}`,
-			wantErr:    errors.ErrGatewayTimeout,
+			wantErr:    ErrGatewayTimeout,
 		},
 	}
 
