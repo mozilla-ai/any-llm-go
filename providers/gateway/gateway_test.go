@@ -18,6 +18,7 @@ import (
 
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/errors"
+	"github.com/mozilla-ai/any-llm-go/internal/testutil"
 	"github.com/mozilla-ai/any-llm-go/providers"
 )
 
@@ -1414,6 +1415,53 @@ func TestParseBatchNotCompleteDetail(t *testing.T) {
 	}
 }
 
+func TestCompletionHTTPError409IsNotBatchError(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"detail": "conflict on completion endpoint"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(config.WithBaseURL(srv.URL))
+	require.NoError(t, err)
+
+	_, err = provider.Completion(context.Background(), providers.CompletionParams{
+		Model:    "test-model",
+		Messages: []providers.Message{{Role: "user", Content: "hi"}},
+	})
+	require.Error(t, err)
+
+	// 409 on a completion endpoint should NOT produce a BatchNotCompleteError.
+	require.False(t, stderrors.Is(err, errors.ErrBatchNotComplete),
+		"completion 409 should not map to ErrBatchNotComplete, got %v", err)
+}
+
+func TestCompletionHTTPError404IsModelNotFound(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"detail": "model not found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(config.WithBaseURL(srv.URL))
+	require.NoError(t, err)
+
+	_, err = provider.Completion(context.Background(), providers.CompletionParams{
+		Model:    "nonexistent:model",
+		Messages: []providers.Message{{Role: "user", Content: "hi"}},
+	})
+	require.Error(t, err)
+
+	// 404 on a completion endpoint should not contain "upgrade your gateway".
+	require.NotContains(t, err.Error(), "upgrade your gateway")
+}
+
 // --- Integration tests ---
 
 func TestIntegrationCompletion(t *testing.T) {
@@ -1540,4 +1588,72 @@ func mockCompletionResponse(content string) string {
 // environment variables. Returns empty strings if not set.
 func gatewayCredentials() (gatewayURL string, token string) {
 	return os.Getenv(envAPIBase), os.Getenv(envPlatformToken)
+}
+
+// --- Integration tests (gated by GATEWAY_API_KEY) ---
+
+func TestIntegrationCreateAndRetrieveBatch(t *testing.T) {
+	if testutil.SkipIfNoAPIKey(providerName) {
+		t.Skip("GATEWAY_API_KEY not set")
+	}
+
+	provider, err := New()
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	batch, err := provider.CreateBatch(ctx, providers.CreateBatchParams{
+		Model: "openai:gpt-4o-mini",
+		Requests: []providers.BatchRequestItem{
+			{
+				CustomID: "integration-req-1",
+				Body: map[string]any{
+					"messages":   []any{map[string]any{"role": "user", "content": "Say hello"}},
+					"max_tokens": 10,
+				},
+			},
+		},
+		CompletionWindow: "24h",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, batch.ID)
+	require.Equal(t, "batch", batch.Object)
+	require.NotEmpty(t, batch.Provider)
+
+	// Retrieve the batch we just created.
+	retrieved, err := provider.RetrieveBatch(ctx, batch.ID, batch.Provider)
+	require.NoError(t, err)
+	require.Equal(t, batch.ID, retrieved.ID)
+}
+
+func TestIntegrationBatchNotComplete(t *testing.T) {
+	if testutil.SkipIfNoAPIKey(providerName) {
+		t.Skip("GATEWAY_API_KEY not set")
+	}
+
+	provider, err := New()
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	batch, err := provider.CreateBatch(ctx, providers.CreateBatchParams{
+		Model: "openai:gpt-4o-mini",
+		Requests: []providers.BatchRequestItem{
+			{
+				CustomID: "integration-req-1",
+				Body: map[string]any{
+					"messages":   []any{map[string]any{"role": "user", "content": "Say hello"}},
+					"max_tokens": 10,
+				},
+			},
+		},
+		CompletionWindow: "24h",
+	})
+	require.NoError(t, err)
+
+	// Immediately requesting results should fail since the batch is not yet complete.
+	_, err = provider.RetrieveBatchResults(ctx, batch.ID, batch.Provider)
+	require.Error(t, err)
+	require.True(t, stderrors.Is(err, errors.ErrBatchNotComplete),
+		"expected ErrBatchNotComplete, got %v", err)
 }
