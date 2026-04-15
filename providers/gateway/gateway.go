@@ -325,11 +325,11 @@ func (p *Provider) ConvertError(err error) error {
 			return errors.NewInsufficientFundsError(providerName, apiErr)
 		case http.StatusBadGateway:
 			return &UpstreamProviderError{
-				BaseError: errors.NewBaseError(errCodeUpstreamProvider, providerName, apiErr, ErrUpstreamProvider),
+				BaseError: errors.New(errCodeUpstreamProvider, providerName, apiErr, ErrUpstreamProvider),
 			}
 		case http.StatusGatewayTimeout:
 			return &TimeoutError{
-				BaseError: errors.NewBaseError(errCodeTimeout, providerName, apiErr, ErrTimeout),
+				BaseError: errors.New(errCodeTimeout, providerName, apiErr, ErrTimeout),
 			}
 		}
 	}

@@ -51,6 +51,30 @@ type BaseError struct {
 	sentinel error
 }
 
+// New constructs a BaseError for embedding in a caller-defined error type.
+// It exists so packages outside this one can populate the unexported
+// sentinel field that drives errors.Is matching; without it, external
+// packages could only set the exported fields via struct literals and
+// errors.Is(err, ErrFoo) would never match.
+//
+// Typical usage from a provider package:
+//
+//	type UpstreamProviderError struct{ errors.BaseError }
+//
+//	func NewUpstreamProviderError(provider string, err error) *UpstreamProviderError {
+//	    return &UpstreamProviderError{
+//	        BaseError: errors.New("upstream_provider", provider, err, ErrUpstreamProvider),
+//	    }
+//	}
+func New(code string, provider string, err error, sentinel error) BaseError {
+	return BaseError{
+		Code:     code,
+		Provider: provider,
+		Err:      err,
+		sentinel: sentinel,
+	}
+}
+
 // Error implements the error interface.
 func (e *BaseError) Error() string {
 	msg := ""
@@ -153,17 +177,6 @@ func NewAuthenticationError(provider string, err error) *AuthenticationError {
 			Err:      err,
 			sentinel: ErrAuthentication,
 		},
-	}
-}
-
-// NewBaseError creates a BaseError with the given fields. This allows provider
-// packages to define their own error types that embed BaseError with a sentinel.
-func NewBaseError(code, provider string, err, sentinel error) BaseError {
-	return BaseError{
-		Code:     code,
-		Provider: provider,
-		Err:      err,
-		sentinel: sentinel,
 	}
 }
 
@@ -271,6 +284,11 @@ func NewUnsupportedParamError(provider string, param string) *UnsupportedParamEr
 // NewInsufficientFundsError creates a new InsufficientFundsError.
 func NewInsufficientFundsError(provider string, err error) *InsufficientFundsError {
 	return &InsufficientFundsError{
-		BaseError: NewBaseError(CodeInsufficientFunds, provider, err, ErrInsufficientFunds),
+		BaseError: BaseError{
+			Code:     CodeInsufficientFunds,
+			Provider: provider,
+			Err:      err,
+			sentinel: ErrInsufficientFunds,
+		},
 	}
 }
