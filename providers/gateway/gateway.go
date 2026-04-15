@@ -13,11 +13,18 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"net/url"
+	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/openai/openai-go"
 
@@ -91,6 +98,7 @@ var (
 
 // Ensure Provider implements the required interfaces.
 var (
+	_ providers.BatchProvider      = (*Provider)(nil)
 	_ providers.CapabilityProvider = (*Provider)(nil)
 	_ providers.EmbeddingProvider  = (*Provider)(nil)
 	_ providers.ErrorConverter     = (*Provider)(nil)
@@ -120,6 +128,18 @@ type Provider struct {
 	// (using gateway key in custom header).
 	// This affects how authentication is handled and how errors are converted.
 	platformMode bool
+
+	// apiBase is the gateway base URL, used for batch API calls that bypass
+	// the OpenAI SDK.
+	apiBase string
+
+	// apiKey is the gateway API key for non-platform mode, or the platform
+	// token in platform mode, used for batch API calls that bypass the
+	// OpenAI SDK.
+	apiKey string
+
+	// httpClient is used for batch API calls that bypass the OpenAI SDK.
+	httpClient *http.Client
 }
 
 // headerTransport wraps an http.RoundTripper to inject custom headers into
@@ -192,6 +212,15 @@ func New(opts ...config.Option) (*Provider, error) {
 		)
 	}
 
+	// Resolve apiBase for batch API calls.
+	apiBase, err := cfg.ResolveBaseURL(envAPIBase, "")
+	if err != nil || apiBase == "" {
+		// Will be caught by NewCompatible's RequireBaseURL, but resolve
+		// for our own use.
+		apiBase = ""
+	}
+	apiBase = strings.TrimRight(apiBase, "/")
+
 	// Pass the user's opts straight through and layer auth-specific opts on
 	// top (order matters: later options win). Base URL resolution and the
 	// required-URL check are delegated to NewCompatible via BaseURLEnvVar
@@ -224,9 +253,20 @@ func New(opts ...config.Option) (*Provider, error) {
 		return nil, err
 	}
 
+	// Determine the key to use for batch API calls.
+	var batchAPIKey string
+	if platformMode {
+		batchAPIKey = platformToken
+	} else {
+		batchAPIKey = gatewayKey
+	}
+
 	return &Provider{
 		CompatibleProvider: base,
 		platformMode:       platformMode,
+		apiBase:            apiBase,
+		apiKey:             batchAPIKey,
+		httpClient:         cfg.HTTPClient(),
 	}, nil
 }
 
@@ -394,4 +434,263 @@ func newHeaderClient(base *http.Client, headerValue string) *http.Client {
 			value:  headerValue,
 		},
 	}
+}
+
+// --- Batch API methods ---
+//
+// These methods use raw HTTP (via doRequest) rather than the embedded OpenAI
+// SDK because the SDK does not expose the gateway batch endpoints.
+
+// CreateBatch creates a new batch job.
+func (p *Provider) CreateBatch(
+	ctx context.Context,
+	params providers.CreateBatchParams,
+) (*providers.Batch, error) {
+	body, err := json.Marshal(params)
+	if err != nil {
+		return nil, errors.NewInvalidRequestError(providerName, err)
+	}
+
+	resp, err := p.doRequest(ctx, http.MethodPost, "/v1/batches", body)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("gateway: failed to close response body: %v", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, p.handleBatchError(resp, "/v1/batches")
+	}
+
+	var batch providers.Batch
+	if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
+		return nil, errors.NewProviderError(providerName, fmt.Errorf("failed to decode batch response: %w", err))
+	}
+
+	return &batch, nil
+}
+
+// RetrieveBatch retrieves a batch job by ID.
+func (p *Provider) RetrieveBatch(
+	ctx context.Context,
+	batchID string,
+	provider string,
+) (*providers.Batch, error) {
+	path := fmt.Sprintf("/v1/batches/%s?provider=%s", url.PathEscape(batchID), url.QueryEscape(provider))
+
+	resp, err := p.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("gateway: failed to close response body: %v", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, p.handleBatchError(resp, path)
+	}
+
+	var batch providers.Batch
+	if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
+		return nil, errors.NewProviderError(providerName, fmt.Errorf("failed to decode batch response: %w", err))
+	}
+
+	return &batch, nil
+}
+
+// CancelBatch cancels a batch job.
+func (p *Provider) CancelBatch(
+	ctx context.Context,
+	batchID string,
+	provider string,
+) (*providers.Batch, error) {
+	path := fmt.Sprintf(
+		"/v1/batches/%s/cancel?provider=%s",
+		url.PathEscape(batchID),
+		url.QueryEscape(provider),
+	)
+
+	resp, err := p.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("gateway: failed to close response body: %v", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, p.handleBatchError(resp, path)
+	}
+
+	var batch providers.Batch
+	if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
+		return nil, errors.NewProviderError(providerName, fmt.Errorf("failed to decode batch response: %w", err))
+	}
+
+	return &batch, nil
+}
+
+// ListBatches lists batch jobs for a provider.
+func (p *Provider) ListBatches(
+	ctx context.Context,
+	provider string,
+	opts providers.ListBatchesOptions,
+) ([]providers.Batch, error) {
+	params := url.Values{"provider": {provider}}
+	if opts.After != "" {
+		params.Set("after", opts.After)
+	}
+	if opts.Limit != nil {
+		params.Set("limit", fmt.Sprintf("%d", *opts.Limit))
+	}
+
+	path := "/v1/batches?" + params.Encode()
+
+	resp, err := p.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("gateway: failed to close response body: %v", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, p.handleBatchError(resp, path)
+	}
+
+	var listResp struct {
+		Data []providers.Batch `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, errors.NewProviderError(providerName, fmt.Errorf("failed to decode list response: %w", err))
+	}
+
+	return listResp.Data, nil
+}
+
+// RetrieveBatchResults retrieves the results of a completed batch job.
+func (p *Provider) RetrieveBatchResults(
+	ctx context.Context,
+	batchID string,
+	provider string,
+) (*providers.BatchResult, error) {
+	path := fmt.Sprintf(
+		"/v1/batches/%s/results?provider=%s",
+		url.PathEscape(batchID),
+		url.QueryEscape(provider),
+	)
+
+	resp, err := p.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("gateway: failed to close response body: %v", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, p.handleBatchError(resp, path)
+	}
+
+	var result providers.BatchResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, errors.NewProviderError(providerName, fmt.Errorf("failed to decode batch results: %w", err))
+	}
+
+	return &result, nil
+}
+
+// doRequest sends an HTTP request to the gateway API for batch operations.
+func (p *Provider) doRequest(
+	ctx context.Context,
+	method, path string,
+	body []byte,
+) (*http.Response, error) {
+	fullURL := p.apiBase + path
+
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
+	if err != nil {
+		return nil, errors.NewProviderError(providerName, err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if p.apiKey != "" {
+		if p.platformMode {
+			req.Header.Set("Authorization", bearerPrefix+p.apiKey)
+		} else {
+			req.Header.Set(apiKeyHeaderName, bearerPrefix+p.apiKey)
+		}
+	}
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.NewProviderError(providerName, err)
+	}
+
+	return resp, nil
+}
+
+// handleBatchError handles HTTP error responses and maps them to typed errors.
+func (p *Provider) handleBatchError(resp *http.Response, path string) error {
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	var detail struct {
+		Detail string `json:"detail"`
+	}
+	_ = json.Unmarshal(bodyBytes, &detail)
+
+	msg := detail.Detail
+	if msg == "" {
+		msg = string(bodyBytes)
+	}
+
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return errors.NewAuthenticationError(providerName, fmt.Errorf("%s", msg))
+	case http.StatusNotFound:
+		if strings.Contains(path, "/v1/batches") {
+			return errors.NewProviderError(providerName,
+				fmt.Errorf("this gateway does not support batch operations; upgrade your gateway"))
+		}
+		return errors.NewModelNotFoundError(providerName, fmt.Errorf("%s", msg))
+	case http.StatusConflict:
+		batchID, batchStatus := parseBatchNotCompleteDetail(msg)
+		return errors.NewBatchNotCompleteError(providerName, batchID, batchStatus)
+	case http.StatusUnprocessableEntity:
+		return errors.NewProviderError(providerName, fmt.Errorf("%s", msg))
+	case http.StatusTooManyRequests:
+		return errors.NewRateLimitError(providerName, fmt.Errorf("%s", msg))
+	case http.StatusBadGateway:
+		return errors.NewProviderError(providerName, fmt.Errorf("upstream provider error: %s", msg))
+	default:
+		return errors.NewProviderError(providerName, fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg))
+	}
+}
+
+// batchNotCompleteRE matches: Batch 'batch_abc' is not yet complete (status: in_progress)
+var batchNotCompleteRE = regexp.MustCompile(`[Bb]atch\s+'([^']+)'.*\(status:\s*(\w+)\)`)
+
+// parseBatchNotCompleteDetail extracts batch ID and status from the error detail.
+func parseBatchNotCompleteDetail(detail string) (batchID, status string) {
+	matches := batchNotCompleteRE.FindStringSubmatch(detail)
+	if len(matches) >= 3 {
+		return matches[1], matches[2]
+	}
+	return "", "unknown"
 }

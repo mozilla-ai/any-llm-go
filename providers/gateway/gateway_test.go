@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -904,7 +905,516 @@ func TestConvertErrorNilPassthrough(t *testing.T) {
 	require.Nil(t, provider.ConvertError(nil))
 }
 
-// Integration tests - only run if gateway is available.
+// --- Batch tests ---
+
+func TestCreateBatchSuccess(t *testing.T) {
+	t.Parallel()
+
+	var capturedBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/batches", r.URL.Path)
+
+		raw, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(raw, &capturedBody))
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "batch_abc123",
+			"object": "batch",
+			"endpoint": "/v1/chat/completions",
+			"status": "validating",
+			"created_at": 1714502400,
+			"completion_window": "24h",
+			"request_counts": {"total": 2, "completed": 0, "failed": 0},
+			"metadata": {"key": "value"},
+			"provider": "openai"
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	batch, err := provider.CreateBatch(context.Background(), providers.CreateBatchParams{
+		Model: "openai:gpt-4o-mini",
+		Requests: []providers.BatchRequestItem{
+			{
+				CustomID: "req-1",
+				Body: map[string]any{
+					"messages":   []any{map[string]any{"role": "user", "content": "Hello"}},
+					"max_tokens": 100,
+				},
+			},
+		},
+		CompletionWindow: "24h",
+		Metadata:         map[string]string{"key": "value"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "batch_abc123", batch.ID)
+	require.Equal(t, "batch", batch.Object)
+	require.Equal(t, "/v1/chat/completions", batch.Endpoint)
+	require.Equal(t, providers.BatchStatusValidating, batch.Status)
+	require.Equal(t, int64(1714502400), batch.CreatedAt)
+	require.Equal(t, "24h", batch.CompletionWindow)
+	require.NotNil(t, batch.RequestCounts)
+	require.Equal(t, 2, batch.RequestCounts.Total)
+	require.Equal(t, 0, batch.RequestCounts.Completed)
+	require.Equal(t, 0, batch.RequestCounts.Failed)
+	require.Equal(t, "openai", batch.Provider)
+	require.Equal(t, map[string]string{"key": "value"}, batch.Metadata)
+
+	// Verify the request body.
+	require.Equal(t, "openai:gpt-4o-mini", capturedBody["model"])
+	require.Equal(t, "24h", capturedBody["completion_window"])
+}
+
+func TestCreateBatchSendsAuthHeader(t *testing.T) {
+	t.Parallel()
+
+	var capturedAuthHeader string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAuthHeader = r.Header.Get(apiKeyHeaderName)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "batch_test",
+			"object": "batch",
+			"endpoint": "/v1/chat/completions",
+			"status": "validating",
+			"created_at": 1714502400,
+			"completion_window": "24h"
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("batch-api-key"),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.CreateBatch(context.Background(), providers.CreateBatchParams{
+		Model: "openai:gpt-4o-mini",
+		Requests: []providers.BatchRequestItem{
+			{CustomID: "req-1", Body: map[string]any{"messages": []any{}}},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Bearer batch-api-key", capturedAuthHeader)
+}
+
+func TestRetrieveBatchSendsProviderParam(t *testing.T) {
+	t.Parallel()
+
+	var capturedPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.RequestURI()
+		require.Equal(t, http.MethodGet, r.Method)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "batch_abc123",
+			"object": "batch",
+			"endpoint": "/v1/chat/completions",
+			"status": "in_progress",
+			"created_at": 1714502400,
+			"completion_window": "24h",
+			"provider": "openai"
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	batch, err := provider.RetrieveBatch(context.Background(), "batch_abc123", "openai")
+	require.NoError(t, err)
+	require.Equal(t, "batch_abc123", batch.ID)
+	require.Equal(t, providers.BatchStatusInProgress, batch.Status)
+	require.Contains(t, capturedPath, "provider=openai")
+	require.Contains(t, capturedPath, "/v1/batches/batch_abc123")
+}
+
+func TestCancelBatchSuccess(t *testing.T) {
+	t.Parallel()
+
+	var capturedMethod string
+	var capturedPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.RequestURI()
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "batch_abc123",
+			"object": "batch",
+			"endpoint": "/v1/chat/completions",
+			"status": "cancelling",
+			"created_at": 1714502400,
+			"completion_window": "24h"
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	batch, err := provider.CancelBatch(context.Background(), "batch_abc123", "openai")
+	require.NoError(t, err)
+	require.Equal(t, "batch_abc123", batch.ID)
+	require.Equal(t, providers.BatchStatusCancelling, batch.Status)
+	require.Equal(t, http.MethodPost, capturedMethod)
+	require.Contains(t, capturedPath, "/v1/batches/batch_abc123/cancel")
+	require.Contains(t, capturedPath, "provider=openai")
+}
+
+func TestListBatchesPagination(t *testing.T) {
+	t.Parallel()
+
+	var capturedPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.RequestURI()
+		require.Equal(t, http.MethodGet, r.Method)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{
+					"id": "batch_1",
+					"object": "batch",
+					"endpoint": "/v1/chat/completions",
+					"status": "completed",
+					"created_at": 1714502400,
+					"completion_window": "24h"
+				},
+				{
+					"id": "batch_2",
+					"object": "batch",
+					"endpoint": "/v1/chat/completions",
+					"status": "in_progress",
+					"created_at": 1714502500,
+					"completion_window": "24h"
+				}
+			]
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	limit := 10
+	batches, err := provider.ListBatches(context.Background(), "openai", providers.ListBatchesOptions{
+		After: "batch_0",
+		Limit: &limit,
+	})
+	require.NoError(t, err)
+	require.Len(t, batches, 2)
+	require.Equal(t, "batch_1", batches[0].ID)
+	require.Equal(t, "batch_2", batches[1].ID)
+
+	// Verify query params.
+	require.Contains(t, capturedPath, "provider=openai")
+	require.Contains(t, capturedPath, "after=batch_0")
+	require.Contains(t, capturedPath, "limit=10")
+}
+
+func TestListBatchesWithoutPagination(t *testing.T) {
+	t.Parallel()
+
+	var capturedPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data": []}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	batches, err := provider.ListBatches(context.Background(), "openai", providers.ListBatchesOptions{})
+	require.NoError(t, err)
+	require.Empty(t, batches)
+
+	// Verify only provider param is sent (no after or limit).
+	require.Contains(t, capturedPath, "provider=openai")
+	require.NotContains(t, capturedPath, "after=")
+	require.NotContains(t, capturedPath, "limit=")
+}
+
+func TestRetrieveBatchResultsSuccess(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Contains(t, r.URL.Path, "/v1/batches/batch_abc123/results")
+		require.Equal(t, "openai", r.URL.Query().Get("provider"))
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"results": [
+				{
+					"custom_id": "req-1",
+					"result": {
+						"id": "chatcmpl-1",
+						"object": "chat.completion",
+						"created": 1700000000,
+						"model": "gpt-4o-mini",
+						"choices": [{"index": 0, "message": {"role": "assistant", "content": "Hello"}, "finish_reason": "stop"}],
+						"usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+					},
+					"error": null
+				},
+				{
+					"custom_id": "req-2",
+					"result": null,
+					"error": {"code": "rate_limit", "message": "Rate limit exceeded"}
+				}
+			]
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	result, err := provider.RetrieveBatchResults(context.Background(), "batch_abc123", "openai")
+	require.NoError(t, err)
+	require.Len(t, result.Results, 2)
+
+	// First result: successful.
+	require.Equal(t, "req-1", result.Results[0].CustomID)
+	require.NotNil(t, result.Results[0].Result)
+	require.Equal(t, "chatcmpl-1", result.Results[0].Result.ID)
+	require.Nil(t, result.Results[0].Error)
+
+	// Second result: error.
+	require.Equal(t, "req-2", result.Results[1].CustomID)
+	require.Nil(t, result.Results[1].Result)
+	require.NotNil(t, result.Results[1].Error)
+	require.Equal(t, "rate_limit", result.Results[1].Error.Code)
+	require.Equal(t, "Rate limit exceeded", result.Results[1].Error.Message)
+}
+
+// --- Batch error tests ---
+
+func TestBatchError409(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"detail": "Batch 'batch_xyz' is not yet complete (status: in_progress)"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.RetrieveBatchResults(context.Background(), "batch_xyz", "openai")
+	require.Error(t, err)
+
+	// Check sentinel error.
+	require.True(t, stderrors.Is(err, errors.ErrBatchNotComplete),
+		"expected error to match ErrBatchNotComplete, got %v", err)
+
+	// Check typed error with fields.
+	var batchErr *errors.BatchNotCompleteError
+	require.True(t, stderrors.As(err, &batchErr))
+	require.Equal(t, "batch_xyz", batchErr.BatchID)
+	require.Equal(t, "in_progress", batchErr.Status)
+}
+
+func TestBatchError404(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"detail": "not found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.RetrieveBatch(context.Background(), "batch_abc123", "openai")
+	require.Error(t, err)
+	require.True(t, stderrors.Is(err, errors.ErrProvider))
+	require.Contains(t, err.Error(), "upgrade your gateway")
+}
+
+func TestBatchError401(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"detail": "invalid api key"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("bad-key"),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.CreateBatch(context.Background(), providers.CreateBatchParams{
+		Model: "openai:gpt-4o-mini",
+		Requests: []providers.BatchRequestItem{
+			{CustomID: "req-1", Body: map[string]any{"messages": []any{}}},
+		},
+	})
+	require.Error(t, err)
+	require.True(t, stderrors.Is(err, errors.ErrAuthentication))
+}
+
+func TestBatchError422(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"detail": "unsupported provider"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.CreateBatch(context.Background(), providers.CreateBatchParams{
+		Model: "unsupported:model",
+		Requests: []providers.BatchRequestItem{
+			{CustomID: "req-1", Body: map[string]any{"messages": []any{}}},
+		},
+	})
+	require.Error(t, err)
+	require.True(t, stderrors.Is(err, errors.ErrProvider))
+	require.Contains(t, err.Error(), "unsupported provider")
+}
+
+func TestBatchError502(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"detail": "upstream timeout"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.RetrieveBatch(context.Background(), "batch_abc123", "openai")
+	require.Error(t, err)
+	require.True(t, stderrors.Is(err, errors.ErrProvider))
+	require.Contains(t, err.Error(), "upstream provider error")
+}
+
+func TestBatchError429(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"detail": "rate limit exceeded"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.ListBatches(context.Background(), "openai", providers.ListBatchesOptions{})
+	require.Error(t, err)
+	require.True(t, stderrors.Is(err, errors.ErrRateLimit))
+}
+
+// --- Helper function tests ---
+
+func TestParseBatchNotCompleteDetail(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		detail     string
+		wantID     string
+		wantStatus string
+	}{
+		{
+			name:       "standard format",
+			detail:     "Batch 'batch_abc123' is not yet complete (status: in_progress)",
+			wantID:     "batch_abc123",
+			wantStatus: "in_progress",
+		},
+		{
+			name:       "lowercase batch",
+			detail:     "batch 'batch_xyz' is not yet complete (status: validating)",
+			wantID:     "batch_xyz",
+			wantStatus: "validating",
+		},
+		{
+			name:       "unrecognized format",
+			detail:     "something went wrong",
+			wantID:     "",
+			wantStatus: "unknown",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			batchID, status := parseBatchNotCompleteDetail(tc.detail)
+			require.Equal(t, tc.wantID, batchID)
+			require.Equal(t, tc.wantStatus, status)
+		})
+	}
+}
+
+// --- Integration tests ---
 
 func TestIntegrationCompletion(t *testing.T) {
 	t.Parallel()

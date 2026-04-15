@@ -85,6 +85,7 @@ var providerEnvKeys = map[string]string{
 	"cohere":     "COHERE_API_KEY",
 	"deepseek":   "DEEPSEEK_API_KEY",
 	"fireworks":  "FIREWORKS_API_KEY",
+	"gateway":    "GATEWAY_API_KEY",
 	"gemini":     "GEMINI_API_KEY",
 	"groq":       "GROQ_API_KEY",
 	"mistral":    "MISTRAL_API_KEY",

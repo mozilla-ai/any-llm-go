@@ -331,3 +331,96 @@ func (m *Message) ContentString() string {
 func (m *Message) IsMultiModal() bool {
 	return m.ContentParts() != nil
 }
+
+// Batch represents a batch job.
+type Batch struct {
+	CompletedAt      *int64              `json:"completed_at,omitempty"`
+	CompletionWindow string              `json:"completion_window"`
+	CreatedAt        int64               `json:"created_at"`
+	Endpoint         string              `json:"endpoint"`
+	ErrorFileID      string              `json:"error_file_id,omitempty"`
+	ID               string              `json:"id"`
+	InProgressAt     *int64              `json:"in_progress_at,omitempty"`
+	InputFileID      string              `json:"input_file_id,omitempty"`
+	Metadata         map[string]string   `json:"metadata,omitempty"`
+	Object           string              `json:"object"`
+	OutputFileID     string              `json:"output_file_id,omitempty"`
+	Provider         string              `json:"provider,omitempty"`
+	RequestCounts    *BatchRequestCounts `json:"request_counts,omitempty"`
+	Status           BatchStatus         `json:"status"`
+}
+
+// BatchStatus represents the status of a batch job.
+type BatchStatus string
+
+const (
+	BatchStatusValidating BatchStatus = "validating"
+	BatchStatusFailed     BatchStatus = "failed"
+	BatchStatusInProgress BatchStatus = "in_progress"
+	BatchStatusFinalizing BatchStatus = "finalizing"
+	BatchStatusCompleted  BatchStatus = "completed"
+	BatchStatusExpired    BatchStatus = "expired"
+	BatchStatusCancelling BatchStatus = "cancelling"
+	BatchStatusCancelled  BatchStatus = "cancelled"
+)
+
+// BatchRequestCounts tracks request counts for a batch job.
+type BatchRequestCounts struct {
+	Completed int `json:"completed"`
+	Failed    int `json:"failed"`
+	Total     int `json:"total"`
+}
+
+// BatchRequestItem is a single request within a batch.
+type BatchRequestItem struct {
+	Body     map[string]any `json:"body"`
+	CustomID string         `json:"custom_id"`
+}
+
+// CreateBatchParams are parameters for creating a batch job.
+type CreateBatchParams struct {
+	CompletionWindow string             `json:"completion_window,omitempty"`
+	Metadata         map[string]string  `json:"metadata,omitempty"`
+	Model            string             `json:"model"`
+	Requests         []BatchRequestItem `json:"requests"`
+}
+
+// ListBatchesOptions are options for listing batch jobs.
+type ListBatchesOptions struct {
+	After string
+	Limit *int
+}
+
+// BatchResult contains the results of a completed batch job.
+type BatchResult struct {
+	Results []BatchResultItem `json:"results"`
+}
+
+// BatchResultItem is the result of a single request within a batch.
+type BatchResultItem struct {
+	CustomID string            `json:"custom_id"`
+	Error    *BatchResultError `json:"error,omitempty"`
+	Result   *ChatCompletion   `json:"result,omitempty"`
+}
+
+// BatchResultError is an error for a single request within a batch.
+type BatchResultError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// BatchProvider is an optional interface for providers that support
+// batch operations. Use a type assertion to check if a provider
+// supports batch:
+//
+//	if bp, ok := provider.(BatchProvider); ok {
+//	    batch, err := bp.CreateBatch(ctx, params)
+//	}
+type BatchProvider interface {
+	Provider
+	CreateBatch(ctx context.Context, params CreateBatchParams) (*Batch, error)
+	RetrieveBatch(ctx context.Context, batchID string, provider string) (*Batch, error)
+	CancelBatch(ctx context.Context, batchID string, provider string) (*Batch, error)
+	ListBatches(ctx context.Context, provider string, opts ListBatchesOptions) ([]Batch, error)
+	RetrieveBatchResults(ctx context.Context, batchID string, provider string) (*BatchResult, error)
+}
