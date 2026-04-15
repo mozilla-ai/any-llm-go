@@ -24,7 +24,6 @@ import (
 const (
 	objectChatCompletion      = "chat.completion"
 	objectChatCompletionChunk = "chat.completion.chunk"
-	objectList                = "list"
 )
 
 func TestNew(t *testing.T) {
@@ -184,7 +183,7 @@ func TestNew(t *testing.T) {
 		require.NoError(t, err)
 
 		// Non-platform mode: gateway key sent via custom header.
-		require.Equal(t, bearerPrefix+"gw_key", capturedHeaders.Get(gatewayHeader))
+		require.Equal(t, bearerPrefix+"gw_key", capturedHeaders.Get(apiKeyHeaderName))
 		// Custom transport should have been used (wrapped by headerTransport).
 		require.True(t, customTransport.called, "custom transport should be used as base")
 	})
@@ -217,48 +216,165 @@ func TestCapabilities(t *testing.T) {
 }
 
 func TestPlatformModeDetection(t *testing.T) {
-	// Note: Not using t.Parallel() here because child tests use t.Setenv.
+	// Note: Not using t.Parallel() because subtests use t.Setenv.
 
-	t.Run("does not auto-detect when API key is explicitly set", func(t *testing.T) {
-		t.Setenv(envAPIBase, "http://localhost:8000/v1")
-		t.Setenv(envPlatformToken, "tk_auto")
+	tests := []struct {
+		name             string
+		envPlatformToken string
+		envAPIKey        string
+		apiKey           string
+		gatewayKey       string
+		wantPlatform     bool
+	}{
+		{
+			name:             "does not auto-detect when API key is explicitly set",
+			envPlatformToken: "tk_auto",
+			apiKey:           "explicit_key",
+			wantPlatform:     false,
+		},
+		{
+			name:             "does not auto-detect when gateway key is explicitly set",
+			envPlatformToken: "tk_auto",
+			gatewayKey:       "gw_key",
+			wantPlatform:     false,
+		},
+	}
 
-		provider, err := New(config.WithAPIKey("explicit_key"))
-		require.NoError(t, err)
-		require.False(t, provider.platformMode)
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envAPIBase, "http://localhost:8000/v1")
+			t.Setenv(envPlatformToken, tc.envPlatformToken)
+			t.Setenv(envAPIKey, tc.envAPIKey)
 
-	t.Run("does not auto-detect when gateway key is set", func(t *testing.T) {
-		t.Setenv(envAPIBase, "http://localhost:8000/v1")
-		t.Setenv(envPlatformToken, "tk_auto")
-		t.Setenv(envAPIKey, "")
+			var opts []config.Option
+			if tc.apiKey != "" {
+				opts = append(opts, config.WithAPIKey(tc.apiKey))
+			}
+			if tc.gatewayKey != "" {
+				opts = append(opts, WithGatewayKey(tc.gatewayKey))
+			}
 
-		provider, err := New(WithGatewayKey("gw_key"))
-		require.NoError(t, err)
-		require.False(t, provider.platformMode)
-	})
+			provider, err := New(opts...)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantPlatform, provider.platformMode)
+		})
+	}
+}
 
-	t.Run("ignores non-bool platform_mode extra value", func(t *testing.T) {
-		t.Setenv(envAPIBase, "http://localhost:8000/v1")
-		t.Setenv(envPlatformToken, "")
-		t.Setenv(envAPIKey, "")
+// TestExtraValueHandling verifies that the config.Extra mechanism correctly
+// ignores wrong-typed values (silent fallthrough) and honours valid ones.
+// Assertions are made on the wire to prove the mode actually took effect,
+// not just that the provider constructed without error.
+func TestExtraValueHandling(t *testing.T) {
+	// Note: Not using t.Parallel() because subtests use t.Setenv.
 
-		// Pass "true" as string instead of bool - should be ignored.
-		provider, err := New(config.WithExtra(extraKeyPlatformMode, "true"))
-		require.NoError(t, err)
-		require.False(t, provider.platformMode)
-	})
+	tests := []struct {
+		name              string
+		extraKey          string
+		extraValue        any
+		envAPIKey         string
+		apiKey            string
+		gatewayKey        string
+		wantAPIKeyHeader  string // expected X-AnyLLM-Key value; empty means the header must not be sent.
+		wantAuthorization string // expected Authorization value.
+	}{
+		{
+			name:              "string gateway_key is forwarded as the gateway key header",
+			extraKey:          extraKeyGatewayKey,
+			extraValue:        "valid_key",
+			wantAPIKeyHeader:  bearerPrefix + "valid_key",
+			wantAuthorization: bearerPrefix + placeholderAPIKey,
+		},
+		{
+			name:              "int gateway_key is silently ignored",
+			extraKey:          extraKeyGatewayKey,
+			extraValue:        123,
+			wantAPIKeyHeader:  "",
+			wantAuthorization: bearerPrefix + placeholderAPIKey,
+		},
+		{
+			name:              "empty-string gateway_key is treated as unset",
+			extraKey:          extraKeyGatewayKey,
+			extraValue:        "",
+			wantAPIKeyHeader:  "",
+			wantAuthorization: bearerPrefix + placeholderAPIKey,
+		},
+		{
+			name:              "empty-string gateway_key falls through to GATEWAY_API_KEY env var",
+			extraKey:          extraKeyGatewayKey,
+			extraValue:        "",
+			envAPIKey:         "env_fallback_key",
+			wantAPIKeyHeader:  bearerPrefix + "env_fallback_key",
+			wantAuthorization: bearerPrefix + placeholderAPIKey,
+		},
+		{
+			name:              "bool platform_mode enables platform-mode Bearer auth",
+			extraKey:          extraKeyPlatformMode,
+			extraValue:        true,
+			apiKey:            "platform_token",
+			wantAPIKeyHeader:  "",
+			wantAuthorization: bearerPrefix + "platform_token",
+		},
+		{
+			// Passing a string instead of bool must not flip into platform mode.
+			// Combining with a gateway key proves the non-platform path was
+			// taken: an honoured platform_mode would suppress the gateway
+			// header. WithAPIKey is also passed to verify it does NOT leak
+			// into Authorization in non-platform mode — the placeholder is
+			// used instead.
+			name:              "string platform_mode is silently ignored",
+			extraKey:          extraKeyPlatformMode,
+			extraValue:        "true",
+			apiKey:            "platform_token",
+			gatewayKey:        "gw_key",
+			wantAPIKeyHeader:  bearerPrefix + "gw_key",
+			wantAuthorization: bearerPrefix + placeholderAPIKey,
+		},
+	}
 
-	t.Run("ignores non-string gateway_key extra value", func(t *testing.T) {
-		t.Setenv(envAPIBase, "http://localhost:8000/v1")
-		t.Setenv(envPlatformToken, "")
-		t.Setenv(envAPIKey, "")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envAPIBase, "")
+			t.Setenv(envAPIKey, tc.envAPIKey)
+			t.Setenv(envPlatformToken, "")
 
-		// Pass 123 as int instead of string - should be ignored.
-		provider, err := New(config.WithExtra(extraKeyGatewayKey, 123))
-		require.NoError(t, err)
-		require.NotNil(t, provider)
-	})
+			var (
+				mu              sync.Mutex
+				capturedHeaders http.Header
+			)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				capturedHeaders = r.Header.Clone()
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(mockCompletionResponse("ok")))
+			}))
+			t.Cleanup(srv.Close)
+
+			opts := []config.Option{
+				config.WithBaseURL(srv.URL),
+				config.WithExtra(tc.extraKey, tc.extraValue),
+			}
+			if tc.apiKey != "" {
+				opts = append(opts, config.WithAPIKey(tc.apiKey))
+			}
+			if tc.gatewayKey != "" {
+				opts = append(opts, WithGatewayKey(tc.gatewayKey))
+			}
+
+			provider, err := New(opts...)
+			require.NoError(t, err)
+
+			_, err = provider.Completion(context.Background(), mockCompletionParams())
+			require.NoError(t, err)
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			require.Equal(t, tc.wantAPIKeyHeader, capturedHeaders.Get(apiKeyHeaderName))
+			require.Equal(t, tc.wantAuthorization, capturedHeaders.Get("Authorization"))
+		})
+	}
 }
 
 func TestHeaderTransport(t *testing.T) {
@@ -273,9 +389,9 @@ func TestHeaderTransport(t *testing.T) {
 	}{
 		{
 			name:       "injects gateway header",
-			header:     gatewayHeader,
+			header:     apiKeyHeaderName,
 			value:      bearerPrefix + "test-key",
-			wantHeader: gatewayHeader,
+			wantHeader: apiKeyHeaderName,
 			wantValue:  bearerPrefix + "test-key",
 		},
 		{
@@ -325,7 +441,7 @@ func TestHeaderTransport(t *testing.T) {
 
 		transport := &headerTransport{
 			base:   http.DefaultTransport,
-			header: gatewayHeader,
+			header: apiKeyHeaderName,
 			value:  bearerPrefix + "key",
 		}
 
@@ -337,7 +453,7 @@ func TestHeaderTransport(t *testing.T) {
 		defer func() { _ = resp.Body.Close() }()
 
 		// Original request should not have the injected header.
-		require.Empty(t, req.Header.Get(gatewayHeader))
+		require.Empty(t, req.Header.Get(apiKeyHeaderName))
 	})
 }
 
@@ -372,7 +488,7 @@ func TestNonPlatformModeSendsCustomHeader(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	require.Equal(t, bearerPrefix+"gw_test_key_123", capturedHeaders.Get(gatewayHeader))
+	require.Equal(t, bearerPrefix+"gw_test_key_123", capturedHeaders.Get(apiKeyHeaderName))
 }
 
 func TestPlatformModeSendsBearerAuth(t *testing.T) {
@@ -408,7 +524,7 @@ func TestPlatformModeSendsBearerAuth(t *testing.T) {
 	defer mu.Unlock()
 
 	require.Equal(t, bearerPrefix+"tk_platform_token", capturedHeaders.Get("Authorization"))
-	require.Empty(t, capturedHeaders.Get(gatewayHeader),
+	require.Empty(t, capturedHeaders.Get(apiKeyHeaderName),
 		"platform mode should not send gateway key header")
 }
 
@@ -503,7 +619,7 @@ func TestStreamingContextCancellation(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 
 		// Send chunks slowly so context cancellation happens mid-stream.
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			chunk := fmt.Sprintf(
 				`{"id":"chatcmpl-gw","object":"chat.completion.chunk","created":1700000000,"model":"test-model","choices":[{"index":0,"delta":{"content":"chunk-%d"},"finish_reason":null}]}`,
 				i,
@@ -586,10 +702,10 @@ func TestConvertError(t *testing.T) {
 			wantErr:    ErrUpstreamProvider,
 		},
 		{
-			name:       "504 returns GatewayTimeoutError",
+			name:       "504 returns TimeoutError",
 			statusCode: http.StatusGatewayTimeout,
 			body:       `{"error": {"message": "gateway timeout", "type": "timeout", "code": "timeout"}}`,
-			wantErr:    ErrGatewayTimeout,
+			wantErr:    ErrTimeout,
 		},
 	}
 
@@ -645,7 +761,7 @@ func TestNonPlatformModeAlsoConvertsGatewayErrors(t *testing.T) {
 			name:       "504 in non-platform mode",
 			statusCode: http.StatusGatewayTimeout,
 			body:       `{"error": {"message": "gateway timeout", "type": "timeout", "code": "timeout"}}`,
-			wantErr:    ErrGatewayTimeout,
+			wantErr:    ErrTimeout,
 		},
 	}
 

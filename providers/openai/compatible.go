@@ -78,6 +78,12 @@ type CompatibleConfig struct {
 
 	// RequireAPIKey indicates whether an API key is required.
 	RequireAPIKey bool
+
+	// RequireBaseURL indicates whether a base URL must be resolvable from
+	// WithBaseURL, BaseURLEnvVar, or DefaultBaseURL. When true, NewCompatible
+	// returns an error if none of those yield a value. Used by providers that
+	// have no sensible default endpoint (e.g. gateway).
+	RequireBaseURL bool
 }
 
 // Ensure CompatibleProvider implements the required interfaces.
@@ -110,6 +116,21 @@ func NewCompatible(compatCfg CompatibleConfig, opts ...config.Option) (*Compatib
 	baseURL, err := cfg.ResolveBaseURL(compatCfg.BaseURLEnvVar, compatCfg.DefaultBaseURL)
 	if err != nil {
 		return nil, err
+	}
+
+	if baseURL == "" && compatCfg.RequireBaseURL {
+		if compatCfg.BaseURLEnvVar == "" {
+			return nil, fmt.Errorf(
+				"%s base URL is required (set via WithBaseURL option)",
+				compatCfg.Name,
+			)
+		}
+
+		return nil, fmt.Errorf(
+			"%s base URL is required (set via WithBaseURL option or %q env var)",
+			compatCfg.Name,
+			compatCfg.BaseURLEnvVar,
+		)
 	}
 
 	apiKey := resolveAPIKey(cfg, compatCfg)

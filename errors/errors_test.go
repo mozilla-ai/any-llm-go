@@ -230,7 +230,6 @@ func TestErrorCodes(t *testing.T) {
 		err := NewInsufficientFundsError("gateway", nil)
 		require.Equal(t, CodeInsufficientFunds, err.Code)
 	})
-
 }
 
 func TestErrorAs(t *testing.T) {
@@ -279,5 +278,4 @@ func TestErrorAs(t *testing.T) {
 		require.True(t, stderrors.As(err, &fundsErr))
 		require.Equal(t, "gateway", fundsErr.Provider)
 	})
-
 }

@@ -107,6 +107,88 @@ func TestNewCompatible(t *testing.T) {
 	})
 }
 
+func TestNewCompatibleRequireBaseURL(t *testing.T) {
+	// Note: Not using t.Parallel() because subtests use t.Setenv.
+
+	const (
+		envVar       = "TEST_COMPATIBLE_REQUIRE_BASEURL"
+		providerName = "test-provider"
+	)
+
+	tests := []struct {
+		name           string
+		baseURLEnvVar  string
+		defaultBaseURL string
+		envValue       string
+		withBaseURL    string
+		requireBaseURL bool
+		wantErr        string // empty means no error expected.
+	}{
+		{
+			name:           "errors when required and no env var configured",
+			requireBaseURL: true,
+			wantErr:        providerName + " base URL is required (set via WithBaseURL option)",
+		},
+		{
+			name:           "errors when required and env var name set but unset",
+			baseURLEnvVar:  envVar,
+			requireBaseURL: true,
+			wantErr: providerName + ` base URL is required (set via WithBaseURL option or "` +
+				envVar + `" env var)`,
+		},
+		{
+			name:           "succeeds when required and WithBaseURL is provided",
+			requireBaseURL: true,
+			withBaseURL:    "http://custom:9090/v1",
+		},
+		{
+			name:           "succeeds when required and env var resolves",
+			baseURLEnvVar:  envVar,
+			envValue:       "http://env:8080/v1",
+			requireBaseURL: true,
+		},
+		{
+			name:           "succeeds when required and DefaultBaseURL is set",
+			defaultBaseURL: "http://default:8080/v1",
+			requireBaseURL: true,
+		},
+		{
+			name:           "does not error when not required and no URL resolves",
+			requireBaseURL: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envVar, tc.envValue)
+
+			baseCfg := CompatibleConfig{
+				Name:           providerName,
+				BaseURLEnvVar:  tc.baseURLEnvVar,
+				DefaultAPIKey:  "test-key",
+				DefaultBaseURL: tc.defaultBaseURL,
+				RequireBaseURL: tc.requireBaseURL,
+			}
+
+			var opts []config.Option
+			if tc.withBaseURL != "" {
+				opts = append(opts, config.WithBaseURL(tc.withBaseURL))
+			}
+
+			provider, err := NewCompatible(baseCfg, opts...)
+
+			if tc.wantErr != "" {
+				require.EqualError(t, err, tc.wantErr)
+				require.Nil(t, provider)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, provider)
+		})
+	}
+}
+
 func TestCompatibleProviderCapabilities(t *testing.T) {
 	t.Parallel()
 

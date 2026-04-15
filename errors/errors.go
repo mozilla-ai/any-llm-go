@@ -156,6 +156,17 @@ func NewAuthenticationError(provider string, err error) *AuthenticationError {
 	}
 }
 
+// NewBaseError creates a BaseError with the given fields. This allows provider
+// packages to define their own error types that embed BaseError with a sentinel.
+func NewBaseError(code, provider string, err, sentinel error) BaseError {
+	return BaseError{
+		Code:     code,
+		Provider: provider,
+		Err:      err,
+		sentinel: sentinel,
+	}
+}
+
 // NewInvalidRequestError creates a new InvalidRequestError.
 func NewInvalidRequestError(provider string, err error) *InvalidRequestError {
 	return &InvalidRequestError{
@@ -254,17 +265,6 @@ func NewUnsupportedParamError(provider string, param string) *UnsupportedParamEr
 			sentinel: ErrUnsupportedParam,
 		},
 		Param: param,
-	}
-}
-
-// NewBaseError creates a BaseError with the given fields. This allows provider
-// packages to define their own error types that embed BaseError with a sentinel.
-func NewBaseError(code, provider string, err, sentinel error) BaseError {
-	return BaseError{
-		Code:     code,
-		Provider: provider,
-		Err:      err,
-		sentinel: sentinel,
 	}
 }
 
