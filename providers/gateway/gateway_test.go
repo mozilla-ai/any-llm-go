@@ -319,14 +319,16 @@ func TestExtraValueHandling(t *testing.T) {
 			// Passing a string instead of bool must not flip into platform mode.
 			// Combining with a gateway key proves the non-platform path was
 			// taken: an honoured platform_mode would suppress the gateway
-			// header.
+			// header. WithAPIKey is also passed to verify it does NOT leak
+			// into Authorization in non-platform mode — the placeholder is
+			// used instead.
 			name:              "string platform_mode is silently ignored",
 			extraKey:          extraKeyPlatformMode,
 			extraValue:        "true",
 			apiKey:            "platform_token",
 			gatewayKey:        "gw_key",
 			wantAPIKeyHeader:  bearerPrefix + "gw_key",
-			wantAuthorization: bearerPrefix + "platform_token",
+			wantAuthorization: bearerPrefix + placeholderAPIKey,
 		},
 	}
 
@@ -336,9 +338,14 @@ func TestExtraValueHandling(t *testing.T) {
 			t.Setenv(envAPIKey, tc.envAPIKey)
 			t.Setenv(envPlatformToken, "")
 
-			var capturedHeaders http.Header
+			var (
+				mu              sync.Mutex
+				capturedHeaders http.Header
+			)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
 				capturedHeaders = r.Header.Clone()
+				mu.Unlock()
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(mockCompletionResponse("ok")))
 			}))
@@ -360,6 +367,9 @@ func TestExtraValueHandling(t *testing.T) {
 
 			_, err = provider.Completion(context.Background(), mockCompletionParams())
 			require.NoError(t, err)
+
+			mu.Lock()
+			defer mu.Unlock()
 
 			require.Equal(t, tc.wantAPIKeyHeader, capturedHeaders.Get(apiKeyHeaderName))
 			require.Equal(t, tc.wantAuthorization, capturedHeaders.Get("Authorization"))

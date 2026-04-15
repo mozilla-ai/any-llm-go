@@ -38,8 +38,9 @@ const (
 	bearerPrefix = "Bearer "
 
 	// placeholderAPIKey satisfies the OpenAI SDK's requirement that an API key
-	// be set. In non-platform mode real auth is carried by the gateway header,
-	// so this value is never sent as a credential.
+	// be set. The SDK still sends it in the Authorization header, but in
+	// non-platform mode real auth is carried by the gateway header, so this
+	// is a non-secret placeholder that the gateway ignores.
 	placeholderAPIKey = "gateway-no-key"
 
 	// envAPIBase is the environment variable read for the gateway base URL
@@ -198,9 +199,15 @@ func New(opts ...config.Option) (*Provider, error) {
 	compatOpts := slices.Clone(opts)
 	if platformMode {
 		compatOpts = append(compatOpts, config.WithAPIKey(platformToken))
-	} else if gatewayKey != "" {
-		client := newHeaderClient(cfg.HTTPClient(), bearerPrefix+gatewayKey)
-		compatOpts = append(compatOpts, config.WithHTTPClient(client))
+	} else {
+		// Non-platform mode: override any user-supplied API key with the
+		// placeholder so secrets can't leak via the Authorization header.
+		// Real auth, if any, is carried by the gateway header below.
+		compatOpts = append(compatOpts, config.WithAPIKey(placeholderAPIKey))
+		if gatewayKey != "" {
+			client := newHeaderClient(cfg.HTTPClient(), bearerPrefix+gatewayKey)
+			compatOpts = append(compatOpts, config.WithHTTPClient(client))
+		}
 	}
 
 	base, err := openaiProvider.NewCompatible(openaiProvider.CompatibleConfig{
