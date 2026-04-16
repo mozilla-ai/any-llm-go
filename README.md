@@ -82,7 +82,7 @@ import (
 )
 ```
 
-See our [list of supported providers](https://mozilla-ai.github.io/any-llm/providers/) to choose which ones you need.
+See our [list of supported providers](docs/providers.md) to choose which ones you need.
 
 ### Setting Up API Keys
 
@@ -278,6 +278,15 @@ if err != nil {
     default:
         // Handle other errors.
     }
+}
+```
+
+You can also use type assertions for more details:
+
+```go
+var rateLimitErr *anyllm.RateLimitError
+if errors.As(err, &rateLimitErr) {
+    fmt.Printf("Rate limited by %s: %s\n", rateLimitErr.Provider, rateLimitErr.Message)
 }
 ```
 
