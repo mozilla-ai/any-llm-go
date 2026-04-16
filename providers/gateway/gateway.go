@@ -646,38 +646,6 @@ func (p *Provider) doRequest(
 	return resp, nil
 }
 
-// handleHTTPError handles HTTP error responses for non-batch endpoints
-// (e.g. completions). It does not include batch-specific error mappings
-// such as 409 → BatchNotCompleteError or 404 → "upgrade your gateway".
-func (p *Provider) handleHTTPError(resp *http.Response, _ string) error {
-	bodyBytes, _ := io.ReadAll(resp.Body)
-
-	var detail struct {
-		Detail string `json:"detail"`
-	}
-	_ = json.Unmarshal(bodyBytes, &detail)
-
-	msg := detail.Detail
-	if msg == "" {
-		msg = string(bodyBytes)
-	}
-
-	switch resp.StatusCode {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return errors.NewAuthenticationError(providerName, fmt.Errorf("%s", msg))
-	case http.StatusNotFound:
-		return errors.NewModelNotFoundError(providerName, fmt.Errorf("%s", msg))
-	case http.StatusUnprocessableEntity:
-		return errors.NewProviderError(providerName, fmt.Errorf("%s", msg))
-	case http.StatusTooManyRequests:
-		return errors.NewRateLimitError(providerName, fmt.Errorf("%s", msg))
-	case http.StatusBadGateway:
-		return errors.NewProviderError(providerName, fmt.Errorf("upstream provider error: %s", msg))
-	default:
-		return errors.NewProviderError(providerName, fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg))
-	}
-}
-
 // handleBatchError handles HTTP error responses and maps them to typed errors.
 func (p *Provider) handleBatchError(resp *http.Response, path string) error {
 	bodyBytes, _ := io.ReadAll(resp.Body)
