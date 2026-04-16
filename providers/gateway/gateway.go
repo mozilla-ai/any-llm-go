@@ -9,7 +9,7 @@
 // The gateway supports two authentication modes:
 //   - Platform mode: uses a platform token as standard Bearer auth
 //   - Non-platform mode: sends a gateway API key via a custom authentication
-//     header (X-AnyLLM-Key)
+//     header (AnyLLM-Key)
 package gateway
 
 import (
@@ -31,7 +31,7 @@ import (
 const (
 	// apiKeyHeaderName is the HTTP header that carries the gateway API key in
 	// non-platform mode.
-	apiKeyHeaderName = "X-AnyLLM-Key"
+	apiKeyHeaderName = "AnyLLM-Key"
 
 	// bearerPrefix is the Authorization scheme prefix applied to the gateway
 	// key before it is placed in the gateway header (e.g. "Bearer <key>").
@@ -250,7 +250,7 @@ func capabilities() providers.Capabilities {
 
 // WithGatewayKey sets the gateway API key for non-platform mode authentication.
 // The key is sent as a Bearer-formatted value in the gateway authentication
-// header (X-AnyLLM-Key).
+// header (AnyLLM-Key).
 func WithGatewayKey(key string) config.Option {
 	return config.WithExtra(extraKeyGatewayKey, key)
 }

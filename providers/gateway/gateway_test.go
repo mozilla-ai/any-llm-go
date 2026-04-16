@@ -275,7 +275,7 @@ func TestExtraValueHandling(t *testing.T) {
 		envAPIKey         string
 		apiKey            string
 		gatewayKey        string
-		wantAPIKeyHeader  string // expected X-AnyLLM-Key value; empty means the header must not be sent.
+		wantAPIKeyHeader  string // expected AnyLLM-Key value; empty means the header must not be sent.
 		wantAuthorization string // expected Authorization value.
 	}{
 		{
