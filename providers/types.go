@@ -354,14 +354,14 @@ type Batch struct {
 type BatchStatus string
 
 const (
-	BatchStatusValidating BatchStatus = "validating"
-	BatchStatusFailed     BatchStatus = "failed"
-	BatchStatusInProgress BatchStatus = "in_progress"
-	BatchStatusFinalizing BatchStatus = "finalizing"
+	BatchStatusCancelled  BatchStatus = "cancelled"
+	BatchStatusCancelling BatchStatus = "cancelling"
 	BatchStatusCompleted  BatchStatus = "completed"
 	BatchStatusExpired    BatchStatus = "expired"
-	BatchStatusCancelling BatchStatus = "cancelling"
-	BatchStatusCancelled  BatchStatus = "cancelled"
+	BatchStatusFailed     BatchStatus = "failed"
+	BatchStatusFinalizing BatchStatus = "finalizing"
+	BatchStatusInProgress BatchStatus = "in_progress"
+	BatchStatusValidating BatchStatus = "validating"
 )
 
 // BatchRequestCounts tracks request counts for a batch job.
