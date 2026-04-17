@@ -1554,12 +1554,30 @@ func TestRerankError(t *testing.T) {
 			},
 		},
 		{
+			name:       "402 → InsufficientFundsError",
+			statusCode: http.StatusPaymentRequired,
+			body:       `{"detail": "Payment required"}`,
+			checkErr: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, errors.ErrInsufficientFunds)
+			},
+		},
+		{
 			name:       "500 → ProviderError",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"detail": "Internal server error"}`,
 			checkErr: func(t *testing.T, err error) {
 				t.Helper()
 				require.ErrorIs(t, err, errors.ErrProvider)
+			},
+		},
+		{
+			name:       "502 → UpstreamProviderError",
+			statusCode: http.StatusBadGateway,
+			body:       `{"detail": "Bad gateway"}`,
+			checkErr: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, ErrUpstreamProvider)
 			},
 		},
 		{
