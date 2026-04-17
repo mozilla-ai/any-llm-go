@@ -129,6 +129,7 @@ var (
 	_ providers.EmbeddingProvider  = (*Provider)(nil)
 	_ providers.ErrorConverter     = (*Provider)(nil)
 	_ providers.ModelLister        = (*Provider)(nil)
+	_ providers.ModerationProvider = (*Provider)(nil)
 	_ providers.Provider           = (*Provider)(nil)
 	_ providers.RerankProvider     = (*Provider)(nil)
 )
@@ -188,14 +189,19 @@ type Provider struct {
 	// OpenAI SDK.
 	apiKey string
 
-	// baseURL is the resolved gateway base URL without a trailing /v1 suffix.
-	// Used by Rerank to construct the /v1/rerank endpoint URL.
+	// baseURL is the resolved gateway base URL used to address endpoints
+	// handled directly by this package (e.g. /v1/moderations, /v1/rerank).
 	baseURL string
 
-	// httpClient is the HTTP client used for raw HTTP calls (e.g. rerank,
-	// batch API) that bypass the OpenAI SDK. In non-platform mode this is
-	// the header-injecting client so gateway auth is preserved.
+	// httpClient is the HTTP client used for endpoints the embedded
+	// openai-go SDK does not expose (e.g. /v1/moderations, rerank, batch).
+	// In non-platform mode this is the header-injecting client so gateway
+	// auth is preserved.
 	httpClient *http.Client
+
+	// platformToken is the Bearer token to set on requests we issue
+	// directly in platform mode; empty in non-platform mode.
+	platformToken string
 
 	// platformMode indicates whether the provider is operating in platform
 	// mode (using platform token for Bearer auth) or non-platform mode
@@ -297,6 +303,9 @@ func New(opts ...config.Option) (*Provider, error) {
 	// so NewCompatible sees the already-resolved, trimmed URL and does not
 	// re-run ResolveBaseURL.
 	compatOpts := slices.Clone(opts)
+	// httpClient is the client the embedded openai-go SDK and our direct
+	// HTTP calls will both use. Defaults to cfg.HTTPClient(); non-platform
+	// mode wraps it to inject the gateway auth header.
 	httpClient := cfg.HTTPClient()
 	if platformMode {
 		compatOpts = append(compatOpts, config.WithAPIKey(platformToken))
@@ -309,7 +318,7 @@ func New(opts ...config.Option) (*Provider, error) {
 		// Real auth, if any, is carried by the gateway header below.
 		compatOpts = append(compatOpts, config.WithAPIKey(placeholderAPIKey))
 		if gatewayKey != "" {
-			httpClient = newHeaderClient(cfg.HTTPClient(), bearerPrefix+gatewayKey)
+			httpClient = newHeaderClient(httpClient, bearerPrefix+gatewayKey)
 			compatOpts = append(compatOpts, config.WithHTTPClient(httpClient))
 		}
 	}
@@ -349,6 +358,7 @@ func New(opts ...config.Option) (*Provider, error) {
 		baseURL:            rawBaseURL,
 		httpClient:         httpClient,
 		platformMode:       platformMode,
+		platformToken:      platformToken,
 	}, nil
 }
 
@@ -367,6 +377,7 @@ func capabilities() providers.Capabilities {
 		CompletionTools:     true,
 		Embedding:           true,
 		ListModels:          true,
+		Moderation:          true,
 		Rerank:              true,
 	}
 }
@@ -480,6 +491,117 @@ func (p *Provider) Embedding(
 	}
 
 	return resp, nil
+}
+
+// Moderation runs a content moderation check via POST /v1/moderations.
+//
+// The openai-go SDK exposes a moderations resource, but we issue the HTTP
+// call directly here to control the include_raw query parameter and the
+// gateway-specific error shape (notably the "does not support moderation"
+// 400 that maps to *errors.UnsupportedError).
+//
+// Returns an *errors.UnsupportedError (matching errors.ErrUnsupported) when
+// the gateway reports that the chosen backend provider does not support
+// moderation.
+func (p *Provider) Moderation(
+	ctx context.Context,
+	params providers.ModerationParams,
+) (*providers.ModerationResponse, error) {
+	endpoint := p.baseURL + "/v1/moderations"
+	if params.IncludeRaw {
+		endpoint += "?include_raw=true"
+	}
+
+	body, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("gateway: marshal moderation params: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("gateway: build moderation request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if p.platformMode && p.platformToken != "" {
+		// Platform mode: replicate the Bearer auth that the embedded
+		// openai-go SDK adds for its own requests. Non-platform mode
+		// relies on headerTransport, which is wired into p.httpClient.
+		req.Header.Set("Authorization", bearerPrefix+p.platformToken)
+	}
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, p.ConvertError(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("gateway: read moderation response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, p.convertHTTPModerationError(resp.StatusCode, bodyBytes)
+	}
+
+	var out providers.ModerationResponse
+	if err := json.Unmarshal(bodyBytes, &out); err != nil {
+		return nil, fmt.Errorf("gateway: unmarshal moderation response: %w", err)
+	}
+	return &out, nil
+}
+
+// convertHTTPModerationError maps a non-200 response from /v1/moderations to
+// a typed error. 400 bodies containing "does not support moderation" are
+// converted to *errors.UnsupportedError; other statuses go through the
+// existing ConvertError path.
+func (p *Provider) convertHTTPModerationError(statusCode int, body []byte) error {
+	detail := extractDetail(body)
+
+	if statusCode == http.StatusBadRequest && strings.Contains(detail, "does not support moderation") {
+		providerID := parseUnsupportedProvider(detail)
+		operation := "moderation"
+		if strings.Contains(detail, "multimodal") {
+			operation = "multimodal_moderation"
+		}
+		return errors.NewUnsupportedError(providerID, operation, stderrors.New(detail))
+	}
+
+	// Delegate to the existing gateway ConvertError for other statuses by
+	// synthesizing an openai.Error that ConvertError understands.
+	return p.ConvertError(&openai.Error{
+		StatusCode: statusCode,
+		// Message is exposed through openai.Error.Error(); keeping the
+		// server-provided detail makes the wrapped error readable.
+	})
+}
+
+// extractDetail reads the "detail" field from a JSON-encoded error body and
+// falls back to the raw body if the payload is not in that shape.
+func extractDetail(body []byte) string {
+	var wrapper struct {
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err == nil && wrapper.Detail != "" {
+		return wrapper.Detail
+	}
+	return string(body)
+}
+
+// parseUnsupportedProvider extracts the provider name from the locked error
+// phrasing "Provider <name> does not support ..." and returns "unknown" on
+// any parse failure.
+func parseUnsupportedProvider(detail string) string {
+	const prefix = "Provider "
+	rest, ok := strings.CutPrefix(detail, prefix)
+	if !ok {
+		return "unknown"
+	}
+	end := strings.Index(rest, " does not")
+	if end <= 0 {
+		return "unknown"
+	}
+	return rest[:end]
 }
 
 // ListModels returns a list of available models from the gateway.

@@ -215,6 +215,7 @@ func TestCapabilities(t *testing.T) {
 	require.True(t, caps.CompletionTools)
 	require.True(t, caps.Embedding)
 	require.True(t, caps.ListModels)
+	require.True(t, caps.Moderation)
 	require.True(t, caps.Rerank)
 }
 
