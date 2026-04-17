@@ -261,6 +261,44 @@ for _, model := range models.Data {
 }
 ```
 
+### Moderation
+
+The gateway provider supports OpenAI-compatible content moderation. Use
+`errors.As` with `*anyllm.UnsupportedError` (or `errors.Is` with
+`anyllm.ErrUnsupported`) to detect providers that do not support moderation.
+
+```go
+import (
+    stderrors "errors"
+
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/config"
+    "github.com/mozilla-ai/any-llm-go/providers/gateway"
+)
+
+provider, err := gateway.New(config.WithBaseURL("https://gw.example.com"))
+if err != nil {
+    log.Fatal(err)
+}
+
+resp, err := provider.Moderation(ctx, anyllm.ModerationParams{
+    Model: "openai:omni-moderation-latest",
+    Input: "I want to hurt someone",
+})
+if err != nil {
+    var unsup *anyllm.UnsupportedError
+    if stderrors.As(err, &unsup) {
+        // Provider does not support moderation; pick another model.
+        log.Printf("%s cannot do %s", unsup.Provider, unsup.Operation)
+        return
+    }
+    log.Fatal(err)
+}
+if resp.Results[0].Flagged {
+    // Handle flagged content.
+}
+```
+
 ### Error Handling
 
 All provider errors are normalized to common error types:
