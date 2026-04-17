@@ -259,19 +259,28 @@ func New(opts ...config.Option) (*Provider, error) {
 		)
 	}
 
-	// Resolve apiBase for batch API calls.
+	// Resolve apiBase once here and pass the resolved value through to
+	// NewCompatible via WithBaseURL. Resolving in a single place avoids
+	// the possibility of the batch HTTP client and the OpenAI SDK client
+	// disagreeing (e.g. if config state changed between resolutions) and
+	// lets us surface resolution errors directly instead of relying on
+	// NewCompatible's RequireBaseURL check.
 	apiBase, err := cfg.ResolveBaseURL(envAPIBase, "")
-	if err != nil || apiBase == "" {
-		// Will be caught by NewCompatible's RequireBaseURL, but resolve
-		// for our own use.
-		apiBase = ""
+	if err != nil {
+		return nil, err
+	}
+	if apiBase == "" {
+		return nil, fmt.Errorf(
+			"gateway base URL is required (set via WithBaseURL option or %s env var)",
+			envAPIBase,
+		)
 	}
 	apiBase = strings.TrimRight(apiBase, "/")
 
 	// Pass the user's opts straight through and layer auth-specific opts on
-	// top (order matters: later options win). Base URL resolution and the
-	// required-URL check are delegated to NewCompatible via BaseURLEnvVar
-	// and RequireBaseURL.
+	// top (order matters: later options win). WithBaseURL is appended last
+	// so NewCompatible sees the already-resolved, trimmed URL and does not
+	// re-run ResolveBaseURL.
 	compatOpts := slices.Clone(opts)
 	if platformMode {
 		compatOpts = append(compatOpts, config.WithAPIKey(platformToken))
@@ -285,16 +294,17 @@ func New(opts ...config.Option) (*Provider, error) {
 			compatOpts = append(compatOpts, config.WithHTTPClient(client))
 		}
 	}
+	compatOpts = append(compatOpts, config.WithBaseURL(apiBase))
 
 	base, err := openaiProvider.NewCompatible(openaiProvider.CompatibleConfig{
-		APIKeyEnvVar:   "",         // Gateway uses its own key resolution.
-		BaseURLEnvVar:  envAPIBase, // Env var for base URL resolution.
+		APIKeyEnvVar:   "", // Gateway uses its own key resolution.
+		BaseURLEnvVar:  "", // Base URL is already resolved above.
 		Capabilities:   capabilities(),
 		DefaultAPIKey:  placeholderAPIKey, // Placeholder; non-platform doesn't need real auth.
 		DefaultBaseURL: "",                // No default; base URL is required.
 		Name:           providerName,
 		RequireAPIKey:  false, // Gateway handles auth separately.
-		RequireBaseURL: true,  // Gateway has no sensible default endpoint.
+		RequireBaseURL: true,  // Guarded above; defensive double-check.
 	}, compatOpts...)
 	if err != nil {
 		return nil, err
