@@ -522,7 +522,7 @@ func (p *Provider) Rerank(ctx context.Context, params providers.RerankParams) (*
 	if err != nil {
 		return nil, p.ConvertError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, p.handleRerankErrorResponse(resp)
