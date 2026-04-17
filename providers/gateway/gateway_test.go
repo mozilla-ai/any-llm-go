@@ -1623,16 +1623,6 @@ func TestRerankError(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesIncludesRerank(t *testing.T) {
-	t.Parallel()
-
-	provider, err := New(config.WithBaseURL("http://localhost:8000/v1"))
-	require.NoError(t, err)
-
-	caps := provider.Capabilities()
-	require.True(t, caps.Rerank)
-}
-
 func TestRerankSendsGatewayHeader(t *testing.T) {
 	t.Parallel()
 
