@@ -19,7 +19,6 @@ import (
 	stderrors "errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -634,12 +633,12 @@ func (p *Provider) callBatchJSON(
 	return nil
 }
 
-// closeBody closes an HTTP response body and logs any close error; intended
-// for use in defer statements.
+// closeBody closes an HTTP response body; intended for use in defer
+// statements. The close error is deliberately discarded because this SDK
+// does not expose a logger through config, and callers have already
+// consumed the body by the time this runs.
 func closeBody(resp *http.Response) {
-	if err := resp.Body.Close(); err != nil {
-		log.Printf("gateway: failed to close response body: %v", err)
-	}
+	_ = resp.Body.Close()
 }
 
 // doRequest sends an HTTP request to the gateway API for batch operations.
