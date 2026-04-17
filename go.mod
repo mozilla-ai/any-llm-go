@@ -3,7 +3,7 @@ module github.com/mozilla-ai/any-llm-go
 go 1.25
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.36.0
+	github.com/anthropics/anthropic-sdk-go v1.37.0
 	github.com/google/uuid v1.6.0
 	github.com/mozilla-ai/any-llm-platform-client-go v0.0.1
 	github.com/ollama/ollama v0.20.7
