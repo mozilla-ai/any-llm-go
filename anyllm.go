@@ -68,6 +68,7 @@ type (
 	EmbeddingProvider  = providers.EmbeddingProvider
 	ModelLister        = providers.ModelLister
 	Provider           = providers.Provider
+	RerankProvider     = providers.RerankProvider
 )
 
 // Batch types.
@@ -118,6 +119,15 @@ type (
 	JSONSchema     = providers.JSONSchema
 	ResponseFormat = providers.ResponseFormat
 	StreamOptions  = providers.StreamOptions
+)
+
+// Rerank types.
+type (
+	RerankMeta     = providers.RerankMeta
+	RerankParams   = providers.RerankParams
+	RerankResponse = providers.RerankResponse
+	RerankResult   = providers.RerankResult
+	RerankUsage    = providers.RerankUsage
 )
 
 // Usage and model types.
