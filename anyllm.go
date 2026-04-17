@@ -67,6 +67,7 @@ type (
 	CapabilityProvider = providers.CapabilityProvider
 	EmbeddingProvider  = providers.EmbeddingProvider
 	ModelLister        = providers.ModelLister
+	ModerationProvider = providers.ModerationProvider
 	Provider           = providers.Provider
 	RerankProvider     = providers.RerankProvider
 )
@@ -94,6 +95,9 @@ type (
 	EmbeddingParams     = providers.EmbeddingParams
 	EmbeddingResponse   = providers.EmbeddingResponse
 	ModelsResponse      = providers.ModelsResponse
+	ModerationParams    = providers.ModerationParams
+	ModerationResponse  = providers.ModerationResponse
+	ModerationResult    = providers.ModerationResult
 )
 
 // Message types.
@@ -167,6 +171,7 @@ var (
 	ErrModelNotFound       = errors.ErrModelNotFound
 	ErrProvider            = errors.ErrProvider
 	ErrRateLimit           = errors.ErrRateLimit
+	ErrUnsupported         = errors.ErrUnsupported
 	ErrUnsupportedParam    = errors.ErrUnsupportedParam
 	ErrUnsupportedProvider = errors.ErrUnsupportedProvider
 )
@@ -183,6 +188,7 @@ type (
 	ModelNotFoundError       = errors.ModelNotFoundError
 	ProviderError            = errors.ProviderError
 	RateLimitError           = errors.RateLimitError
+	UnsupportedError         = errors.UnsupportedError
 	UnsupportedParamError    = errors.UnsupportedParamError
 	UnsupportedProviderError = errors.UnsupportedProviderError
 )
