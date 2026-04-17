@@ -496,6 +496,16 @@ func (p *Provider) ListModels(ctx context.Context) (*providers.ModelsResponse, e
 // Rerank reranks documents by relevance to a query via the gateway's /v1/rerank endpoint.
 // The response contains results sorted by relevance_score in descending order.
 func (p *Provider) Rerank(ctx context.Context, params providers.RerankParams) (*providers.RerankResponse, error) {
+	if params.Model == "" {
+		return nil, errors.NewInvalidRequestError(providerName, fmt.Errorf("model is required"))
+	}
+	if params.Query == "" {
+		return nil, errors.NewInvalidRequestError(providerName, fmt.Errorf("query is required"))
+	}
+	if len(params.Documents) == 0 {
+		return nil, errors.NewInvalidRequestError(providerName, fmt.Errorf("at least one document is required"))
+	}
+
 	body, err := json.Marshal(params)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling rerank request: %w", err)

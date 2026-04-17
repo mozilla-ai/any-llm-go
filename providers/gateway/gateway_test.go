@@ -1657,6 +1657,51 @@ func TestRerankSendsGatewayHeader(t *testing.T) {
 	require.Equal(t, bearerPrefix+"gw_rerank_key", capturedHeaders.Get(apiKeyHeaderName))
 }
 
+func TestRerankValidation(t *testing.T) {
+	t.Parallel()
+
+	provider, err := New(config.WithBaseURL("http://localhost:9999/v1"))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	t.Run("empty model returns error", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := provider.Rerank(ctx, providers.RerankParams{
+			Query:     "test",
+			Documents: []string{"doc1"},
+		})
+		require.Error(t, err)
+		require.ErrorIs(t, err, errors.ErrInvalidRequest)
+		require.Contains(t, err.Error(), "model is required")
+	})
+
+	t.Run("empty query returns error", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := provider.Rerank(ctx, providers.RerankParams{
+			Model:     "cohere:rerank-v3.5",
+			Documents: []string{"doc1"},
+		})
+		require.Error(t, err)
+		require.ErrorIs(t, err, errors.ErrInvalidRequest)
+		require.Contains(t, err.Error(), "query is required")
+	})
+
+	t.Run("empty documents returns error", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := provider.Rerank(ctx, providers.RerankParams{
+			Model: "cohere:rerank-v3.5",
+			Query: "test",
+		})
+		require.Error(t, err)
+		require.ErrorIs(t, err, errors.ErrInvalidRequest)
+		require.Contains(t, err.Error(), "at least one document is required")
+	})
+}
+
 func TestRerankSendsPlatformBearerAuth(t *testing.T) {
 	t.Parallel()
 
