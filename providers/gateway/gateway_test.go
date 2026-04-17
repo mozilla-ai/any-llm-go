@@ -215,6 +215,7 @@ func TestCapabilities(t *testing.T) {
 	require.True(t, caps.CompletionTools)
 	require.True(t, caps.Embedding)
 	require.True(t, caps.ListModels)
+	require.True(t, caps.Rerank)
 }
 
 func TestPlatformModeDetection(t *testing.T) {
@@ -1451,6 +1452,209 @@ func TestCompletionHTTPError404IsModelNotFound(t *testing.T) {
 
 	// 404 on a completion endpoint should not contain "upgrade your gateway".
 	require.NotContains(t, err.Error(), "upgrade your gateway")
+}
+
+// --- Rerank tests ---
+
+func TestRerank(t *testing.T) {
+	t.Parallel()
+
+	responseJSON := `{
+		"id": "rerank-test-123",
+		"results": [
+			{"index": 0, "relevance_score": 0.95},
+			{"index": 2, "relevance_score": 0.80},
+			{"index": 1, "relevance_score": 0.30}
+		],
+		"meta": {
+			"billed_units": {"search_units": 1.0},
+			"tokens": {"input_tokens": 100}
+		},
+		"usage": {"total_tokens": 100}
+	}`
+
+	var capturedBody []byte
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/rerank" && r.Method == http.MethodPost {
+			mu.Lock()
+			capturedBody, _ = io.ReadAll(r.Body)
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(responseJSON))
+			return
+		}
+		// Handle OpenAI SDK model list or other calls.
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data": [], "object": "list"}`))
+	}))
+	defer server.Close()
+
+	provider, err := New(
+		config.WithBaseURL(server.URL),
+		WithGatewayKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	rerankProvider, ok := any(provider).(providers.RerankProvider)
+	require.True(t, ok, "gateway should implement RerankProvider")
+
+	topN := 2
+	resp, err := rerankProvider.Rerank(context.Background(), providers.RerankParams{
+		Model:     "cohere:rerank-v3.5",
+		Query:     "test query",
+		Documents: []string{"doc1", "doc2", "doc3"},
+		TopN:      &topN,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "rerank-test-123", resp.ID)
+	require.Len(t, resp.Results, 3)
+	require.Equal(t, 0.95, resp.Results[0].RelevanceScore)
+	require.NotNil(t, resp.Usage)
+	require.Equal(t, 100, *resp.Usage.TotalTokens)
+
+	// Verify request body.
+	mu.Lock()
+	defer mu.Unlock()
+	var sent providers.RerankParams
+	require.NoError(t, json.Unmarshal(capturedBody, &sent))
+	require.Equal(t, "cohere:rerank-v3.5", sent.Model)
+	require.Equal(t, "test query", sent.Query)
+	require.Equal(t, []string{"doc1", "doc2", "doc3"}, sent.Documents)
+	require.Equal(t, 2, *sent.TopN)
+}
+
+func TestRerankError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		checkErr   func(t *testing.T, err error)
+	}{
+		{
+			name:       "401 → AuthenticationError",
+			statusCode: http.StatusUnauthorized,
+			body:       `{"detail": "Invalid API key"}`,
+			checkErr: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, errors.ErrAuthentication)
+			},
+		},
+		{
+			name:       "429 → RateLimitError",
+			statusCode: http.StatusTooManyRequests,
+			body:       `{"detail": "Rate limit exceeded"}`,
+			checkErr: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, errors.ErrRateLimit)
+			},
+		},
+		{
+			name:       "500 → ProviderError",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"detail": "Internal server error"}`,
+			checkErr: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, errors.ErrProvider)
+			},
+		},
+		{
+			name:       "504 → TimeoutError",
+			statusCode: http.StatusGatewayTimeout,
+			body:       `{"detail": "Gateway timeout"}`,
+			checkErr: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, ErrTimeout)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/rerank" {
+					w.WriteHeader(tc.statusCode)
+					_, _ = w.Write([]byte(tc.body))
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"data": [], "object": "list"}`))
+			}))
+			defer server.Close()
+
+			provider, err := New(
+				config.WithBaseURL(server.URL),
+				WithGatewayKey("test-key"),
+			)
+			require.NoError(t, err)
+
+			_, err = provider.Rerank(context.Background(), providers.RerankParams{
+				Model:     "cohere:rerank-v3.5",
+				Query:     "test",
+				Documents: []string{"doc1"},
+			})
+			require.Error(t, err)
+			tc.checkErr(t, err)
+		})
+	}
+}
+
+func TestCapabilitiesIncludesRerank(t *testing.T) {
+	t.Parallel()
+
+	provider, err := New(config.WithBaseURL("http://localhost:8000/v1"))
+	require.NoError(t, err)
+
+	caps := provider.Capabilities()
+	require.True(t, caps.Rerank)
+}
+
+func TestRerankSendsGatewayHeader(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu              sync.Mutex
+		capturedHeaders http.Header
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/rerank" {
+			mu.Lock()
+			capturedHeaders = r.Header.Clone()
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"r-1","results":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data": [], "object": "list"}`))
+	}))
+	defer server.Close()
+
+	provider, err := New(
+		config.WithBaseURL(server.URL),
+		WithGatewayKey("gw_rerank_key"),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.Rerank(context.Background(), providers.RerankParams{
+		Model:     "cohere:rerank-v3.5",
+		Query:     "test",
+		Documents: []string{"doc1"},
+	})
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Non-platform mode: gateway key sent via custom header.
+	require.Equal(t, bearerPrefix+"gw_rerank_key", capturedHeaders.Get(apiKeyHeaderName))
 }
 
 // --- Integration tests ---
