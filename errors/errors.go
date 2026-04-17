@@ -18,7 +18,6 @@ const (
 	CodeUnsupportedProvider = "unsupported_provider"
 	CodeUnsupportedParam    = "unsupported_parameter"
 	CodeInsufficientFunds   = "insufficient_funds"
-	CodeBatchNotComplete    = "batch_not_complete"
 )
 
 // Sentinel errors for type checking with errors.Is().
@@ -34,7 +33,6 @@ var (
 	ErrUnsupportedProvider = stderrors.New("unsupported provider")
 	ErrUnsupportedParam    = stderrors.New("unsupported parameter")
 	ErrInsufficientFunds   = stderrors.New("insufficient funds")
-	ErrBatchNotComplete    = stderrors.New("batch not yet complete")
 )
 
 // BaseError is the base error type for all any-llm errors.
@@ -295,24 +293,4 @@ func NewInsufficientFundsError(provider string, err error) *InsufficientFundsErr
 	}
 }
 
-// BatchNotCompleteError is returned when retrieve_batch_results is called
-// on a batch that is not yet complete.
-type BatchNotCompleteError struct {
-	BaseError
-	BatchID string
-	Status  string
-}
 
-// NewBatchNotCompleteError creates a new BatchNotCompleteError.
-func NewBatchNotCompleteError(provider string, batchID string, status string) *BatchNotCompleteError {
-	return &BatchNotCompleteError{
-		BaseError: BaseError{
-			Code:     CodeBatchNotComplete,
-			Provider: provider,
-			Err:      fmt.Errorf("batch '%s' is not yet complete (status: %s)", batchID, status),
-			sentinel: ErrBatchNotComplete,
-		},
-		BatchID: batchID,
-		Status:  status,
-	}
-}

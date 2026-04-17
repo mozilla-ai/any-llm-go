@@ -1245,11 +1245,11 @@ func TestBatchError409(t *testing.T) {
 	require.Error(t, err)
 
 	// Check sentinel error.
-	require.True(t, stderrors.Is(err, errors.ErrBatchNotComplete),
+	require.True(t, stderrors.Is(err, ErrBatchNotComplete),
 		"expected error to match ErrBatchNotComplete, got %v", err)
 
 	// Check typed error with fields.
-	var batchErr *errors.BatchNotCompleteError
+	var batchErr *BatchNotCompleteError
 	require.True(t, stderrors.As(err, &batchErr))
 	require.Equal(t, "batch_xyz", batchErr.BatchID)
 	require.Equal(t, "in_progress", batchErr.Status)
@@ -1435,7 +1435,7 @@ func TestCompletionHTTPError409IsNotBatchError(t *testing.T) {
 	require.Error(t, err)
 
 	// 409 on a completion endpoint should NOT produce a BatchNotCompleteError.
-	require.False(t, stderrors.Is(err, errors.ErrBatchNotComplete),
+	require.False(t, stderrors.Is(err, ErrBatchNotComplete),
 		"completion 409 should not map to ErrBatchNotComplete, got %v", err)
 }
 
@@ -1654,6 +1654,6 @@ func TestIntegrationBatchNotComplete(t *testing.T) {
 	// Immediately requesting results should fail since the batch is not yet complete.
 	_, err = provider.RetrieveBatchResults(ctx, batch.ID, batch.Provider)
 	require.Error(t, err)
-	require.True(t, stderrors.Is(err, errors.ErrBatchNotComplete),
+	require.True(t, stderrors.Is(err, ErrBatchNotComplete),
 		"expected ErrBatchNotComplete, got %v", err)
 }

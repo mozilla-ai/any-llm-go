@@ -87,6 +87,10 @@ const (
 
 // Gateway-specific error codes.
 const (
+	// errCodeBatchNotComplete is the BaseError.Code set when a batch result
+	// is requested before the batch has finished processing (HTTP 409).
+	errCodeBatchNotComplete = "batch_not_complete"
+
 	// errCodeTimeout is the BaseError.Code set on gateway timeout errors
 	// (HTTP 504).
 	errCodeTimeout = "gateway_timeout"
@@ -108,6 +112,10 @@ const (
 
 // Gateway-specific sentinel errors for type checking with errors.Is().
 var (
+	// ErrBatchNotComplete is matched by errors.Is when retrieving batch
+	// results on a batch that has not yet finished processing (HTTP 409).
+	ErrBatchNotComplete = stderrors.New("batch not yet complete")
+
 	// ErrTimeout is matched by errors.Is on gateway timeout errors (HTTP 504).
 	ErrTimeout = stderrors.New("gateway timeout")
 
@@ -126,6 +134,14 @@ var (
 	_ providers.Provider           = (*Provider)(nil)
 )
 
+// BatchNotCompleteError is returned when RetrieveBatchResults is called on
+// a batch that has not finished processing yet (HTTP 409).
+type BatchNotCompleteError struct {
+	errors.BaseError
+	BatchID string
+	Status  string
+}
+
 // TimeoutError is returned when the gateway times out (HTTP 504).
 type TimeoutError struct {
 	errors.BaseError
@@ -135,6 +151,17 @@ type TimeoutError struct {
 // unreachable (HTTP 502).
 type UpstreamProviderError struct {
 	errors.BaseError
+}
+
+// newBatchNotCompleteError constructs a BatchNotCompleteError for the given
+// batch and upstream-reported status.
+func newBatchNotCompleteError(batchID, status string) *BatchNotCompleteError {
+	cause := fmt.Errorf("batch '%s' is not yet complete (status: %s)", batchID, status)
+	return &BatchNotCompleteError{
+		BaseError: errors.New(errCodeBatchNotComplete, providerName, cause, ErrBatchNotComplete),
+		BatchID:   batchID,
+		Status:    status,
+	}
 }
 
 // Provider implements the providers.Provider interface for the any-llm gateway.
@@ -670,7 +697,7 @@ func (p *Provider) handleBatchError(resp *http.Response, path string) error {
 		return errors.NewModelNotFoundError(providerName, stderrors.New(msg))
 	case http.StatusConflict:
 		batchID, batchStatus := parseBatchNotCompleteDetail(msg)
-		return errors.NewBatchNotCompleteError(providerName, batchID, batchStatus)
+		return newBatchNotCompleteError(batchID, batchStatus)
 	case http.StatusUnprocessableEntity:
 		return errors.NewProviderError(providerName, stderrors.New(msg))
 	case http.StatusTooManyRequests:

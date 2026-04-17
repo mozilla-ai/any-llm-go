@@ -149,7 +149,6 @@ var (
 // Sentinel errors for type checking with errors.Is().
 var (
 	ErrAuthentication      = errors.ErrAuthentication
-	ErrBatchNotComplete    = errors.ErrBatchNotComplete
 	ErrContentFilter       = errors.ErrContentFilter
 	ErrContextLength       = errors.ErrContextLength
 	ErrInsufficientFunds   = errors.ErrInsufficientFunds
@@ -166,7 +165,6 @@ var (
 type (
 	AuthenticationError      = errors.AuthenticationError
 	BaseError                = errors.BaseError
-	BatchNotCompleteError    = errors.BatchNotCompleteError
 	ContentFilterError       = errors.ContentFilterError
 	ContextLengthError       = errors.ContextLengthError
 	InsufficientFundsError   = errors.InsufficientFundsError
