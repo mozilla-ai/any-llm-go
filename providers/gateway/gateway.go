@@ -21,7 +21,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -153,9 +152,19 @@ type UpstreamProviderError struct {
 }
 
 // newBatchNotCompleteError constructs a BatchNotCompleteError for the given
-// batch and upstream-reported status.
-func newBatchNotCompleteError(batchID, status string) *BatchNotCompleteError {
-	cause := fmt.Errorf("batch '%s' is not yet complete (status: %s)", batchID, status)
+// batch and upstream-reported status. status may be empty when the gateway
+// did not include a structured status field in the response.
+func newBatchNotCompleteError(batchID, status string, cause error) *BatchNotCompleteError {
+	if cause == nil {
+		switch {
+		case batchID != "" && status != "":
+			cause = fmt.Errorf("batch %q is not yet complete (status: %s)", batchID, status)
+		case batchID != "":
+			cause = fmt.Errorf("batch %q is not yet complete", batchID)
+		default:
+			cause = stderrors.New("batch is not yet complete")
+		}
+	}
 	return &BatchNotCompleteError{
 		BaseError: errors.New(errCodeBatchNotComplete, providerName, cause, ErrBatchNotComplete),
 		BatchID:   batchID,
@@ -508,7 +517,7 @@ func (p *Provider) CreateBatch(
 	}
 
 	var batch providers.Batch
-	if err := p.callBatchJSON(ctx, http.MethodPost, batchesPath, body, &batch); err != nil {
+	if err := p.callBatchJSON(ctx, http.MethodPost, batchesPath, "", body, &batch); err != nil {
 		return nil, err
 	}
 
@@ -521,16 +530,10 @@ func (p *Provider) RetrieveBatch(
 	batchID string,
 	provider string,
 ) (*providers.Batch, error) {
-	path := fmt.Sprintf(
-		"%s/%s?%s=%s",
-		batchesPath,
-		url.PathEscape(batchID),
-		providerQueryParam,
-		url.QueryEscape(provider),
-	)
+	path := batchItemPath(batchID, "", provider)
 
 	var batch providers.Batch
-	if err := p.callBatchJSON(ctx, http.MethodGet, path, nil, &batch); err != nil {
+	if err := p.callBatchJSON(ctx, http.MethodGet, path, batchID, nil, &batch); err != nil {
 		return nil, err
 	}
 
@@ -543,16 +546,10 @@ func (p *Provider) CancelBatch(
 	batchID string,
 	provider string,
 ) (*providers.Batch, error) {
-	path := fmt.Sprintf(
-		"%s/%s/cancel?%s=%s",
-		batchesPath,
-		url.PathEscape(batchID),
-		providerQueryParam,
-		url.QueryEscape(provider),
-	)
+	path := batchItemPath(batchID, "cancel", provider)
 
 	var batch providers.Batch
-	if err := p.callBatchJSON(ctx, http.MethodPost, path, nil, &batch); err != nil {
+	if err := p.callBatchJSON(ctx, http.MethodPost, path, batchID, nil, &batch); err != nil {
 		return nil, err
 	}
 
@@ -573,12 +570,13 @@ func (p *Provider) ListBatches(
 		params.Set("limit", strconv.Itoa(*opts.Limit))
 	}
 
-	path := batchesPath + "?" + params.Encode()
+	u := url.URL{Path: batchesPath, RawQuery: params.Encode()}
+	path := u.RequestURI()
 
 	var listResp struct {
 		Data []providers.Batch `json:"data"`
 	}
-	if err := p.callBatchJSON(ctx, http.MethodGet, path, nil, &listResp); err != nil {
+	if err := p.callBatchJSON(ctx, http.MethodGet, path, "", nil, &listResp); err != nil {
 		return nil, err
 	}
 
@@ -591,28 +589,38 @@ func (p *Provider) RetrieveBatchResults(
 	batchID string,
 	provider string,
 ) (*providers.BatchResult, error) {
-	path := fmt.Sprintf(
-		"%s/%s/results?%s=%s",
-		batchesPath,
-		url.PathEscape(batchID),
-		providerQueryParam,
-		url.QueryEscape(provider),
-	)
+	path := batchItemPath(batchID, "results", provider)
 
 	var result providers.BatchResult
-	if err := p.callBatchJSON(ctx, http.MethodGet, path, nil, &result); err != nil {
+	if err := p.callBatchJSON(ctx, http.MethodGet, path, batchID, nil, &result); err != nil {
 		return nil, err
 	}
 
 	return &result, nil
 }
 
+// batchItemPath builds a path for /v1/batches/{id}[/action]?provider=X using
+// url.URL so that batchID and provider are encoded safely.
+func batchItemPath(batchID, action, provider string) string {
+	path := batchesPath + "/" + batchID
+	if action != "" {
+		path += "/" + action
+	}
+	u := url.URL{
+		Path:     path,
+		RawQuery: url.Values{providerQueryParam: {provider}}.Encode(),
+	}
+	return u.RequestURI()
+}
+
 // callBatchJSON performs a batch HTTP request and decodes a JSON success
 // response into out. Non-2xx responses are mapped to typed errors via
-// handleBatchError.
+// handleBatchError. batchID is used to enrich 409 errors with the specific
+// batch identifier the caller requested; pass "" when not applicable
+// (create, list).
 func (p *Provider) callBatchJSON(
 	ctx context.Context,
-	method, path string,
+	method, path, batchID string,
 	body []byte,
 	out any,
 ) error {
@@ -623,7 +631,7 @@ func (p *Provider) callBatchJSON(
 	defer closeBody(resp)
 
 	if resp.StatusCode != http.StatusOK {
-		return p.handleBatchError(resp, path)
+		return p.handleBatchError(resp, batchID)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
@@ -676,56 +684,85 @@ func (p *Provider) doRequest(
 	return resp, nil
 }
 
-// handleBatchError handles HTTP error responses and maps them to typed errors.
-func (p *Provider) handleBatchError(resp *http.Response, path string) error {
+// handleBatchError maps a non-2xx batch HTTP response to a typed error.
+// batchID is the batch identifier the caller operated on (empty for
+// create/list); it is used to enrich 409 errors without parsing
+// free-text error messages.
+//
+// All callers of this function operate on /v1/batches, so a 404 is
+// interpreted as "gateway does not expose the batch API" and is not
+// mapped to ModelNotFoundError.
+func (p *Provider) handleBatchError(resp *http.Response, batchID string) error {
 	// ReadAll error is ignored: if reading fails, we fall back to an empty
 	// body and still produce a typed error based on status code.
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
-	var detail struct {
-		Detail string `json:"detail"`
-	}
-	// Unmarshal error is ignored: responses may not be JSON (e.g. plain
-	// text from a misbehaving proxy); in that case we fall back to the raw
-	// body below.
-	_ = json.Unmarshal(bodyBytes, &detail)
-
-	msg := detail.Detail
-	if msg == "" {
-		msg = string(bodyBytes)
-	}
+	detail := decodeBatchErrorBody(bodyBytes)
 
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return errors.NewAuthenticationError(providerName, stderrors.New(msg))
+		return errors.NewAuthenticationError(providerName,
+			fmt.Errorf("unauthorized: %s", detail.message()))
 	case http.StatusNotFound:
-		if strings.Contains(path, batchesPath) {
-			return errors.NewProviderError(providerName,
-				stderrors.New("this gateway does not support batch operations; upgrade your gateway"))
-		}
-		return errors.NewModelNotFoundError(providerName, stderrors.New(msg))
+		return errors.NewProviderError(providerName,
+			stderrors.New("this gateway does not support batch operations; upgrade your gateway"))
 	case http.StatusConflict:
-		batchID, batchStatus := parseBatchNotCompleteDetail(msg)
-		return newBatchNotCompleteError(batchID, batchStatus)
+		return newBatchNotCompleteError(batchID, detail.Status, detail.toError())
 	case http.StatusUnprocessableEntity:
-		return errors.NewProviderError(providerName, stderrors.New(msg))
+		return errors.NewProviderError(providerName,
+			fmt.Errorf("unprocessable request: %s", detail.message()))
 	case http.StatusTooManyRequests:
-		return errors.NewRateLimitError(providerName, stderrors.New(msg))
+		return errors.NewRateLimitError(providerName,
+			fmt.Errorf("rate limit: %s", detail.message()))
 	case http.StatusBadGateway:
-		return errors.NewProviderError(providerName, fmt.Errorf("upstream provider error: %s", msg))
+		return errors.NewProviderError(providerName,
+			fmt.Errorf("upstream provider error: %s", detail.message()))
 	default:
-		return errors.NewProviderError(providerName, fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg))
+		return errors.NewProviderError(providerName,
+			fmt.Errorf("HTTP %d: %s", resp.StatusCode, detail.message()))
 	}
 }
 
-// batchNotCompleteRE matches: Batch 'batch_abc' is not yet complete (status: in_progress)
-var batchNotCompleteRE = regexp.MustCompile(`[Bb]atch\s+'([^']+)'.*\(status:\s*(\w+)\)`)
+// batchErrorBody is the structured JSON shape gateway error responses may
+// use. All fields are optional; callers must cope with arbitrary bodies.
+type batchErrorBody struct {
+	// Detail is the human-readable error message (FastAPI-style payload).
+	Detail string `json:"detail"`
 
-// parseBatchNotCompleteDetail extracts batch ID and status from the error detail.
-func parseBatchNotCompleteDetail(detail string) (batchID, status string) {
-	matches := batchNotCompleteRE.FindStringSubmatch(detail)
-	if len(matches) >= 3 {
-		return matches[1], matches[2]
+	// Status is the batch status when the gateway returns a 409 for
+	// RetrieveBatchResults; empty when not applicable or not provided.
+	Status string `json:"status"`
+
+	// raw is the untouched response body, used as a last-resort message
+	// when the body is not JSON or does not include Detail.
+	raw string
+}
+
+// message returns the best human-readable description of the error body.
+func (b batchErrorBody) message() string {
+	if b.Detail != "" {
+		return b.Detail
 	}
-	return "", "unknown"
+	return b.raw
+}
+
+// toError wraps message() in an error value suitable for embedding in a
+// typed error's cause chain, or nil when no detail is available.
+func (b batchErrorBody) toError() error {
+	msg := b.message()
+	if msg == "" {
+		return nil
+	}
+	return stderrors.New(msg)
+}
+
+// decodeBatchErrorBody parses a gateway error response. Non-JSON bodies are
+// preserved via the raw field so callers can still surface the server's
+// text in the typed error.
+func decodeBatchErrorBody(body []byte) batchErrorBody {
+	out := batchErrorBody{raw: string(body)}
+	// Unmarshal error is ignored: responses may not be JSON (e.g. plain
+	// text from a misbehaving proxy); the raw body is used instead.
+	_ = json.Unmarshal(body, &out)
+	return out
 }

@@ -292,5 +292,3 @@ func NewInsufficientFundsError(provider string, err error) *InsufficientFundsErr
 		},
 	}
 }
-
-

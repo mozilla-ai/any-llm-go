@@ -1228,31 +1228,62 @@ func TestRetrieveBatchResultsSuccess(t *testing.T) {
 func TestBatchError409(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"detail": "Batch 'batch_xyz' is not yet complete (status: in_progress)"}`))
-	}))
-	t.Cleanup(srv.Close)
+	t.Run("gateway returns structured status field", func(t *testing.T) {
+		t.Parallel()
 
-	provider, err := New(
-		config.WithBaseURL(srv.URL),
-		WithGatewayKey("test-key"),
-	)
-	require.NoError(t, err)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"detail": "batch not yet complete", "status": "in_progress"}`))
+		}))
+		t.Cleanup(srv.Close)
 
-	_, err = provider.RetrieveBatchResults(context.Background(), "batch_xyz", "openai")
-	require.Error(t, err)
+		provider, err := New(
+			config.WithBaseURL(srv.URL),
+			WithGatewayKey("test-key"),
+		)
+		require.NoError(t, err)
 
-	// Check sentinel error.
-	require.True(t, stderrors.Is(err, ErrBatchNotComplete),
-		"expected error to match ErrBatchNotComplete, got %v", err)
+		_, err = provider.RetrieveBatchResults(context.Background(), "batch_xyz", "openai")
+		require.Error(t, err)
 
-	// Check typed error with fields.
-	var batchErr *BatchNotCompleteError
-	require.True(t, stderrors.As(err, &batchErr))
-	require.Equal(t, "batch_xyz", batchErr.BatchID)
-	require.Equal(t, "in_progress", batchErr.Status)
+		require.True(t, stderrors.Is(err, ErrBatchNotComplete),
+			"expected error to match ErrBatchNotComplete, got %v", err)
+
+		// Batch ID comes from the caller; status comes from the structured
+		// JSON field so we don't rely on free-text parsing.
+		var batchErr *BatchNotCompleteError
+		require.True(t, stderrors.As(err, &batchErr))
+		require.Equal(t, "batch_xyz", batchErr.BatchID)
+		require.Equal(t, "in_progress", batchErr.Status)
+	})
+
+	t.Run("gateway returns detail only", func(t *testing.T) {
+		t.Parallel()
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"detail": "batch not yet complete"}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		provider, err := New(
+			config.WithBaseURL(srv.URL),
+			WithGatewayKey("test-key"),
+		)
+		require.NoError(t, err)
+
+		_, err = provider.RetrieveBatchResults(context.Background(), "batch_xyz", "openai")
+		require.Error(t, err)
+
+		require.True(t, stderrors.Is(err, ErrBatchNotComplete))
+
+		var batchErr *BatchNotCompleteError
+		require.True(t, stderrors.As(err, &batchErr))
+		require.Equal(t, "batch_xyz", batchErr.BatchID)
+		require.Empty(t, batchErr.Status, "status should be empty when gateway omits it")
+	})
 }
 
 func TestBatchError404(t *testing.T) {
@@ -1374,46 +1405,6 @@ func TestBatchError429(t *testing.T) {
 }
 
 // --- Helper function tests ---
-
-func TestParseBatchNotCompleteDetail(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		detail     string
-		wantID     string
-		wantStatus string
-	}{
-		{
-			name:       "standard format",
-			detail:     "Batch 'batch_abc123' is not yet complete (status: in_progress)",
-			wantID:     "batch_abc123",
-			wantStatus: "in_progress",
-		},
-		{
-			name:       "lowercase batch",
-			detail:     "batch 'batch_xyz' is not yet complete (status: validating)",
-			wantID:     "batch_xyz",
-			wantStatus: "validating",
-		},
-		{
-			name:       "unrecognized format",
-			detail:     "something went wrong",
-			wantID:     "",
-			wantStatus: "unknown",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			batchID, status := parseBatchNotCompleteDetail(tc.detail)
-			require.Equal(t, tc.wantID, batchID)
-			require.Equal(t, tc.wantStatus, status)
-		})
-	}
-}
 
 func TestCompletionHTTPError409IsNotBatchError(t *testing.T) {
 	t.Parallel()
