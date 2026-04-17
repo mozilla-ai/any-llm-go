@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/openai/openai-go"
@@ -40,9 +41,18 @@ const (
 	// non-platform mode.
 	apiKeyHeaderName = "AnyLLM-Key"
 
+	// authorizationHeader is the standard HTTP Authorization header.
+	authorizationHeader = "Authorization"
+
 	// bearerPrefix is the Authorization scheme prefix applied to the gateway
 	// key before it is placed in the gateway header (e.g. "Bearer <key>").
 	bearerPrefix = "Bearer "
+
+	// contentTypeHeader is the standard HTTP Content-Type header.
+	contentTypeHeader = "Content-Type"
+
+	// contentTypeJSON is the Content-Type value for JSON request bodies.
+	contentTypeJSON = "application/json"
 
 	// placeholderAPIKey satisfies the OpenAI SDK's requirement that an API key
 	// be set. The SDK still sends it in the Authorization header, but in
@@ -86,6 +96,16 @@ const (
 	errCodeUpstreamProvider = "upstream_provider"
 )
 
+// Batch API path constants.
+const (
+	// batchesPath is the base path for batch operations on the gateway.
+	batchesPath = "/v1/batches"
+
+	// providerQueryParam is the query-string key identifying the upstream
+	// provider for batch operations.
+	providerQueryParam = "provider"
+)
+
 // Gateway-specific sentinel errors for type checking with errors.Is().
 var (
 	// ErrTimeout is matched by errors.Is on gateway timeout errors (HTTP 504).
@@ -123,12 +143,6 @@ type UpstreamProviderError struct {
 type Provider struct {
 	*openaiProvider.CompatibleProvider
 
-	// platformMode is used to indicate whether the provider is operating in
-	// platform mode (using platform token for Bearer auth) or non-platform mode
-	// (using gateway key in custom header).
-	// This affects how authentication is handled and how errors are converted.
-	platformMode bool
-
 	// apiBase is the gateway base URL, used for batch API calls that bypass
 	// the OpenAI SDK.
 	apiBase string
@@ -140,6 +154,12 @@ type Provider struct {
 
 	// httpClient is used for batch API calls that bypass the OpenAI SDK.
 	httpClient *http.Client
+
+	// platformMode indicates whether the provider is operating in platform
+	// mode (using platform token for Bearer auth) or non-platform mode
+	// (using gateway key in custom header). This affects how authentication
+	// is handled and how errors are converted.
+	platformMode bool
 }
 
 // headerTransport wraps an http.RoundTripper to inject custom headers into
@@ -263,10 +283,10 @@ func New(opts ...config.Option) (*Provider, error) {
 
 	return &Provider{
 		CompatibleProvider: base,
-		platformMode:       platformMode,
 		apiBase:            apiBase,
 		apiKey:             batchAPIKey,
 		httpClient:         cfg.HTTPClient(),
+		platformMode:       platformMode,
 	}, nil
 }
 
@@ -451,23 +471,9 @@ func (p *Provider) CreateBatch(
 		return nil, errors.NewInvalidRequestError(providerName, err)
 	}
 
-	resp, err := p.doRequest(ctx, http.MethodPost, "/v1/batches", body)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			log.Printf("gateway: failed to close response body: %v", err)
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, p.handleBatchError(resp, "/v1/batches")
-	}
-
 	var batch providers.Batch
-	if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
-		return nil, errors.NewProviderError(providerName, fmt.Errorf("failed to decode batch response: %w", err))
+	if err := p.callBatchJSON(ctx, http.MethodPost, batchesPath, body, &batch); err != nil {
+		return nil, err
 	}
 
 	return &batch, nil
@@ -479,25 +485,17 @@ func (p *Provider) RetrieveBatch(
 	batchID string,
 	provider string,
 ) (*providers.Batch, error) {
-	path := fmt.Sprintf("/v1/batches/%s?provider=%s", url.PathEscape(batchID), url.QueryEscape(provider))
-
-	resp, err := p.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			log.Printf("gateway: failed to close response body: %v", err)
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, p.handleBatchError(resp, path)
-	}
+	path := fmt.Sprintf(
+		"%s/%s?%s=%s",
+		batchesPath,
+		url.PathEscape(batchID),
+		providerQueryParam,
+		url.QueryEscape(provider),
+	)
 
 	var batch providers.Batch
-	if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
-		return nil, errors.NewProviderError(providerName, fmt.Errorf("failed to decode batch response: %w", err))
+	if err := p.callBatchJSON(ctx, http.MethodGet, path, nil, &batch); err != nil {
+		return nil, err
 	}
 
 	return &batch, nil
@@ -510,28 +508,16 @@ func (p *Provider) CancelBatch(
 	provider string,
 ) (*providers.Batch, error) {
 	path := fmt.Sprintf(
-		"/v1/batches/%s/cancel?provider=%s",
+		"%s/%s/cancel?%s=%s",
+		batchesPath,
 		url.PathEscape(batchID),
+		providerQueryParam,
 		url.QueryEscape(provider),
 	)
 
-	resp, err := p.doRequest(ctx, http.MethodPost, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			log.Printf("gateway: failed to close response body: %v", err)
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, p.handleBatchError(resp, path)
-	}
-
 	var batch providers.Batch
-	if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
-		return nil, errors.NewProviderError(providerName, fmt.Errorf("failed to decode batch response: %w", err))
+	if err := p.callBatchJSON(ctx, http.MethodPost, path, nil, &batch); err != nil {
+		return nil, err
 	}
 
 	return &batch, nil
@@ -543,35 +529,21 @@ func (p *Provider) ListBatches(
 	provider string,
 	opts providers.ListBatchesOptions,
 ) ([]providers.Batch, error) {
-	params := url.Values{"provider": {provider}}
+	params := url.Values{providerQueryParam: {provider}}
 	if opts.After != "" {
 		params.Set("after", opts.After)
 	}
 	if opts.Limit != nil {
-		params.Set("limit", fmt.Sprintf("%d", *opts.Limit))
+		params.Set("limit", strconv.Itoa(*opts.Limit))
 	}
 
-	path := "/v1/batches?" + params.Encode()
-
-	resp, err := p.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			log.Printf("gateway: failed to close response body: %v", err)
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, p.handleBatchError(resp, path)
-	}
+	path := batchesPath + "?" + params.Encode()
 
 	var listResp struct {
 		Data []providers.Batch `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
-		return nil, errors.NewProviderError(providerName, fmt.Errorf("failed to decode list response: %w", err))
+	if err := p.callBatchJSON(ctx, http.MethodGet, path, nil, &listResp); err != nil {
+		return nil, err
 	}
 
 	return listResp.Data, nil
@@ -584,31 +556,53 @@ func (p *Provider) RetrieveBatchResults(
 	provider string,
 ) (*providers.BatchResult, error) {
 	path := fmt.Sprintf(
-		"/v1/batches/%s/results?provider=%s",
+		"%s/%s/results?%s=%s",
+		batchesPath,
 		url.PathEscape(batchID),
+		providerQueryParam,
 		url.QueryEscape(provider),
 	)
 
-	resp, err := p.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			log.Printf("gateway: failed to close response body: %v", err)
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, p.handleBatchError(resp, path)
-	}
-
 	var result providers.BatchResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, errors.NewProviderError(providerName, fmt.Errorf("failed to decode batch results: %w", err))
+	if err := p.callBatchJSON(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return nil, err
 	}
 
 	return &result, nil
+}
+
+// callBatchJSON performs a batch HTTP request and decodes a JSON success
+// response into out. Non-2xx responses are mapped to typed errors via
+// handleBatchError.
+func (p *Provider) callBatchJSON(
+	ctx context.Context,
+	method, path string,
+	body []byte,
+	out any,
+) error {
+	resp, err := p.doRequest(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+	defer closeBody(resp)
+
+	if resp.StatusCode != http.StatusOK {
+		return p.handleBatchError(resp, path)
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return errors.NewProviderError(providerName, fmt.Errorf("failed to decode batch response: %w", err))
+	}
+
+	return nil
+}
+
+// closeBody closes an HTTP response body and logs any close error; intended
+// for use in defer statements.
+func closeBody(resp *http.Response) {
+	if err := resp.Body.Close(); err != nil {
+		log.Printf("gateway: failed to close response body: %v", err)
+	}
 }
 
 // doRequest sends an HTTP request to the gateway API for batch operations.
@@ -629,10 +623,10 @@ func (p *Provider) doRequest(
 		return nil, errors.NewProviderError(providerName, err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentTypeHeader, contentTypeJSON)
 	if p.apiKey != "" {
 		if p.platformMode {
-			req.Header.Set("Authorization", bearerPrefix+p.apiKey)
+			req.Header.Set(authorizationHeader, bearerPrefix+p.apiKey)
 		} else {
 			req.Header.Set(apiKeyHeaderName, bearerPrefix+p.apiKey)
 		}
@@ -648,11 +642,16 @@ func (p *Provider) doRequest(
 
 // handleBatchError handles HTTP error responses and maps them to typed errors.
 func (p *Provider) handleBatchError(resp *http.Response, path string) error {
+	// ReadAll error is ignored: if reading fails, we fall back to an empty
+	// body and still produce a typed error based on status code.
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
 	var detail struct {
 		Detail string `json:"detail"`
 	}
+	// Unmarshal error is ignored: responses may not be JSON (e.g. plain
+	// text from a misbehaving proxy); in that case we fall back to the raw
+	// body below.
 	_ = json.Unmarshal(bodyBytes, &detail)
 
 	msg := detail.Detail
@@ -662,20 +661,20 @@ func (p *Provider) handleBatchError(resp *http.Response, path string) error {
 
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return errors.NewAuthenticationError(providerName, fmt.Errorf("%s", msg))
+		return errors.NewAuthenticationError(providerName, stderrors.New(msg))
 	case http.StatusNotFound:
-		if strings.Contains(path, "/v1/batches") {
+		if strings.Contains(path, batchesPath) {
 			return errors.NewProviderError(providerName,
-				fmt.Errorf("this gateway does not support batch operations; upgrade your gateway"))
+				stderrors.New("this gateway does not support batch operations; upgrade your gateway"))
 		}
-		return errors.NewModelNotFoundError(providerName, fmt.Errorf("%s", msg))
+		return errors.NewModelNotFoundError(providerName, stderrors.New(msg))
 	case http.StatusConflict:
 		batchID, batchStatus := parseBatchNotCompleteDetail(msg)
 		return errors.NewBatchNotCompleteError(providerName, batchID, batchStatus)
 	case http.StatusUnprocessableEntity:
-		return errors.NewProviderError(providerName, fmt.Errorf("%s", msg))
+		return errors.NewProviderError(providerName, stderrors.New(msg))
 	case http.StatusTooManyRequests:
-		return errors.NewRateLimitError(providerName, fmt.Errorf("%s", msg))
+		return errors.NewRateLimitError(providerName, stderrors.New(msg))
 	case http.StatusBadGateway:
 		return errors.NewProviderError(providerName, fmt.Errorf("upstream provider error: %s", msg))
 	default:
