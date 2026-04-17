@@ -1657,6 +1657,51 @@ func TestRerankSendsGatewayHeader(t *testing.T) {
 	require.Equal(t, bearerPrefix+"gw_rerank_key", capturedHeaders.Get(apiKeyHeaderName))
 }
 
+func TestRerankSendsPlatformBearerAuth(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu              sync.Mutex
+		capturedHeaders http.Header
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/rerank" {
+			mu.Lock()
+			capturedHeaders = r.Header.Clone()
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"r-1","results":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data": [], "object": "list"}`))
+	}))
+	defer server.Close()
+
+	provider, err := New(
+		config.WithBaseURL(server.URL),
+		config.WithAPIKey("tk_platform_rerank"),
+		WithPlatformMode(),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.Rerank(context.Background(), providers.RerankParams{
+		Model:     "cohere:rerank-v3.5",
+		Query:     "test",
+		Documents: []string{"doc1"},
+	})
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Platform mode: Bearer auth sent via standard Authorization header.
+	require.Equal(t, bearerPrefix+"tk_platform_rerank", capturedHeaders.Get("Authorization"))
+	// Platform mode should not send gateway key header.
+	require.Empty(t, capturedHeaders.Get(apiKeyHeaderName))
+}
+
 // --- Integration tests ---
 
 func TestIntegrationCompletion(t *testing.T) {

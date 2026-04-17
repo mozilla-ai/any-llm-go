@@ -300,6 +300,9 @@ func New(opts ...config.Option) (*Provider, error) {
 	httpClient := cfg.HTTPClient()
 	if platformMode {
 		compatOpts = append(compatOpts, config.WithAPIKey(platformToken))
+		// Wrap the HTTP client so raw HTTP calls (e.g. Rerank) that bypass
+		// the OpenAI SDK also carry the platform Bearer token.
+		httpClient = newBearerClient(httpClient, platformToken)
 	} else {
 		// Non-platform mode: override any user-supplied API key with the
 		// placeholder so secrets can't leak via the Authorization header.
@@ -560,6 +563,24 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	clone := req.Clone(req.Context())
 	clone.Header.Set(t.header, t.value)
 	return t.base.RoundTrip(clone)
+}
+
+// newBearerClient wraps the given HTTP client's transport to inject a standard
+// Authorization: Bearer <token> header into every request. Used in platform
+// mode for raw HTTP calls (e.g. Rerank) that bypass the OpenAI SDK.
+func newBearerClient(base *http.Client, token string) *http.Client {
+	transport := base.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	return &http.Client{
+		Timeout: base.Timeout,
+		Transport: &headerTransport{
+			base:   transport,
+			header: "Authorization",
+			value:  bearerPrefix + token,
+		},
+	}
 }
 
 // newHeaderClient wraps the given HTTP client's transport to inject the
