@@ -558,7 +558,12 @@ func (p *Provider) Moderation(
 func (p *Provider) convertHTTPModerationError(statusCode int, body []byte) error {
 	detail := extractDetail(body)
 
-	if statusCode == http.StatusBadRequest && strings.Contains(detail, "does not support moderation") {
+	// Locked phrasings from the gateway:
+	//   "Provider <name> does not support moderation"
+	//   "Provider <name> does not support multimodal moderation input"
+	if statusCode == http.StatusBadRequest &&
+		strings.Contains(detail, "does not support") &&
+		strings.Contains(detail, "moderation") {
 		providerID := parseUnsupportedProvider(detail)
 		operation := "moderation"
 		if strings.Contains(detail, "multimodal") {

@@ -1838,6 +1838,320 @@ func TestIntegrationCompletionStream(t *testing.T) {
 	t.Logf("Content: %s", content.String())
 }
 
+// Moderation tests.
+
+func TestModeration(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu          sync.Mutex
+		capturedReq map[string]any
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/moderations", r.URL.Path)
+
+		raw, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+
+		mu.Lock()
+		_ = json.Unmarshal(raw, &capturedReq)
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "modr-abc",
+			"model": "omni-moderation-latest",
+			"results": [{
+				"flagged": true,
+				"categories": {"violence": true},
+				"category_scores": {"violence": 0.93}
+			}]
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(config.WithBaseURL(srv.URL))
+	require.NoError(t, err)
+
+	resp, err := provider.Moderation(context.Background(), providers.ModerationParams{
+		Model: "openai:omni-moderation-latest",
+		Input: "hurt someone",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "modr-abc", resp.ID)
+	require.Len(t, resp.Results, 1)
+	require.True(t, resp.Results[0].Flagged)
+	require.True(t, resp.Results[0].Categories["violence"])
+	require.InDelta(t, 0.93, resp.Results[0].CategoryScores["violence"], 0.001)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, "openai:omni-moderation-latest", capturedReq["model"])
+	require.Equal(t, "hurt someone", capturedReq["input"])
+	// IncludeRaw must not leak into the JSON body; it is a query param only.
+	_, hasIncludeRaw := capturedReq["IncludeRaw"]
+	require.False(t, hasIncludeRaw)
+	_, hasIncludeRawSnake := capturedReq["include_raw"]
+	require.False(t, hasIncludeRawSnake)
+}
+
+func TestModerationIncludeRawAddsQuery(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu          sync.Mutex
+		capturedURL string
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		capturedURL = r.URL.String()
+		mu.Unlock()
+
+		require.Equal(t, "true", r.URL.Query().Get("include_raw"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"m","model":"x","results":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(config.WithBaseURL(srv.URL))
+	require.NoError(t, err)
+
+	_, err = provider.Moderation(context.Background(), providers.ModerationParams{
+		Model:      "openai:omni-moderation-latest",
+		Input:      "x",
+		IncludeRaw: true,
+	})
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Contains(t, capturedURL, "include_raw=true")
+}
+
+func TestModerationUnsupportedProvider(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"detail":"Provider anthropic does not support moderation"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(config.WithBaseURL(srv.URL))
+	require.NoError(t, err)
+
+	_, err = provider.Moderation(context.Background(), providers.ModerationParams{
+		Model: "anthropic:claude-3-haiku",
+		Input: "x",
+	})
+	require.Error(t, err)
+
+	var unsup *errors.UnsupportedError
+	require.True(t, stderrors.As(err, &unsup), "expected *UnsupportedError, got %T", err)
+	require.Equal(t, "anthropic", unsup.Provider)
+	require.Equal(t, "moderation", unsup.Operation)
+	require.True(t, stderrors.Is(err, errors.ErrUnsupported))
+}
+
+func TestModerationUnsupportedMultimodal(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write(
+			[]byte(`{"detail":"Provider mistral does not support multimodal moderation input"}`),
+		)
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(config.WithBaseURL(srv.URL))
+	require.NoError(t, err)
+
+	_, err = provider.Moderation(context.Background(), providers.ModerationParams{
+		Model: "mistral:mistral-moderation-latest",
+		Input: []providers.ContentPart{
+			{Type: "text", Text: "hi"},
+			{Type: "image_url", ImageURL: &providers.ImageURL{URL: "https://example.com/a.png"}},
+		},
+	})
+	require.Error(t, err)
+
+	var unsup *errors.UnsupportedError
+	require.True(t, stderrors.As(err, &unsup), "expected *UnsupportedError, got %T", err)
+	require.Equal(t, "mistral", unsup.Provider)
+	require.Equal(t, "multimodal_moderation", unsup.Operation)
+	require.True(t, stderrors.Is(err, errors.ErrUnsupported))
+}
+
+func TestModerationErrorMapping(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantErr    error
+	}{
+		{
+			name:       "401 auth",
+			statusCode: http.StatusUnauthorized,
+			body:       `{"detail":"unauthorized"}`,
+			wantErr:    errors.ErrAuthentication,
+		},
+		{
+			name:       "402 funds",
+			statusCode: http.StatusPaymentRequired,
+			body:       `{"detail":"over budget"}`,
+			wantErr:    errors.ErrInsufficientFunds,
+		},
+		{
+			name:       "429 rate",
+			statusCode: http.StatusTooManyRequests,
+			body:       `{"detail":"slow down"}`,
+			wantErr:    errors.ErrRateLimit,
+		},
+		{
+			name:       "502 upstream",
+			statusCode: http.StatusBadGateway,
+			body:       `{"detail":"bad gateway"}`,
+			wantErr:    ErrUpstreamProvider,
+		},
+		{
+			name:       "504 timeout",
+			statusCode: http.StatusGatewayTimeout,
+			body:       `{"detail":"timeout"}`,
+			wantErr:    ErrTimeout,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.statusCode)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
+
+			provider, err := New(config.WithBaseURL(srv.URL))
+			require.NoError(t, err)
+
+			_, err = provider.Moderation(context.Background(), providers.ModerationParams{
+				Model: "openai:omni-moderation-latest",
+				Input: "x",
+			})
+			require.Error(t, err)
+			require.ErrorIs(t, err, tc.wantErr)
+		})
+	}
+}
+
+// TestModerationAuthPlatformMode verifies platform-mode Bearer auth is
+// attached to the direct HTTP call we make from Moderation (the embedded
+// openai-go SDK is not involved here).
+func TestModerationAuthPlatformMode(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu              sync.Mutex
+		capturedHeaders http.Header
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		capturedHeaders = r.Header.Clone()
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"m","model":"x","results":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		config.WithAPIKey("tk_platform_token"),
+		WithPlatformMode(),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.Moderation(context.Background(), providers.ModerationParams{
+		Model: "openai:omni-moderation-latest",
+		Input: "x",
+	})
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, bearerPrefix+"tk_platform_token", capturedHeaders.Get("Authorization"))
+}
+
+// TestModerationAuthNonPlatformMode verifies the gateway key header is
+// attached (via headerTransport) on the direct HTTP call.
+func TestModerationAuthNonPlatformMode(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu              sync.Mutex
+		capturedHeaders http.Header
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		capturedHeaders = r.Header.Clone()
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"m","model":"x","results":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := New(
+		config.WithBaseURL(srv.URL),
+		WithGatewayKey("gw_test_key"),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.Moderation(context.Background(), providers.ModerationParams{
+		Model: "openai:omni-moderation-latest",
+		Input: "x",
+	})
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, bearerPrefix+"gw_test_key", capturedHeaders.Get(apiKeyHeaderName))
+}
+
+func TestIntegrationModeration(t *testing.T) {
+	t.Parallel()
+
+	gatewayURL, token := gatewayCredentials()
+	if gatewayURL == "" || token == "" {
+		t.Skip("GATEWAY_API_BASE and GATEWAY_PLATFORM_TOKEN not set")
+	}
+
+	provider, err := New(
+		config.WithBaseURL(gatewayURL),
+		config.WithAPIKey(token),
+		WithPlatformMode(),
+	)
+	require.NoError(t, err)
+
+	resp, err := provider.Moderation(context.Background(), providers.ModerationParams{
+		Model: "openai:omni-moderation-latest",
+		Input: "I want to hurt someone",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Results)
+
+	t.Logf("Moderation response: flagged=%v", resp.Results[0].Flagged)
+}
+
 // Test helpers.
 
 // mockRoundTripper records whether it was called and delegates to a base transport.
