@@ -57,6 +57,12 @@ type ModelLister interface {
 	ListModels(ctx context.Context) (*ModelsResponse, error)
 }
 
+// RerankProvider is an optional interface for providers that support document reranking.
+type RerankProvider interface {
+	Provider
+	Rerank(ctx context.Context, params RerankParams) (*RerankResponse, error)
+}
+
 // Provider is the core interface that all LLM providers must implement.
 type Provider interface {
 	// Name returns the provider's identifier (e.g., "openai", "anthropic").
@@ -81,10 +87,11 @@ type Capabilities struct {
 	CompletionImage     bool
 	CompletionPDF       bool
 	CompletionReasoning bool
-	CompletionStreaming bool
+	CompletionStreaming  bool
 	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
+	Rerank              bool
 }
 
 // ChatCompletion represents a chat completion response in OpenAI format.
@@ -186,6 +193,41 @@ type EmbeddingResponse struct {
 type EmbeddingUsage struct {
 	PromptTokens int `json:"prompt_tokens"`
 	TotalTokens  int `json:"total_tokens"`
+}
+
+// RerankMeta contains provider-specific billing metadata.
+type RerankMeta struct {
+	BilledUnits map[string]float64 `json:"billed_units,omitempty"`
+	Tokens      map[string]int     `json:"tokens,omitempty"`
+}
+
+// RerankParams represents parameters for a rerank request.
+type RerankParams struct {
+	Documents       []string `json:"documents"`
+	MaxTokensPerDoc *int     `json:"max_tokens_per_doc,omitempty"`
+	Model           string   `json:"model"`
+	Query           string   `json:"query"`
+	TopN            *int     `json:"top_n,omitempty"`
+	User            string   `json:"user,omitempty"`
+}
+
+// RerankResponse represents a rerank response.
+type RerankResponse struct {
+	ID      string         `json:"id"`
+	Meta    *RerankMeta    `json:"meta,omitempty"`
+	Results []RerankResult `json:"results"`
+	Usage   *RerankUsage   `json:"usage,omitempty"`
+}
+
+// RerankResult represents a single reranked document score.
+type RerankResult struct {
+	Index          int     `json:"index"`
+	RelevanceScore float64 `json:"relevance_score"`
+}
+
+// RerankUsage contains normalized token usage.
+type RerankUsage struct {
+	TotalTokens *int `json:"total_tokens,omitempty"`
 }
 
 // Function represents a function definition for tool calling.
