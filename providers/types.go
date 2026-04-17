@@ -43,6 +43,14 @@ type EmbeddingProvider interface {
 	Embedding(ctx context.Context, params EmbeddingParams) (*EmbeddingResponse, error)
 }
 
+// ModerationProvider is an optional interface for providers that support
+// content moderation. Use errors.As with *errors.UnsupportedError to detect
+// providers that do not support moderation.
+type ModerationProvider interface {
+	Provider
+	Moderation(ctx context.Context, params ModerationParams) (*ModerationResponse, error)
+}
+
 // ErrorConverter converts provider-specific SDK errors to unified error types.
 // This interface ensures all providers implement consistent error handling.
 type ErrorConverter interface {
@@ -91,6 +99,7 @@ type Capabilities struct {
 	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
+	Moderation          bool
 	Rerank              bool
 }
 
@@ -193,6 +202,33 @@ type EmbeddingResponse struct {
 type EmbeddingUsage struct {
 	PromptTokens int `json:"prompt_tokens"`
 	TotalTokens  int `json:"total_tokens"`
+}
+
+// ModerationParams is the request payload for POST /v1/moderations.
+// Input accepts string | []string | []ContentPart.
+type ModerationParams struct {
+	// IncludeRaw is sent as a ?include_raw=true query param; it is
+	// intentionally excluded from the JSON body.
+	IncludeRaw bool   `json:"-"`
+	Input      any    `json:"input"`
+	Model      string `json:"model"`
+	User       string `json:"user,omitempty"`
+}
+
+// ModerationResult is one result entry in a moderation response.
+type ModerationResult struct {
+	CategoryAppliedInputTypes map[string][]string `json:"category_applied_input_types,omitempty"`
+	CategoryScores            map[string]float64  `json:"category_scores,omitempty"`
+	Categories                map[string]bool     `json:"categories,omitempty"`
+	Flagged                   bool                `json:"flagged"`
+	ProviderRaw               json.RawMessage     `json:"provider_raw,omitempty"`
+}
+
+// ModerationResponse is the OpenAI-compatible moderation response.
+type ModerationResponse struct {
+	ID      string             `json:"id"`
+	Model   string             `json:"model"`
+	Results []ModerationResult `json:"results"`
 }
 
 // RerankMeta contains provider-specific billing metadata.
