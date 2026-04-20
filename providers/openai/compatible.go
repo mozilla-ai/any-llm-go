@@ -212,6 +212,11 @@ func (p *CompatibleProvider) CompletionStream(
 			select {
 			case chunks <- convertChunk(&chunk):
 			case <-ctx.Done():
+				// Caller cancelled mid-stream; surface ctx.Err() so the
+				// consumer can tell a cancelled stream apart from one
+				// that completed cleanly, rather than seeing a bare
+				// nil on the error channel (#85).
+				errs <- ctx.Err()
 				return
 			}
 		}
