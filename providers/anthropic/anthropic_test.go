@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mozilla-ai/any-llm-go/config"
@@ -1213,6 +1212,52 @@ func TestIntegrationAuthenticationError(t *testing.T) {
 	require.ErrorAs(t, err, &authErr)
 }
 
+func TestIntegrationCompletionWithStructuredOutput(t *testing.T) {
+	t.Parallel()
+
+	if testutil.SkipIfNoAPIKey("anthropic") {
+		t.Skip("ANTHROPIC_API_KEY not set")
+	}
+
+	provider, err := New()
+	require.NoError(t, err)
+
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"answer": map[string]any{"type": "string"},
+		},
+		"required": []any{"answer"},
+	}
+
+	ctx := context.Background()
+	result, err := provider.Completion(ctx, providers.CompletionParams{
+		Model: testutil.TestModel("anthropic"),
+		Messages: []providers.Message{
+			{Role: providers.RoleUser, Content: "What is 2+2? Respond using the provided schema."},
+		},
+		ResponseFormat: &providers.ResponseFormat{
+			Type: responseFormatJSONSchema,
+			JSONSchema: &providers.JSONSchema{
+				Name:   "answer_schema",
+				Schema: schema,
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.ID)
+	require.Len(t, result.Choices, 1)
+	require.NotEmpty(t, result.Choices[0].Message.Content)
+
+	contentStr, ok := result.Choices[0].Message.Content.(string)
+	require.True(t, ok, "expected string content")
+
+	var response map[string]any
+	err = json.Unmarshal([]byte(contentStr), &response)
+	require.NoError(t, err, "response should be valid JSON")
+	require.Contains(t, response, "answer", "response should contain 'answer' key")
+}
+
 func TestConvertError(t *testing.T) {
 	t.Parallel()
 
@@ -1320,7 +1365,7 @@ func TestConvertParams_ResponseFormat(t *testing.T) {
 
 		result, err := p.convertParams(params)
 		require.NoError(t, err)
-		assert.Equal(t, anthropic.OutputConfigParam{}, result.OutputConfig)
+		require.Equal(t, anthropic.OutputConfigParam{}, result.OutputConfig)
 	})
 
 	t.Run("json_object type is no-op", func(t *testing.T) {
@@ -1331,7 +1376,7 @@ func TestConvertParams_ResponseFormat(t *testing.T) {
 
 		result, err := p.convertParams(params)
 		require.NoError(t, err)
-		assert.Equal(t, anthropic.OutputConfigParam{}, result.OutputConfig)
+		require.Equal(t, anthropic.OutputConfigParam{}, result.OutputConfig)
 	})
 
 	t.Run("json_schema with nil JSONSchema is no-op", func(t *testing.T) {
@@ -1342,7 +1387,7 @@ func TestConvertParams_ResponseFormat(t *testing.T) {
 
 		result, err := p.convertParams(params)
 		require.NoError(t, err)
-		assert.Equal(t, anthropic.OutputConfigParam{}, result.OutputConfig)
+		require.Equal(t, anthropic.OutputConfigParam{}, result.OutputConfig)
 	})
 
 	t.Run("json_schema with valid schema sets OutputConfig", func(t *testing.T) {
@@ -1359,7 +1404,7 @@ func TestConvertParams_ResponseFormat(t *testing.T) {
 
 		result, err := p.convertParams(params)
 		require.NoError(t, err)
-		assert.Equal(t, schema, result.OutputConfig.Format.Schema)
+		require.Equal(t, schema, result.OutputConfig.Format.Schema)
 	})
 }
 
