@@ -68,6 +68,12 @@ const (
 	schemaFieldRequired   = "required"
 )
 
+// Response format types.
+const (
+	responseFormatJSONObject = "json_object"
+	responseFormatJSONSchema = "json_schema"
+)
+
 // Ensure Provider implements the required interfaces.
 var (
 	_ providers.CapabilityProvider = (*Provider)(nil)
@@ -205,6 +211,16 @@ func (p *Provider) convertParams(params providers.CompletionParams) (anthropic.M
 
 	if params.ToolChoice != nil {
 		req.ToolChoice = convertToolChoice(params.ToolChoice, params.ParallelToolCalls)
+	}
+
+	if params.ResponseFormat != nil &&
+		params.ResponseFormat.Type == responseFormatJSONSchema &&
+		params.ResponseFormat.JSONSchema != nil {
+		req.OutputConfig = anthropic.OutputConfigParam{
+			Format: anthropic.JSONOutputFormatParam{
+				Schema: params.ResponseFormat.JSONSchema.Schema,
+			},
+		}
 	}
 
 	applyThinking(&req, params.ReasoningEffort, maxTokens)

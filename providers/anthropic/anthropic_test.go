@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mozilla-ai/any-llm-go/config"
@@ -1286,6 +1287,80 @@ func TestConvertError(t *testing.T) {
 			require.Contains(t, result.Error(), "["+providerName+"]")
 		})
 	}
+}
+
+func TestConvertParams_ResponseFormat(t *testing.T) {
+	t.Parallel()
+
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"answer": map[string]any{"type": "string"},
+		},
+		"required": []any{"answer"},
+	}
+
+	p, err := New(config.WithAPIKey("test-key"))
+	require.NoError(t, err)
+
+	baseParams := func() providers.CompletionParams {
+		return providers.CompletionParams{
+			Model: "claude-3-5-haiku-20241022",
+			Messages: []providers.Message{
+				{Role: providers.RoleUser, Content: []providers.ContentPart{{Text: "hello"}}},
+			},
+		}
+	}
+
+	t.Run("nil ResponseFormat leaves OutputConfig unset", func(t *testing.T) {
+		t.Parallel()
+
+		params := baseParams()
+		params.ResponseFormat = nil
+
+		result, err := p.convertParams(params)
+		require.NoError(t, err)
+		assert.Equal(t, anthropic.OutputConfigParam{}, result.OutputConfig)
+	})
+
+	t.Run("json_object type is no-op", func(t *testing.T) {
+		t.Parallel()
+
+		params := baseParams()
+		params.ResponseFormat = &providers.ResponseFormat{Type: responseFormatJSONObject}
+
+		result, err := p.convertParams(params)
+		require.NoError(t, err)
+		assert.Equal(t, anthropic.OutputConfigParam{}, result.OutputConfig)
+	})
+
+	t.Run("json_schema with nil JSONSchema is no-op", func(t *testing.T) {
+		t.Parallel()
+
+		params := baseParams()
+		params.ResponseFormat = &providers.ResponseFormat{Type: responseFormatJSONSchema, JSONSchema: nil}
+
+		result, err := p.convertParams(params)
+		require.NoError(t, err)
+		assert.Equal(t, anthropic.OutputConfigParam{}, result.OutputConfig)
+	})
+
+	t.Run("json_schema with valid schema sets OutputConfig", func(t *testing.T) {
+		t.Parallel()
+
+		params := baseParams()
+		params.ResponseFormat = &providers.ResponseFormat{
+			Type: responseFormatJSONSchema,
+			JSONSchema: &providers.JSONSchema{
+				Name:   "answer_schema",
+				Schema: schema,
+			},
+		}
+
+		result, err := p.convertParams(params)
+		require.NoError(t, err)
+		assert.Equal(t, schema, result.OutputConfig.Format.Schema)
+	})
 }
 
 // newTestAPIError creates an Anthropic API error for testing.
