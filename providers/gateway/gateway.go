@@ -599,17 +599,16 @@ func (p *Provider) RetrieveBatchResults(
 	return &result, nil
 }
 
-// batchItemPath builds a path for /v1/batches/{id}[/action]?provider=X using
-// url.URL so that batchID and provider are encoded safely.
+// batchItemPath builds a path for /v1/batches/{id}[/action]?provider=X.
+// It uses url.URL.JoinPath (Go 1.19+) which escapes each path segment
+// individually, so a batchID containing "/" or ".." is encoded as a single
+// segment rather than traversing into a sibling route.
 func batchItemPath(batchID, action, provider string) string {
-	path := batchesPath + "/" + batchID
+	u := (&url.URL{Path: batchesPath}).JoinPath(batchID)
 	if action != "" {
-		path += "/" + action
+		u = u.JoinPath(action)
 	}
-	u := url.URL{
-		Path:     path,
-		RawQuery: url.Values{providerQueryParam: {provider}}.Encode(),
-	}
+	u.RawQuery = url.Values{providerQueryParam: {provider}}.Encode()
 	return u.RequestURI()
 }
 
@@ -697,7 +696,7 @@ func (p *Provider) handleBatchError(resp *http.Response, batchID string) error {
 	// body and still produce a typed error based on status code.
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
-	detail := decodeBatchErrorBody(bodyBytes)
+	detail, parseErr := parseBatchError(bodyBytes)
 
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -707,6 +706,14 @@ func (p *Provider) handleBatchError(resp *http.Response, batchID string) error {
 		return errors.NewProviderError(providerName,
 			stderrors.New("this gateway does not support batch operations; upgrade your gateway"))
 	case http.StatusConflict:
+		// For 409 the Status field matters (it tells the caller why the
+		// batch isn't ready). If the body wasn't valid JSON, wrap the
+		// parse error so drift in the gateway's response format is
+		// visible instead of silently returning an empty Status.
+		if parseErr != nil {
+			return newBatchNotCompleteError(batchID, "",
+				fmt.Errorf("failed to parse batch error response: %w", parseErr))
+		}
 		return newBatchNotCompleteError(batchID, detail.Status, detail.toError())
 	case http.StatusUnprocessableEntity:
 		return errors.NewProviderError(providerName,
@@ -723,9 +730,9 @@ func (p *Provider) handleBatchError(resp *http.Response, batchID string) error {
 	}
 }
 
-// batchErrorBody is the structured JSON shape gateway error responses may
-// use. All fields are optional; callers must cope with arbitrary bodies.
-type batchErrorBody struct {
+// batchError is the structured JSON shape gateway error responses may use.
+// All fields are optional; callers must cope with arbitrary bodies.
+type batchError struct {
 	// Detail is the human-readable error message (FastAPI-style payload).
 	Detail string `json:"detail"`
 
@@ -739,7 +746,7 @@ type batchErrorBody struct {
 }
 
 // message returns the best human-readable description of the error body.
-func (b batchErrorBody) message() string {
+func (b batchError) message() string {
 	if b.Detail != "" {
 		return b.Detail
 	}
@@ -748,7 +755,7 @@ func (b batchErrorBody) message() string {
 
 // toError wraps message() in an error value suitable for embedding in a
 // typed error's cause chain, or nil when no detail is available.
-func (b batchErrorBody) toError() error {
+func (b batchError) toError() error {
 	msg := b.message()
 	if msg == "" {
 		return nil
@@ -756,13 +763,14 @@ func (b batchErrorBody) toError() error {
 	return stderrors.New(msg)
 }
 
-// decodeBatchErrorBody parses a gateway error response. Non-JSON bodies are
-// preserved via the raw field so callers can still surface the server's
-// text in the typed error.
-func decodeBatchErrorBody(body []byte) batchErrorBody {
-	out := batchErrorBody{raw: string(body)}
-	// Unmarshal error is ignored: responses may not be JSON (e.g. plain
-	// text from a misbehaving proxy); the raw body is used instead.
-	_ = json.Unmarshal(body, &out)
-	return out
+// parseBatchError parses a gateway error response body. The parse error is
+// returned so callers can decide per-status whether a JSON parse failure is
+// tolerable (e.g. log and fall through for generic errors) or should be
+// treated as a hard failure (e.g. for 409 where Status matters). Non-JSON
+// bodies are preserved via the raw field so callers can still surface the
+// server's text in the typed error.
+func parseBatchError(body []byte) (batchError, error) {
+	out := batchError{raw: string(body)}
+	err := json.Unmarshal(body, &out)
+	return out, err
 }
