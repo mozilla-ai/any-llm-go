@@ -3,7 +3,7 @@ module github.com/mozilla-ai/any-llm-go
 go 1.25
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.37.0
+	github.com/anthropics/anthropic-sdk-go v1.38.0
 	github.com/google/uuid v1.6.0
 	github.com/mozilla-ai/any-llm-platform-client-go v0.0.1
 	github.com/ollama/ollama v0.21.1
@@ -24,6 +24,7 @@ require (
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/kr/pretty v0.3.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
