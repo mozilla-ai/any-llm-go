@@ -507,10 +507,11 @@ func (p *Provider) Moderation(
 	ctx context.Context,
 	params providers.ModerationParams,
 ) (*providers.ModerationResponse, error) {
-	endpoint := p.baseURL + "/v1/moderations"
+	u := &url.URL{Path: "/v1/moderations"}
 	if params.IncludeRaw {
-		endpoint += "?include_raw=true"
+		u.RawQuery = url.Values{"include_raw": {"true"}}.Encode()
 	}
+	endpoint := p.baseURL + u.RequestURI()
 
 	body, err := json.Marshal(params)
 	if err != nil {
@@ -556,20 +557,23 @@ func (p *Provider) Moderation(
 // converted to *errors.UnsupportedError; other statuses go through the
 // existing ConvertError path.
 func (p *Provider) convertHTTPModerationError(statusCode int, body []byte) error {
-	detail := extractDetail(body)
+	parsed := parseModerationError(body)
 
 	// Locked phrasings from the gateway:
 	//   "Provider <name> does not support moderation"
 	//   "Provider <name> does not support multimodal moderation input"
-	if statusCode == http.StatusBadRequest &&
-		strings.Contains(detail, "does not support") &&
-		strings.Contains(detail, "moderation") {
-		providerID := parseUnsupportedProvider(detail)
+	// The 400/unsupported check depends on the Detail field being present;
+	// if the body failed to parse, skip this branch and fall through to the
+	// generic ConvertError path so we don't silently misclassify the error.
+	if statusCode == http.StatusBadRequest && parsed.parseErr == nil &&
+		strings.Contains(parsed.Detail, "does not support") &&
+		strings.Contains(parsed.Detail, "moderation") {
+		providerID := parseUnsupportedProvider(parsed.Detail)
 		operation := "moderation"
-		if strings.Contains(detail, "multimodal") {
+		if strings.Contains(parsed.Detail, "multimodal") {
 			operation = "multimodal_moderation"
 		}
-		return errors.NewUnsupportedError(providerID, operation, stderrors.New(detail))
+		return errors.NewUnsupportedError(providerID, operation, stderrors.New(parsed.Detail))
 	}
 
 	// Delegate to the existing gateway ConvertError for other statuses by
@@ -581,16 +585,41 @@ func (p *Provider) convertHTTPModerationError(statusCode int, body []byte) error
 	})
 }
 
-// extractDetail reads the "detail" field from a JSON-encoded error body and
-// falls back to the raw body if the payload is not in that shape.
-func extractDetail(body []byte) string {
+// moderationError holds the parsed fields from a gateway error response body.
+// parseErr is non-nil when the body was not valid JSON or did not contain
+// the expected "detail" field, so callers can decide per-status whether a
+// parse failure is tolerable.
+type moderationError struct {
+	Detail   string
+	raw      string
+	parseErr error
+}
+
+// message returns the best human-readable description of the error body.
+func (e moderationError) message() string {
+	if e.Detail != "" {
+		return e.Detail
+	}
+	return e.raw
+}
+
+// parseModerationError parses a gateway error response. Non-JSON bodies are
+// preserved via the raw field so callers can still surface the server's text
+// in the typed error. parseErr is set when the body cannot be decoded as
+// JSON or when the "detail" field is empty, so callers that depend on
+// structured fields (e.g. the "does not support" check) can detect drift.
+func parseModerationError(body []byte) moderationError {
+	raw := string(body)
 	var wrapper struct {
 		Detail string `json:"detail"`
 	}
-	if err := json.Unmarshal(body, &wrapper); err == nil && wrapper.Detail != "" {
-		return wrapper.Detail
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		return moderationError{raw: raw, parseErr: fmt.Errorf("unmarshal error body: %w", err)}
 	}
-	return string(body)
+	if wrapper.Detail == "" {
+		return moderationError{raw: raw, parseErr: stderrors.New("error body missing \"detail\" field")}
+	}
+	return moderationError{Detail: wrapper.Detail, raw: raw}
 }
 
 // parseUnsupportedProvider extracts the provider name from the locked error
