@@ -595,14 +595,6 @@ type moderationError struct {
 	parseErr error
 }
 
-// message returns the best human-readable description of the error body.
-func (e moderationError) message() string {
-	if e.Detail != "" {
-		return e.Detail
-	}
-	return e.raw
-}
-
 // parseModerationError parses a gateway error response. Non-JSON bodies are
 // preserved via the raw field so callers can still surface the server's text
 // in the typed error. parseErr is set when the body cannot be decoded as
