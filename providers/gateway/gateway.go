@@ -538,16 +538,12 @@ func (p *Provider) Rerank(ctx context.Context, params providers.RerankParams) (*
 // handleRerankErrorResponse parses an HTTP error response from the /v1/rerank
 // endpoint and returns a typed error.
 func (p *Provider) handleRerankErrorResponse(resp *http.Response) error {
+	// ReadAll error is ignored: if reading fails, we fall back to an empty
+	// body and still produce a typed error based on the status code.
 	body, _ := io.ReadAll(resp.Body)
-	msg := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body))
 
-	// Try to parse structured error JSON.
-	var errResp struct {
-		Detail string `json:"detail"`
-	}
-	if json.Unmarshal(body, &errResp) == nil && errResp.Detail != "" {
-		msg = errResp.Detail
-	}
+	parsed := parseRerankError(body)
+	msg := parsed.message()
 
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -565,6 +561,43 @@ func (p *Provider) handleRerankErrorResponse(resp *http.Response) error {
 	default:
 		return errors.NewProviderError(providerName, fmt.Errorf("%s", msg))
 	}
+}
+
+// rerankError holds the parsed fields from a gateway rerank error response.
+// parseErr is non-nil when the body was not valid JSON or did not contain
+// the expected "detail" field, so callers can detect drift in the gateway
+// error shape.
+type rerankError struct {
+	Detail   string
+	raw      string
+	parseErr error
+}
+
+// message returns the best human-readable description of the error body.
+func (e rerankError) message() string {
+	if e.Detail != "" {
+		return e.Detail
+	}
+	return e.raw
+}
+
+// parseRerankError parses a gateway rerank error response. Non-JSON bodies
+// are preserved via the raw field so callers can still surface the server's
+// text in the typed error. parseErr is set when the body cannot be decoded
+// as JSON or when the "detail" field is empty, making any future callers
+// that depend on structured fields aware of format drift.
+func parseRerankError(body []byte) rerankError {
+	raw := string(body)
+	var wrapper struct {
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		return rerankError{raw: raw, parseErr: fmt.Errorf("unmarshal error body: %w", err)}
+	}
+	if wrapper.Detail == "" {
+		return rerankError{raw: raw, parseErr: stderrors.New("error body missing \"detail\" field")}
+	}
+	return rerankError{Detail: wrapper.Detail, raw: raw}
 }
 
 // RoundTrip implements http.RoundTripper by cloning the request and injecting
