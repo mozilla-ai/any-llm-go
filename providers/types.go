@@ -44,7 +44,7 @@ type EmbeddingProvider interface {
 }
 
 // ModerationProvider is an optional interface for providers that support
-// content moderation. Use errors.As with *errors.UnsupportedError to detect
+// content moderation. Use errors.As with *errors.UnsupportedOperationError to detect
 // providers that do not support moderation.
 type ModerationProvider interface {
 	Provider

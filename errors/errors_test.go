@@ -97,14 +97,14 @@ func TestErrorIs(t *testing.T) {
 			wantMatch: false,
 		},
 		{
-			name:      "UnsupportedError matches ErrUnsupported",
-			err:       NewUnsupportedError("anthropic", "moderation", originalErr),
+			name:      "UnsupportedOperationError matches ErrUnsupported",
+			err:       NewUnsupportedOperationError("anthropic", "moderation", originalErr),
 			target:    ErrUnsupported,
 			wantMatch: true,
 		},
 		{
-			name:      "UnsupportedError does not match ErrUnsupportedProvider",
-			err:       NewUnsupportedError("anthropic", "moderation", originalErr),
+			name:      "UnsupportedOperationError does not match ErrUnsupportedProvider",
+			err:       NewUnsupportedOperationError("anthropic", "moderation", originalErr),
 			target:    ErrUnsupportedProvider,
 			wantMatch: false,
 		},
@@ -243,9 +243,9 @@ func TestErrorCodes(t *testing.T) {
 		require.Equal(t, CodeInsufficientFunds, err.Code)
 	})
 
-	t.Run("UnsupportedError has correct code", func(t *testing.T) {
+	t.Run("UnsupportedOperationError has correct code", func(t *testing.T) {
 		t.Parallel()
-		err := NewUnsupportedError("anthropic", "moderation", nil)
+		err := NewUnsupportedOperationError("anthropic", "moderation", nil)
 		require.Equal(t, CodeUnsupported, err.Code)
 	})
 }
@@ -297,12 +297,12 @@ func TestErrorAs(t *testing.T) {
 		require.Equal(t, "gateway", fundsErr.Provider)
 	})
 
-	t.Run("can extract UnsupportedError with Operation", func(t *testing.T) {
+	t.Run("can extract UnsupportedOperationError with Operation", func(t *testing.T) {
 		t.Parallel()
 
-		err := NewUnsupportedError("anthropic", "moderation", stderrors.New("not supported"))
+		err := NewUnsupportedOperationError("anthropic", "moderation", stderrors.New("not supported"))
 
-		var unsup *UnsupportedError
+		var unsup *UnsupportedOperationError
 		require.True(t, stderrors.As(err, &unsup))
 		require.Equal(t, "anthropic", unsup.Provider)
 		require.Equal(t, "moderation", unsup.Operation)

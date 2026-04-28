@@ -188,7 +188,7 @@ type (
 	ModelNotFoundError       = errors.ModelNotFoundError
 	ProviderError            = errors.ProviderError
 	RateLimitError           = errors.RateLimitError
-	UnsupportedError         = errors.UnsupportedError
+	UnsupportedOperationError         = errors.UnsupportedOperationError
 	UnsupportedParamError    = errors.UnsupportedParamError
 	UnsupportedProviderError = errors.UnsupportedProviderError
 )

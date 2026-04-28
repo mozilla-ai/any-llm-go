@@ -498,9 +498,9 @@ func (p *Provider) Embedding(
 // The openai-go SDK exposes a moderations resource, but we issue the HTTP
 // call directly here to control the include_raw query parameter and the
 // gateway-specific error shape (notably the "does not support moderation"
-// 400 that maps to *errors.UnsupportedError).
+// 400 that maps to *errors.UnsupportedOperationError).
 //
-// Returns an *errors.UnsupportedError (matching errors.ErrUnsupported) when
+// Returns an *errors.UnsupportedOperationError (matching errors.ErrUnsupported) when
 // the gateway reports that the chosen backend provider does not support
 // moderation.
 func (p *Provider) Moderation(
@@ -554,7 +554,7 @@ func (p *Provider) Moderation(
 
 // convertHTTPModerationError maps a non-200 response from /v1/moderations to
 // a typed error. 400 bodies containing "does not support moderation" are
-// converted to *errors.UnsupportedError; other statuses go through the
+// converted to *errors.UnsupportedOperationError; other statuses go through the
 // existing ConvertError path.
 func (p *Provider) convertHTTPModerationError(statusCode int, body []byte) error {
 	parsed := parseModerationError(body)
@@ -573,7 +573,7 @@ func (p *Provider) convertHTTPModerationError(statusCode int, body []byte) error
 		if strings.Contains(parsed.Detail, "multimodal") {
 			operation = "multimodal_moderation"
 		}
-		return errors.NewUnsupportedError(providerID, operation, stderrors.New(parsed.Detail))
+		return errors.NewUnsupportedOperationError(providerID, operation, stderrors.New(parsed.Detail))
 	}
 
 	// Delegate to the existing gateway ConvertError for other statuses by

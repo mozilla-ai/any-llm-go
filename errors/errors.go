@@ -158,16 +158,16 @@ type InsufficientFundsError struct {
 	BaseError
 }
 
-// UnsupportedError indicates a provider does not support a given operation
+// UnsupportedOperationError indicates a provider does not support a given operation
 // (e.g. moderation). Use errors.As to detect:
 //
-//	var unsup *errors.UnsupportedError
+//	var unsup *errors.UnsupportedOperationError
 //	if errors.As(err, &unsup) {
 //	    // unsup.Operation, unsup.Provider ...
 //	}
 //
 // Also matches errors.Is(err, ErrUnsupported).
-type UnsupportedError struct {
+type UnsupportedOperationError struct {
 	BaseError
 	// Operation names the unsupported capability (e.g. "moderation",
 	// "multimodal_moderation").
@@ -311,10 +311,10 @@ func NewInsufficientFundsError(provider string, err error) *InsufficientFundsErr
 	}
 }
 
-// NewUnsupportedError creates a new UnsupportedError for the given provider
+// NewUnsupportedOperationError creates a new UnsupportedOperationError for the given provider
 // and operation (e.g. "moderation").
-func NewUnsupportedError(provider, operation string, err error) *UnsupportedError {
-	return &UnsupportedError{
+func NewUnsupportedOperationError(provider, operation string, err error) *UnsupportedOperationError {
+	return &UnsupportedOperationError{
 		BaseError: New(CodeUnsupported, provider, err, ErrUnsupported),
 		Operation: operation,
 	}

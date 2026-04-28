@@ -1950,8 +1950,8 @@ func TestModerationUnsupportedProvider(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	var unsup *errors.UnsupportedError
-	require.True(t, stderrors.As(err, &unsup), "expected *UnsupportedError, got %T", err)
+	var unsup *errors.UnsupportedOperationError
+	require.True(t, stderrors.As(err, &unsup), "expected *UnsupportedOperationError, got %T", err)
 	require.Equal(t, "anthropic", unsup.Provider)
 	require.Equal(t, "moderation", unsup.Operation)
 	require.True(t, stderrors.Is(err, errors.ErrUnsupported))
@@ -1981,8 +1981,8 @@ func TestModerationUnsupportedMultimodal(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	var unsup *errors.UnsupportedError
-	require.True(t, stderrors.As(err, &unsup), "expected *UnsupportedError, got %T", err)
+	var unsup *errors.UnsupportedOperationError
+	require.True(t, stderrors.As(err, &unsup), "expected *UnsupportedOperationError, got %T", err)
 	require.Equal(t, "mistral", unsup.Provider)
 	require.Equal(t, "multimodal_moderation", unsup.Operation)
 	require.True(t, stderrors.Is(err, errors.ErrUnsupported))

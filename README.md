@@ -264,7 +264,7 @@ for _, model := range models.Data {
 ### Moderation
 
 The gateway provider supports OpenAI-compatible content moderation. Use
-`errors.As` with `*anyllm.UnsupportedError` (or `errors.Is` with
+`errors.As` with `*anyllm.UnsupportedOperationError` (or `errors.Is` with
 `anyllm.ErrUnsupported`) to detect providers that do not support moderation.
 
 ```go
@@ -286,7 +286,7 @@ resp, err := provider.Moderation(ctx, anyllm.ModerationParams{
     Input: "I want to hurt someone",
 })
 if err != nil {
-    var unsup *anyllm.UnsupportedError
+    var unsup *anyllm.UnsupportedOperationError
     if stderrors.As(err, &unsup) {
         // Provider does not support moderation; pick another model.
         log.Printf("%s cannot do %s", unsup.Provider, unsup.Operation)
