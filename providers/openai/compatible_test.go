@@ -2,7 +2,10 @@ package openai
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -401,5 +404,56 @@ func TestStreamingContextCancellation(t *testing.T) {
 		<-errs
 
 		// Test passes if it doesn't hang.
+	})
+
+	// Regression for #85: when the caller cancels the context, the consumer
+	// reading from `errs` should receive `context.Canceled` (not a closed
+	// channel with no value) so it can distinguish "stream finished cleanly"
+	// from "I cancelled the request".
+	t.Run("surfaces ctx.Err on cancellation", func(t *testing.T) {
+		t.Parallel()
+
+		// Slow upstream: holds the connection open until the test cancels.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			<-r.Context().Done()
+		}))
+		t.Cleanup(srv.Close)
+
+		provider, err := NewCompatible(CompatibleConfig{
+			Name:           "test-provider",
+			DefaultBaseURL: srv.URL + "/v1",
+			DefaultAPIKey:  "test-key",
+		})
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		params := providers.CompletionParams{
+			Model:    "test-model",
+			Messages: []providers.Message{{Role: providers.RoleUser, Content: "Hello"}},
+		}
+
+		chunks, errs := provider.CompletionStream(ctx, params)
+
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			cancel()
+		}()
+
+		// Drain chunks until the channel closes.
+		for range chunks {
+		}
+
+		select {
+		case got, ok := <-errs:
+			require.True(t, ok, "errs should yield a value before close")
+			require.ErrorIs(t, got, context.Canceled)
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected an error on errs after cancellation, got nothing")
+		}
 	})
 }
