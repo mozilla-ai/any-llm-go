@@ -3,7 +3,7 @@ module github.com/mozilla-ai/any-llm-go
 go 1.25
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.38.0
+	github.com/anthropics/anthropic-sdk-go v1.41.0
 	github.com/google/uuid v1.6.0
 	github.com/mozilla-ai/any-llm-platform-client-go v0.0.1
 	github.com/ollama/ollama v0.23.0
@@ -29,6 +29,7 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rogpeppe/go-internal v1.8.0 // indirect
+	github.com/standard-webhooks/standard-webhooks/libraries v0.0.0-20260427160145-3afa6683f8b2 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
