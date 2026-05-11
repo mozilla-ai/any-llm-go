@@ -1406,6 +1406,47 @@ func TestConvertParams_ResponseFormat(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, schema, result.OutputConfig.Format.Schema)
 	})
+
+	t.Run("unsupported JSONSchema fields are not forwarded", func(t *testing.T) {
+		t.Parallel()
+
+		strict := true
+		params := baseParams()
+		params.ResponseFormat = &providers.ResponseFormat{
+			Type: responseFormatJSONSchema,
+			JSONSchema: &providers.JSONSchema{
+				Name:        "answer_schema",
+				Description: "A schema for answers",
+				Strict:      &strict,
+				Schema:      schema,
+			},
+		}
+
+		result, err := p.convertParams(params)
+		require.NoError(t, err)
+		require.Equal(t, schema, result.OutputConfig.Format.Schema)
+		// JSONOutputFormatParam only has Schema and Type fields;
+		// Name, Description, and Strict have no destination.
+		require.Equal(t, anthropic.JSONOutputFormatParam{Schema: schema}, result.OutputConfig.Format)
+	})
+
+	t.Run("streaming path also receives OutputConfig", func(t *testing.T) {
+		t.Parallel()
+
+		params := baseParams()
+		params.Stream = true
+		params.ResponseFormat = &providers.ResponseFormat{
+			Type: responseFormatJSONSchema,
+			JSONSchema: &providers.JSONSchema{
+				Name:   "answer_schema",
+				Schema: schema,
+			},
+		}
+
+		result, err := p.convertParams(params)
+		require.NoError(t, err)
+		require.Equal(t, schema, result.OutputConfig.Format.Schema)
+	})
 }
 
 // newTestAPIError creates an Anthropic API error for testing.
