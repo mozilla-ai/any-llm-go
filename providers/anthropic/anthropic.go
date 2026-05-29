@@ -90,13 +90,15 @@ type Provider struct {
 // streamState tracks accumulated state during streaming.
 // Note: Only accessed from a single goroutine, so no synchronization needed.
 type streamState struct {
-	messageID      string
-	model          string
-	content        strings.Builder
-	reasoning      strings.Builder
-	toolCalls      []providers.ToolCall
-	currentToolIdx int
-	inputUsage     int64
+	messageID       string
+	model           string
+	content         strings.Builder
+	reasoning       strings.Builder
+	toolCalls       []providers.ToolCall
+	currentToolIdx  int
+	inputUsage      int64
+	cacheReadUsage  int64
+	cacheWriteUsage int64
 }
 
 // New creates a new Anthropic provider.
@@ -216,6 +218,10 @@ func (p *Provider) convertParams(params providers.CompletionParams) (anthropic.M
 	applyResponseFormat(&req, params.ResponseFormat)
 
 	applyThinking(&req, params.ReasoningEffort, maxTokens)
+
+	if params.CachePrompt {
+		applyPromptCaching(&req)
+	}
 
 	return req, nil
 }
@@ -349,6 +355,8 @@ func (s *streamState) handleMessageDelta(event anthropic.MessageDeltaEvent) prov
 		PromptTokens:     int(s.inputUsage),
 		CompletionTokens: int(event.Usage.OutputTokens),
 		TotalTokens:      int(s.inputUsage + event.Usage.OutputTokens),
+		CacheReadTokens:  int(s.cacheReadUsage),
+		CacheWriteTokens: int(s.cacheWriteUsage),
 	}
 	return chunk
 }
@@ -358,6 +366,8 @@ func (s *streamState) handleMessageStart(event anthropic.MessageStartEvent) prov
 	s.messageID = event.Message.ID
 	s.model = string(event.Message.Model)
 	s.inputUsage = event.Message.Usage.InputTokens
+	s.cacheReadUsage = event.Message.Usage.CacheReadInputTokens
+	s.cacheWriteUsage = event.Message.Usage.CacheCreationInputTokens
 
 	return s.chunk(providers.ChunkDelta{Role: providers.RoleAssistant})
 }
@@ -376,6 +386,22 @@ func (s *streamState) handleTextDelta(text string) *providers.ChatCompletionChun
 	s.content.WriteString(text)
 	chunk := s.chunk(providers.ChunkDelta{Content: text})
 	return &chunk
+}
+
+// applyPromptCaching marks the stable prompt prefix with ephemeral
+// cache_control breakpoints so Anthropic reuses it across requests. The
+// breakpoint on the last tool caches the tools block; the breakpoint on the
+// last system block caches the tools+system prefix. Both are no-ops below the
+// model's minimum cacheable length, so this is always safe to set.
+func applyPromptCaching(req *anthropic.MessageNewParams) {
+	if n := len(req.Tools); n > 0 {
+		if t := req.Tools[n-1].OfTool; t != nil {
+			t.CacheControl = anthropic.NewCacheControlEphemeralParam()
+		}
+	}
+	if n := len(req.System); n > 0 {
+		req.System[n-1].CacheControl = anthropic.NewCacheControlEphemeralParam()
+	}
 }
 
 // applyThinking configures thinking/reasoning on the request if applicable.
@@ -548,6 +574,8 @@ func convertResponse(resp *anthropic.Message) *providers.ChatCompletion {
 			PromptTokens:     int(resp.Usage.InputTokens),
 			CompletionTokens: int(resp.Usage.OutputTokens),
 			TotalTokens:      int(resp.Usage.InputTokens + resp.Usage.OutputTokens),
+			CacheReadTokens:  int(resp.Usage.CacheReadInputTokens),
+			CacheWriteTokens: int(resp.Usage.CacheCreationInputTokens),
 		},
 	}
 }

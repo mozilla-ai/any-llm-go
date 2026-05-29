@@ -1462,3 +1462,99 @@ func newTestAPIError(t *testing.T, statusCode int) *anthropic.Error {
 		Response:   &http.Response{StatusCode: statusCode},
 	}
 }
+
+func TestConvertParams_CachePrompt(t *testing.T) {
+	t.Parallel()
+
+	p, err := New(config.WithAPIKey("test-key"))
+	require.NoError(t, err)
+
+	baseParams := func() providers.CompletionParams {
+		return providers.CompletionParams{
+			Model: "claude-3-5-haiku-20241022",
+			Messages: []providers.Message{
+				{Role: providers.RoleSystem, Content: "you are helpful"},
+				{Role: providers.RoleUser, Content: []providers.ContentPart{{Text: "hi"}}},
+			},
+			Tools: []providers.Tool{
+				{Function: providers.Function{Name: "get_time", Description: "get the time"}},
+			},
+		}
+	}
+
+	marshal := func(t *testing.T, req anthropic.MessageNewParams) string {
+		t.Helper()
+		b, err := json.Marshal(req)
+		require.NoError(t, err)
+		return string(b)
+	}
+
+	t.Run("CachePrompt false adds no cache_control", func(t *testing.T) {
+		t.Parallel()
+
+		params := baseParams()
+		params.CachePrompt = false
+
+		req, err := p.convertParams(params)
+		require.NoError(t, err)
+		require.NotContains(t, marshal(t, req), "cache_control")
+	})
+
+	t.Run("CachePrompt true marks last system block and last tool", func(t *testing.T) {
+		t.Parallel()
+
+		params := baseParams()
+		params.CachePrompt = true
+
+		req, err := p.convertParams(params)
+		require.NoError(t, err)
+
+		require.Len(t, req.System, 1)
+		require.Equal(t, "ephemeral", string(req.System[0].CacheControl.Type))
+
+		require.Len(t, req.Tools, 1)
+		require.NotNil(t, req.Tools[0].OfTool)
+		require.Equal(t, "ephemeral", string(req.Tools[0].OfTool.CacheControl.Type))
+	})
+
+	t.Run("CachePrompt true with tools but no system marks the tool only", func(t *testing.T) {
+		t.Parallel()
+
+		params := baseParams()
+		params.CachePrompt = true
+		params.Messages = []providers.Message{
+			{Role: providers.RoleUser, Content: []providers.ContentPart{{Text: "hi"}}},
+		}
+
+		req, err := p.convertParams(params)
+		require.NoError(t, err)
+		require.Empty(t, req.System)
+		require.Len(t, req.Tools, 1)
+		require.Equal(t, "ephemeral", string(req.Tools[0].OfTool.CacheControl.Type))
+	})
+}
+
+func TestStreamStateCacheUsage(t *testing.T) {
+	t.Parallel()
+
+	s := newStreamState()
+	s.handleMessageStart(anthropic.MessageStartEvent{
+		Message: anthropic.Message{
+			Usage: anthropic.Usage{
+				InputTokens:              10,
+				CacheReadInputTokens:     1000,
+				CacheCreationInputTokens: 200,
+			},
+		},
+	})
+
+	chunk := s.handleMessageDelta(anthropic.MessageDeltaEvent{
+		Usage: anthropic.MessageDeltaUsage{OutputTokens: 5},
+	})
+
+	require.NotNil(t, chunk.Usage)
+	require.Equal(t, 10, chunk.Usage.PromptTokens)
+	require.Equal(t, 5, chunk.Usage.CompletionTokens)
+	require.Equal(t, 1000, chunk.Usage.CacheReadTokens)
+	require.Equal(t, 200, chunk.Usage.CacheWriteTokens)
+}
