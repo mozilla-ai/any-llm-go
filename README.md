@@ -333,6 +333,7 @@ if errors.As(err, &rateLimitErr) {
 |  Provider  | Completion  |  Streaming  |  Tools |  Reasoning  |  Embeddings  |
 |:----------:|:-----------:|:-----------:|:------:|:-----------:|:------------:|
 | Anthropic  |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
+| Azure OpenAI |    ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |  DeepSeek  |      ✅      |      ✅      |      ✅ |      ✅      |      ❌       |
 |   Gemini   |      ✅      |      ✅      |      ✅ |      ✅      |      ✅       |
 |    Groq    |      ✅      |      ✅      |      ✅ |      ❌      |      ❌       |

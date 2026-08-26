@@ -24,15 +24,19 @@ import (
 const (
 	envAPIKey       = "GEMINI_API_KEY"
 	envAPIKeyGoogle = "GOOGLE_API_KEY"
+	envBaseURL      = "GOOGLE_GEMINI_BASE_URL"
 	providerName    = "gemini"
 )
 
 // Default thinking budgets for reasoning effort levels.
 // These match the Python any-llm library.
 const (
-	thinkingBudgetHigh   int32 = 24576
-	thinkingBudgetLow    int32 = 1024
-	thinkingBudgetMedium int32 = 8192
+	thinkingBudgetHigh    int32 = 24576
+	thinkingBudgetLow     int32 = 1024
+	thinkingBudgetMax     int32 = 32768
+	thinkingBudgetMedium  int32 = 8192
+	thinkingBudgetMinimal int32 = 256
+	thinkingBudgetXHigh   int32 = 32768
 )
 
 // Content part types.
@@ -132,11 +136,21 @@ func New(opts ...config.Option) (*Provider, error) {
 		return nil, errors.NewMissingAPIKeyError(providerName, envAPIKey)
 	}
 
-	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+	baseURL, err := cfg.ResolveBaseURL(envBaseURL, "")
+	if err != nil {
+		return nil, err
+	}
+
+	clientCfg := &genai.ClientConfig{
 		APIKey:     apiKey,
 		Backend:    genai.BackendGeminiAPI,
 		HTTPClient: cfg.HTTPClient(),
-	})
+	}
+	if baseURL != "" {
+		clientCfg.HTTPOptions.BaseURL = baseURL
+	}
+
+	client, err := genai.NewClient(context.Background(), clientCfg)
 	if err != nil {
 		return nil, fmt.Errorf("creating Gemini client: %w", err)
 	}
@@ -381,7 +395,7 @@ func (p *Provider) convertParams(params providers.CompletionParams) ([]*genai.Co
 		cfg.ToolConfig = convertToolChoice(params.ToolChoice)
 	}
 
-	applyThinking(cfg, params.ReasoningEffort)
+	applyThinking(cfg, params.Model, params.ReasoningEffort)
 
 	if params.ResponseFormat != nil {
 		applyResponseFormat(cfg, params.ResponseFormat)
@@ -509,8 +523,20 @@ func applyResponseFormat(cfg *genai.GenerateContentConfig, format *providers.Res
 }
 
 // applyThinking configures thinking/reasoning on the config if applicable.
-func applyThinking(cfg *genai.GenerateContentConfig, effort providers.ReasoningEffort) {
+func applyThinking(cfg *genai.GenerateContentConfig, model string, effort providers.ReasoningEffort) {
 	if effort == "" || effort == providers.ReasoningEffortNone {
+		return
+	}
+
+	if usesThinkingLevel(model) {
+		level, ok := thinkingLevel(effort)
+		if !ok {
+			return
+		}
+		cfg.ThinkingConfig = &genai.ThinkingConfig{
+			IncludeThoughts: true,
+			ThinkingLevel:   level,
+		}
 		return
 	}
 
@@ -954,13 +980,78 @@ func thoughtSignatureFromExtra(extra map[string]providers.ProviderData) []byte {
 // thinkingBudget returns the token budget for the given reasoning effort.
 func thinkingBudget(effort providers.ReasoningEffort) (int32, bool) {
 	switch effort {
+	case providers.ReasoningEffortMinimal:
+		return thinkingBudgetMinimal, true
 	case providers.ReasoningEffortLow:
 		return thinkingBudgetLow, true
 	case providers.ReasoningEffortMedium:
 		return thinkingBudgetMedium, true
 	case providers.ReasoningEffortHigh:
 		return thinkingBudgetHigh, true
+	case providers.ReasoningEffortXHigh:
+		return thinkingBudgetXHigh, true
+	case providers.ReasoningEffortMax:
+		return thinkingBudgetMax, true
 	default:
 		return 0, false
 	}
+}
+
+// thinkingLevel returns the Gemini thinking_level for the given reasoning effort.
+func thinkingLevel(effort providers.ReasoningEffort) (genai.ThinkingLevel, bool) {
+	switch effort {
+	case providers.ReasoningEffortMinimal:
+		return genai.ThinkingLevelMinimal, true
+	case providers.ReasoningEffortLow:
+		return genai.ThinkingLevelLow, true
+	case providers.ReasoningEffortMedium:
+		return genai.ThinkingLevelMedium, true
+	case providers.ReasoningEffortHigh, providers.ReasoningEffortXHigh, providers.ReasoningEffortMax:
+		return genai.ThinkingLevelHigh, true
+	default:
+		return "", false
+	}
+}
+
+// usesThinkingLevel reports whether the model expects thinking_level instead of
+// thinking_budget. Gemini 3.5 and newer reject thinking_budget.
+func usesThinkingLevel(modelID string) bool {
+	major, minor, ok := parseGeminiVersion(modelID)
+	if !ok {
+		return false
+	}
+	return major > 3 || (major == 3 && minor >= 5)
+}
+
+// parseGeminiVersion extracts the major and minor version from a Gemini model ID.
+func parseGeminiVersion(modelID string) (int, int, bool) {
+	lower := strings.ToLower(modelID)
+	idx := strings.Index(lower, "gemini-")
+	if idx < 0 {
+		return 0, 0, false
+	}
+	rest := lower[idx+len("gemini-"):]
+	if rest == "" || rest[0] < '0' || rest[0] > '9' {
+		return 0, 0, false
+	}
+
+	major := 0
+	i := 0
+	for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+		major = major*10 + int(rest[i]-'0')
+		i++
+	}
+	if i >= len(rest) || rest[i] != '.' {
+		return major, 0, true
+	}
+	i++
+	minor := 0
+	if i >= len(rest) || rest[i] < '0' || rest[i] > '9' {
+		return major, 0, true
+	}
+	for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+		minor = minor*10 + int(rest[i]-'0')
+		i++
+	}
+	return major, minor, true
 }

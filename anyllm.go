@@ -53,11 +53,14 @@ const (
 
 // ReasoningEffort levels.
 const (
-	ReasoningEffortAuto   = providers.ReasoningEffortAuto
-	ReasoningEffortHigh   = providers.ReasoningEffortHigh
-	ReasoningEffortLow    = providers.ReasoningEffortLow
-	ReasoningEffortMedium = providers.ReasoningEffortMedium
-	ReasoningEffortNone   = providers.ReasoningEffortNone
+	ReasoningEffortAuto    = providers.ReasoningEffortAuto
+	ReasoningEffortHigh    = providers.ReasoningEffortHigh
+	ReasoningEffortLow     = providers.ReasoningEffortLow
+	ReasoningEffortMax     = providers.ReasoningEffortMax
+	ReasoningEffortMedium  = providers.ReasoningEffortMedium
+	ReasoningEffortMinimal = providers.ReasoningEffortMinimal
+	ReasoningEffortNone    = providers.ReasoningEffortNone
+	ReasoningEffortXHigh   = providers.ReasoningEffortXHigh
 )
 
 // Provider types.
@@ -70,6 +73,7 @@ type (
 	ModerationProvider = providers.ModerationProvider
 	Provider           = providers.Provider
 	RerankProvider     = providers.RerankProvider
+	ResponsesProvider  = providers.ResponsesProvider
 )
 
 // Batch types.
@@ -98,6 +102,9 @@ type (
 	ModerationParams    = providers.ModerationParams
 	ModerationResponse  = providers.ModerationResponse
 	ModerationResult    = providers.ModerationResult
+	ResponsesInputItem  = providers.ResponsesInputItem
+	ResponsesParams     = providers.ResponsesParams
+	ResponsesResult     = providers.ResponsesResult
 )
 
 // Message types.
@@ -178,17 +185,17 @@ var (
 
 // Error types.
 type (
-	AuthenticationError           = errors.AuthenticationError
-	BaseError                     = errors.BaseError
-	ContentFilterError            = errors.ContentFilterError
-	ContextLengthError            = errors.ContextLengthError
-	InsufficientFundsError        = errors.InsufficientFundsError
-	InvalidRequestError           = errors.InvalidRequestError
-	MissingAPIKeyError            = errors.MissingAPIKeyError
-	ModelNotFoundError            = errors.ModelNotFoundError
-	ProviderError                 = errors.ProviderError
-	RateLimitError                = errors.RateLimitError
-	UnsupportedOperationError     = errors.UnsupportedOperationError
-	UnsupportedParamError         = errors.UnsupportedParamError
-	UnsupportedProviderError      = errors.UnsupportedProviderError
+	AuthenticationError       = errors.AuthenticationError
+	BaseError                 = errors.BaseError
+	ContentFilterError        = errors.ContentFilterError
+	ContextLengthError        = errors.ContextLengthError
+	InsufficientFundsError    = errors.InsufficientFundsError
+	InvalidRequestError       = errors.InvalidRequestError
+	MissingAPIKeyError        = errors.MissingAPIKeyError
+	ModelNotFoundError        = errors.ModelNotFoundError
+	ProviderError             = errors.ProviderError
+	RateLimitError            = errors.RateLimitError
+	UnsupportedOperationError = errors.UnsupportedOperationError
+	UnsupportedParamError     = errors.UnsupportedParamError
+	UnsupportedProviderError  = errors.UnsupportedProviderError
 )

@@ -76,6 +76,11 @@ type CompatibleConfig struct {
 	// function must not retain it beyond the call. Nil means no transformation.
 	ChatCompletionRequestTransform func(*openai.ChatCompletionNewParams)
 
+	// ClientOptions replaces the default client construction (API key, HTTP
+	// client, and base URL) when non-nil. Used by Azure OpenAI for Api-Key
+	// authentication and api-version query routing.
+	ClientOptions []option.RequestOption
+
 	// RequireAPIKey indicates whether an API key is required.
 	RequireAPIKey bool
 
@@ -142,13 +147,15 @@ func NewCompatible(compatCfg CompatibleConfig, opts ...config.Option) (*Compatib
 		apiKey = compatCfg.DefaultAPIKey
 	}
 
-	clientOpts := []option.RequestOption{
-		option.WithAPIKey(apiKey),
-		option.WithHTTPClient(cfg.HTTPClient()),
-	}
-
-	if baseURL != "" {
-		clientOpts = append(clientOpts, option.WithBaseURL(baseURL))
+	clientOpts := compatCfg.ClientOptions
+	if clientOpts == nil {
+		clientOpts = []option.RequestOption{
+			option.WithAPIKey(apiKey),
+			option.WithHTTPClient(cfg.HTTPClient()),
+		}
+		if baseURL != "" {
+			clientOpts = append(clientOpts, option.WithBaseURL(baseURL))
+		}
 	}
 
 	return &CompatibleProvider{

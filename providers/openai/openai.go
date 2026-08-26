@@ -19,6 +19,7 @@ var (
 	_ providers.ErrorConverter     = (*Provider)(nil)
 	_ providers.ModelLister        = (*Provider)(nil)
 	_ providers.Provider           = (*Provider)(nil)
+	_ providers.ResponsesProvider  = (*Provider)(nil)
 )
 
 // Provider implements the providers.Provider interface for OpenAI.
@@ -54,5 +55,6 @@ func capabilities() providers.Capabilities {
 		CompletionTools:     true,
 		Embedding:           true,
 		ListModels:          true,
+		Responses:           true,
 	}
 }

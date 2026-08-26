@@ -6,9 +6,10 @@ any-llm-go supports multiple LLM providers through a unified interface. Each pro
 
 | Provider                | ID          | Completion | Streaming | Tools | Reasoning | Embeddings | List Models |
 |-------------------------|:------------|:----------:|:---------:|:-----:|:---------:|:----------:|:-----------:|
-| [Anthropic](#anthropic) | `anthropic` |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |      ❌      |
-| [DeepSeek](#deepseek)   | `deepseek`  |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |      ✅      |
-| [Gemini](#gemini)       | `gemini`    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |      ✅      |
+| [Anthropic](#anthropic)     | `anthropic`    |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |      ❌      |
+| [Azure OpenAI](#azure-openai) | `azureopenai` |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |      ✅      |
+| [DeepSeek](#deepseek)       | `deepseek`     |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |      ✅      |
+| [Gemini](#gemini)           | `gemini`       |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |      ✅      |
 | [Groq](#groq)           | `groq`      |     ✅      |     ✅     |   ✅   |     ❌     |     ❌      |      ✅      |
 | [llama.cpp](#llamacpp)   | `llamacpp`  |     ✅      |     ✅     |   ✅   |     ❌     |     ✅      |      ✅      |
 | [Llamafile](#llamafile) | `llamafile` |     ✅      |     ✅     |   ✅   |     ❌     |     ✅      |      ✅      |
@@ -27,6 +28,29 @@ any-llm-go supports multiple LLM providers through a unified interface. Each pro
 - **List Models** - API to list available models
 
 ## Provider Details
+
+### Azure OpenAI
+
+```go
+import (
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/azureopenai"
+)
+
+provider, err := azureopenai.New(
+    anyllm.WithAPIKey("your-azure-openai-key"),
+    anyllm.WithBaseURL("https://example.openai.azure.com"),
+)
+```
+
+**Environment Variables:** `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`
+
+Optional:
+
+- `AZURE_OPENAI_API_VERSION` (default `preview`)
+- `anyllm.WithExtra("api_version", "2025-04-01-preview")`
+
+The `Model` field is the Azure deployment name. Azure OpenAI also supports the Responses API through `ResponsesProvider`.
 
 ### Anthropic
 
@@ -126,6 +150,8 @@ provider, err := gemini.New(anyllm.WithAPIKey("your-key"))
 
 **Environment Variables:** `GEMINI_API_KEY` or `GOOGLE_API_KEY`
 
+Optional base URL: `GOOGLE_GEMINI_BASE_URL` or `anyllm.WithBaseURL(...)`.
+
 **Popular Models:**
 - `gemini-2.5-flash` - Fast and cost-effective
 - `gemini-2.5-pro` - Most capable model
@@ -142,7 +168,7 @@ Gemini models support extended thinking for complex reasoning tasks:
 response, err := provider.Completion(ctx, anyllm.CompletionParams{
     Model: "gemini-3-flash-preview",
     Messages: messages,
-    ReasoningEffort: anyllm.ReasoningEffortMedium, // low, medium, or high
+    ReasoningEffort: anyllm.ReasoningEffortMedium, // minimal, low, medium, high, xhigh, or max
 })
 
 // Access the thinking content.
@@ -440,14 +466,16 @@ provider, err := openai.New()
 // Or with explicit API key.
 provider, err := openai.New(anyllm.WithAPIKey("sk-..."))
 
-// Or with custom base URL (for Azure, proxies, etc.).
+// Or with a custom base URL (proxies or OpenAI-compatible endpoints).
 provider, err := openai.New(
     anyllm.WithAPIKey("your-key"),
-    anyllm.WithBaseURL("https://your-endpoint.openai.azure.com"),
+    anyllm.WithBaseURL("https://openai-proxy.example/v1"),
 )
 ```
 
 **Environment Variable:** `OPENAI_API_KEY`
+
+OpenAI also implements `ResponsesProvider` for the Responses API.
 
 **Popular Models:**
 - `gpt-4o` - Most capable model
@@ -507,7 +535,6 @@ The following providers are planned for future releases:
 | Cohere       | Planned                                           |
 | Together AI  | Planned                                           |
 | AWS Bedrock  | Planned                                           |
-| Azure OpenAI | Planned (use OpenAI with custom base URL for now) |
 
 ## Adding a New Provider
 

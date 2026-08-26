@@ -16,11 +16,14 @@ const (
 
 // Reasoning effort levels for extended thinking.
 const (
-	ReasoningEffortAuto   ReasoningEffort = "auto"
-	ReasoningEffortHigh   ReasoningEffort = "high"
-	ReasoningEffortLow    ReasoningEffort = "low"
-	ReasoningEffortMedium ReasoningEffort = "medium"
-	ReasoningEffortNone   ReasoningEffort = "none"
+	ReasoningEffortAuto    ReasoningEffort = "auto"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMax     ReasoningEffort = "max"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortNone    ReasoningEffort = "none"
+	ReasoningEffortXHigh   ReasoningEffort = "xhigh"
 )
 
 // Message roles.
@@ -71,6 +74,13 @@ type RerankProvider interface {
 	Rerank(ctx context.Context, params RerankParams) (*RerankResponse, error)
 }
 
+// ResponsesProvider is an optional interface for providers that support the
+// OpenAI Responses API.
+type ResponsesProvider interface {
+	Provider
+	Responses(ctx context.Context, params ResponsesParams) (*ResponsesResult, error)
+}
+
 // Provider is the core interface that all LLM providers must implement.
 type Provider interface {
 	// Name returns the provider's identifier (e.g., "openai", "anthropic").
@@ -95,12 +105,13 @@ type Capabilities struct {
 	CompletionImage     bool
 	CompletionPDF       bool
 	CompletionReasoning bool
-	CompletionStreaming  bool
+	CompletionStreaming bool
 	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
 	Moderation          bool
 	Rerank              bool
+	Responses           bool
 }
 
 // ChatCompletion represents a chat completion response in OpenAI format.
@@ -245,6 +256,28 @@ type RerankParams struct {
 	Query           string   `json:"query"`
 	TopN            *int     `json:"top_n,omitempty"`
 	User            string   `json:"user,omitempty"`
+}
+
+// ResponsesInputItem is a single Responses API input item.
+type ResponsesInputItem struct {
+	Content string `json:"content"`
+	Role    string `json:"role"`
+}
+
+// ResponsesParams represents normalized parameters for the OpenAI Responses API.
+type ResponsesParams struct {
+	Input        []ResponsesInputItem `json:"input"`
+	Instructions string               `json:"instructions,omitempty"`
+	MaxTokens    *int                 `json:"max_output_tokens,omitempty"`
+	Model        string               `json:"model"`
+	Reasoning    ReasoningEffort      `json:"reasoning_effort,omitempty"`
+}
+
+// ResponsesResult is a normalized Responses API result.
+type ResponsesResult struct {
+	ID     string `json:"id"`
+	Model  string `json:"model"`
+	Output string `json:"output"`
 }
 
 // RerankResponse represents a rerank response.

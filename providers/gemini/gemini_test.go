@@ -55,6 +55,17 @@ func TestNew(t *testing.T) {
 		require.Equal(t, providerName, missingKeyErr.Provider)
 		require.Equal(t, envAPIKey, missingKeyErr.EnvVar)
 	})
+
+	t.Run("creates provider with custom base URL", func(t *testing.T) {
+		t.Parallel()
+
+		provider, err := New(
+			config.WithAPIKey("test-api-key"),
+			config.WithBaseURL("https://gemini-proxy.example"),
+		)
+		require.NoError(t, err)
+		require.NotNil(t, provider)
+	})
 }
 
 func TestCapabilities(t *testing.T) {
@@ -535,6 +546,12 @@ func TestThinkingBudget(t *testing.T) {
 		ok       bool
 	}{
 		{
+			name:     "minimal effort",
+			effort:   providers.ReasoningEffortMinimal,
+			expected: thinkingBudgetMinimal,
+			ok:       true,
+		},
+		{
 			name:     "low effort",
 			effort:   providers.ReasoningEffortLow,
 			expected: thinkingBudgetLow,
@@ -550,6 +567,18 @@ func TestThinkingBudget(t *testing.T) {
 			name:     "high effort",
 			effort:   providers.ReasoningEffortHigh,
 			expected: thinkingBudgetHigh,
+			ok:       true,
+		},
+		{
+			name:     "xhigh effort",
+			effort:   providers.ReasoningEffortXHigh,
+			expected: thinkingBudgetXHigh,
+			ok:       true,
+		},
+		{
+			name:     "max effort",
+			effort:   providers.ReasoningEffortMax,
+			expected: thinkingBudgetMax,
 			ok:       true,
 		},
 		{
@@ -584,7 +613,7 @@ func TestApplyThinking(t *testing.T) {
 		t.Parallel()
 
 		cfg := &genai.GenerateContentConfig{}
-		applyThinking(cfg, "")
+		applyThinking(cfg, "gemini-2.5-flash", "")
 		require.Nil(t, cfg.ThinkingConfig)
 	})
 
@@ -592,29 +621,73 @@ func TestApplyThinking(t *testing.T) {
 		t.Parallel()
 
 		cfg := &genai.GenerateContentConfig{}
-		applyThinking(cfg, providers.ReasoningEffortNone)
+		applyThinking(cfg, "gemini-2.5-flash", providers.ReasoningEffortNone)
 		require.Nil(t, cfg.ThinkingConfig)
 	})
 
-	t.Run("low effort sets thinking config", func(t *testing.T) {
+	t.Run("low effort sets thinking budget", func(t *testing.T) {
 		t.Parallel()
 
 		cfg := &genai.GenerateContentConfig{}
-		applyThinking(cfg, providers.ReasoningEffortLow)
+		applyThinking(cfg, "gemini-2.5-flash", providers.ReasoningEffortLow)
 		require.NotNil(t, cfg.ThinkingConfig)
 		require.True(t, cfg.ThinkingConfig.IncludeThoughts)
 		require.Equal(t, thinkingBudgetLow, *cfg.ThinkingConfig.ThinkingBudget)
+		require.Empty(t, cfg.ThinkingConfig.ThinkingLevel)
+	})
+
+	t.Run("minimal effort sets thinking budget", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &genai.GenerateContentConfig{}
+		applyThinking(cfg, "gemini-2.5-flash", providers.ReasoningEffortMinimal)
+		require.NotNil(t, cfg.ThinkingConfig)
+		require.Equal(t, thinkingBudgetMinimal, *cfg.ThinkingConfig.ThinkingBudget)
 	})
 
 	t.Run("high effort sets thinking config", func(t *testing.T) {
 		t.Parallel()
 
 		cfg := &genai.GenerateContentConfig{}
-		applyThinking(cfg, providers.ReasoningEffortHigh)
+		applyThinking(cfg, "gemini-2.5-flash", providers.ReasoningEffortHigh)
 		require.NotNil(t, cfg.ThinkingConfig)
 		require.True(t, cfg.ThinkingConfig.IncludeThoughts)
 		require.Equal(t, thinkingBudgetHigh, *cfg.ThinkingConfig.ThinkingBudget)
 	})
+
+	t.Run("gemini 3.5 uses thinking level", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &genai.GenerateContentConfig{}
+		applyThinking(cfg, "gemini-3.5-flash", providers.ReasoningEffortMinimal)
+		require.NotNil(t, cfg.ThinkingConfig)
+		require.True(t, cfg.ThinkingConfig.IncludeThoughts)
+		require.Equal(t, genai.ThinkingLevelMinimal, cfg.ThinkingConfig.ThinkingLevel)
+		require.Nil(t, cfg.ThinkingConfig.ThinkingBudget)
+	})
+}
+
+func TestUsesThinkingLevel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		model string
+		want  bool
+	}{
+		{name: "2.5 flash", model: "gemini-2.5-flash", want: false},
+		{name: "3 flash", model: "gemini-3-flash-preview", want: false},
+		{name: "3.5 flash", model: "gemini-3.5-flash", want: true},
+		{name: "4 pro", model: "models/gemini-4-pro", want: true},
+		{name: "unrelated", model: "gpt-4o", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, usesThinkingLevel(tc.model))
+		})
+	}
 }
 
 func TestConvertImagePart(t *testing.T) {
