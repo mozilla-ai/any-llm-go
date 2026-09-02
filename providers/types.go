@@ -95,7 +95,7 @@ type Capabilities struct {
 	CompletionImage     bool
 	CompletionPDF       bool
 	CompletionReasoning bool
-	CompletionStreaming  bool
+	CompletionStreaming bool
 	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
@@ -164,7 +164,12 @@ type CompletionParams struct {
 	ReasoningEffort   ReasoningEffort `json:"reasoning_effort,omitempty"`
 	Seed              *int            `json:"seed,omitempty"`
 	User              string          `json:"user,omitempty"`
-	Extra             map[string]any  `json:"-"`
+	// CachePrompt hints that the stable prompt prefix (tools + system) should
+	// be cached for reuse across requests. Honored by providers that support
+	// manual prompt caching (e.g. Anthropic via cache_control); ignored by
+	// providers that cache automatically or not at all.
+	CachePrompt bool           `json:"cache_prompt,omitempty"`
+	Extra       map[string]any `json:"-"`
 }
 
 // ContentPart represents a part of a multi-modal message.
@@ -367,6 +372,13 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	// CacheReadTokens is the number of prompt tokens served from a provider
+	// prompt cache (billed at a reduced rate). Populated by providers that
+	// report cache usage (e.g. Anthropic).
+	CacheReadTokens int `json:"cache_read_tokens,omitempty"`
+	// CacheWriteTokens is the number of prompt tokens written to a provider
+	// prompt cache on this request (may be billed at a premium).
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 // ContentParts extracts content parts from a message.
