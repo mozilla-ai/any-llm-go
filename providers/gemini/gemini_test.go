@@ -5,6 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	stderrors "errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -525,96 +528,211 @@ func TestConvertError(t *testing.T) {
 	}
 }
 
-func TestThinkingBudget(t *testing.T) {
+func TestApplyThinkingLevels(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		effort   providers.ReasoningEffort
-		expected int32
-		ok       bool
+		name   string
+		model  string
+		effort providers.ReasoningEffort
+		wire   string
 	}{
 		{
-			name:     "low effort",
-			effort:   providers.ReasoningEffortLow,
-			expected: thinkingBudgetLow,
-			ok:       true,
+			name: "Gemini 3 minimal", model: "gemini-3-flash", effort: providers.ReasoningEffortMinimal,
+			wire: `{"includeThoughts":true,"thinkingLevel":"MINIMAL"}`,
 		},
 		{
-			name:     "medium effort",
-			effort:   providers.ReasoningEffortMedium,
-			expected: thinkingBudgetMedium,
-			ok:       true,
+			name: "Gemini 3 low", model: "gemini-3-flash", effort: providers.ReasoningEffortLow,
+			wire: `{"includeThoughts":true,"thinkingLevel":"LOW"}`,
 		},
 		{
-			name:     "high effort",
-			effort:   providers.ReasoningEffortHigh,
-			expected: thinkingBudgetHigh,
-			ok:       true,
+			name: "Gemini 3 medium", model: "gemini-3-flash", effort: providers.ReasoningEffortMedium,
+			wire: `{"includeThoughts":true,"thinkingLevel":"MEDIUM"}`,
 		},
 		{
-			name:     "none effort",
-			effort:   providers.ReasoningEffortNone,
-			expected: 0,
-			ok:       false,
+			name: "3.1 Pro uses levels", model: "models/gemini-3.1-pro", effort: providers.ReasoningEffortHigh,
+			wire: `{"includeThoughts":true,"thinkingLevel":"HIGH"}`,
 		},
 		{
-			name:     "invalid effort",
-			effort:   "invalid",
-			expected: 0,
-			ok:       false,
+			name: "Gemini 3 maximum", model: "gemini-3-flash", effort: providers.ReasoningEffortMax,
+			wire: `{"includeThoughts":true,"thinkingLevel":"HIGH"}`,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
-			budget, ok := thinkingBudget(tc.effort)
-			require.Equal(t, tc.ok, ok)
-			require.Equal(t, tc.expected, budget)
+			cfg := &genai.GenerateContentConfig{}
+			require.NoError(t, applyThinking(cfg, tc.model, tc.effort))
+			requireThinkingWire(t, cfg, tc.wire)
 		})
 	}
 }
 
-func TestApplyThinking(t *testing.T) {
+func TestApplyThinkingBudgets(t *testing.T) {
 	t.Parallel()
 
-	t.Run("empty effort does nothing", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		name   string
+		model  string
+		effort providers.ReasoningEffort
+		wire   string
+	}{
+		{
+			name: "2.5 Flash disables", model: "gemini-2.5-flash", effort: providers.ReasoningEffortNone,
+			wire: `{"thinkingBudget":0}`,
+		},
+		{
+			name: "Flash-Lite minimum", model: "gemini-2.5-flash-lite", effort: providers.ReasoningEffortMinimal,
+			wire: `{"includeThoughts":true,"thinkingBudget":512}`,
+		},
+		{
+			name: "2.5 Flash low", model: "gemini-2.5-flash", effort: providers.ReasoningEffortLow,
+			wire: `{"includeThoughts":true,"thinkingBudget":1024}`,
+		},
+		{
+			name: "2.5 Flash medium", model: "gemini-2.5-flash", effort: providers.ReasoningEffortMedium,
+			wire: `{"includeThoughts":true,"thinkingBudget":8192}`,
+		},
+		{
+			name: "Pro maximum", model: "gemini-2.5-pro", effort: providers.ReasoningEffortMax,
+			wire: `{"includeThoughts":true,"thinkingBudget":32768}`,
+		},
+		{
+			name: "Flash maximum", model: "gemini-2.5-flash", effort: providers.ReasoningEffortXHigh,
+			wire: `{"includeThoughts":true,"thinkingBudget":24576}`,
+		},
+		{
+			name: "Robotics budget", model: "robotics-er-1.6-preview", effort: providers.ReasoningEffortHigh,
+			wire: `{"includeThoughts":true,"thinkingBudget":24576}`,
+		},
+	}
 
-		cfg := &genai.GenerateContentConfig{}
-		applyThinking(cfg, "")
-		require.Nil(t, cfg.ThinkingConfig)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &genai.GenerateContentConfig{}
+			require.NoError(t, applyThinking(cfg, tc.model, tc.effort))
+			requireThinkingWire(t, cfg, tc.wire)
+		})
+	}
+}
+
+func TestApplyThinkingPreservesDefaults(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		model  string
+		effort providers.ReasoningEffort
+	}{
+		{name: "auto keeps the Gemini 3 default", model: "gemini-3-flash", effort: providers.ReasoningEffortAuto},
+		{name: "none is omitted for 2.0", model: "gemini-2.0-flash", effort: providers.ReasoningEffortNone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &genai.GenerateContentConfig{}
+			require.NoError(t, applyThinking(cfg, tc.model, tc.effort))
+			require.Nil(t, cfg.ThinkingConfig)
+		})
+	}
+}
+
+func TestApplyThinkingRejectsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		model  string
+		effort providers.ReasoningEffort
+	}{
+		{name: "Gemini 3 rejects none", model: "gemini-3-flash", effort: providers.ReasoningEffortNone},
+		{name: "2.5 Pro rejects none", model: "gemini-2.5-pro", effort: providers.ReasoningEffortNone},
+		{name: "2.0 rejects thinking", model: "gemini-2.0-flash", effort: providers.ReasoningEffortHigh},
+		{name: "invalid effort is rejected", model: "gemini-2.5-flash", effort: "invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &genai.GenerateContentConfig{}
+			require.ErrorIs(t, applyThinking(cfg, tc.model, tc.effort), errors.ErrUnsupportedParam)
+			require.Nil(t, cfg.ThinkingConfig)
+		})
+	}
+}
+
+func requireThinkingWire(t *testing.T, cfg *genai.GenerateContentConfig, want string) {
+	t.Helper()
+
+	wire, err := json.Marshal(cfg.ThinkingConfig)
+	require.NoError(t, err)
+	require.JSONEq(t, want, string(wire))
+}
+
+func TestCompletionRejectsUnsupportedThinking(t *testing.T) {
+	t.Parallel()
+
+	provider, err := New(config.WithAPIKey("test-key"))
+	require.NoError(t, err)
+
+	_, err = provider.Completion(t.Context(), providers.CompletionParams{
+		Model:           "gemini-3-flash",
+		Messages:        []providers.Message{{Role: providers.RoleUser, Content: "hi"}},
+		ReasoningEffort: providers.ReasoningEffortNone,
 	})
+	require.ErrorIs(t, err, errors.ErrUnsupportedParam)
+}
 
-	t.Run("none effort does nothing", func(t *testing.T) {
-		t.Parallel()
+func TestCompletionStreamRejectsUnsupportedThinking(t *testing.T) {
+	t.Parallel()
 
-		cfg := &genai.GenerateContentConfig{}
-		applyThinking(cfg, providers.ReasoningEffortNone)
-		require.Nil(t, cfg.ThinkingConfig)
+	provider, err := New(config.WithAPIKey("test-key"))
+	require.NoError(t, err)
+
+	chunks, errs := provider.CompletionStream(t.Context(), providers.CompletionParams{
+		Model:           "gemini-3-flash",
+		Messages:        []providers.Message{{Role: providers.RoleUser, Content: "hi"}},
+		ReasoningEffort: providers.ReasoningEffortNone,
 	})
+	_, ok := <-chunks
+	require.False(t, ok)
+	require.ErrorIs(t, <-errs, errors.ErrUnsupportedParam)
+}
 
-	t.Run("low effort sets thinking config", func(t *testing.T) {
-		t.Parallel()
+func TestCompletionThinkingWireContract(t *testing.T) {
+	body := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		body <- payload
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("GOOGLE_GEMINI_BASE_URL", server.URL)
 
-		cfg := &genai.GenerateContentConfig{}
-		applyThinking(cfg, providers.ReasoningEffortLow)
-		require.NotNil(t, cfg.ThinkingConfig)
-		require.True(t, cfg.ThinkingConfig.IncludeThoughts)
-		require.Equal(t, thinkingBudgetLow, *cfg.ThinkingConfig.ThinkingBudget)
+	provider, err := New(config.WithAPIKey("test-key"))
+	require.NoError(t, err)
+	_, err = provider.Completion(t.Context(), providers.CompletionParams{
+		Model:           "gemini-3-flash",
+		Messages:        []providers.Message{{Role: providers.RoleUser, Content: "hi"}},
+		ReasoningEffort: providers.ReasoningEffortHigh,
 	})
+	require.NoError(t, err)
 
-	t.Run("high effort sets thinking config", func(t *testing.T) {
-		t.Parallel()
-
-		cfg := &genai.GenerateContentConfig{}
-		applyThinking(cfg, providers.ReasoningEffortHigh)
-		require.NotNil(t, cfg.ThinkingConfig)
-		require.True(t, cfg.ThinkingConfig.IncludeThoughts)
-		require.Equal(t, thinkingBudgetHigh, *cfg.ThinkingConfig.ThinkingBudget)
-	})
+	var request struct {
+		GenerationConfig struct {
+			ThinkingConfig json.RawMessage `json:"thinkingConfig"`
+		} `json:"generationConfig"`
+	}
+	require.NoError(t, json.Unmarshal(<-body, &request))
+	require.JSONEq(
+		t,
+		`{"includeThoughts":true,"thinkingLevel":"HIGH"}`,
+		string(request.GenerationConfig.ThinkingConfig),
+	)
 }
 
 func TestConvertImagePart(t *testing.T) {
@@ -1203,13 +1321,14 @@ func TestConvertParams(t *testing.T) {
 	t.Run("json_object sets mime type", func(t *testing.T) {
 		t.Parallel()
 
-		_, cfg := provider.convertParams(providers.CompletionParams{
+		_, cfg, err := provider.convertParams(providers.CompletionParams{
 			Model:    "gemini-2.0-flash",
 			Messages: []providers.Message{{Role: providers.RoleUser, Content: "hi"}},
 			ResponseFormat: &providers.ResponseFormat{
 				Type: responseFormatJSON,
 			},
 		})
+		require.NoError(t, err)
 
 		require.Equal(t, responseMIMETypeJSON, cfg.ResponseMIMEType)
 		require.Nil(t, cfg.ResponseJsonSchema)
@@ -1227,7 +1346,7 @@ func TestConvertParams(t *testing.T) {
 			"required": []string{"name", "population"},
 		}
 
-		_, cfg := provider.convertParams(providers.CompletionParams{
+		_, cfg, err := provider.convertParams(providers.CompletionParams{
 			Model:    "gemini-2.0-flash",
 			Messages: []providers.Message{{Role: providers.RoleUser, Content: "hi"}},
 			ResponseFormat: &providers.ResponseFormat{
@@ -1238,6 +1357,7 @@ func TestConvertParams(t *testing.T) {
 				},
 			},
 		})
+		require.NoError(t, err)
 
 		require.Equal(t, responseMIMETypeJSON, cfg.ResponseMIMEType)
 		require.Equal(t, schema, cfg.ResponseJsonSchema)
@@ -1246,10 +1366,11 @@ func TestConvertParams(t *testing.T) {
 	t.Run("nil response format leaves config unchanged", func(t *testing.T) {
 		t.Parallel()
 
-		_, cfg := provider.convertParams(providers.CompletionParams{
+		_, cfg, err := provider.convertParams(providers.CompletionParams{
 			Model:    "gemini-2.0-flash",
 			Messages: []providers.Message{{Role: providers.RoleUser, Content: "hi"}},
 		})
+		require.NoError(t, err)
 
 		require.Empty(t, cfg.ResponseMIMEType)
 		require.Nil(t, cfg.ResponseJsonSchema)

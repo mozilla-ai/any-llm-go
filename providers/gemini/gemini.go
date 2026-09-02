@@ -27,14 +27,6 @@ const (
 	providerName    = "gemini"
 )
 
-// Default thinking budgets for reasoning effort levels.
-// These match the Python any-llm library.
-const (
-	thinkingBudgetHigh   int32 = 24576
-	thinkingBudgetLow    int32 = 1024
-	thinkingBudgetMedium int32 = 8192
-)
-
 // Content part types.
 const (
 	contentPartTypeImageURL = "image_url"
@@ -166,7 +158,10 @@ func (p *Provider) Completion(
 	ctx context.Context,
 	params providers.CompletionParams,
 ) (*providers.ChatCompletion, error) {
-	contents, cfg := p.convertParams(params)
+	contents, cfg, err := p.convertParams(params)
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := p.client.Models.GenerateContent(ctx, params.Model, contents, cfg)
 	if err != nil {
@@ -188,7 +183,14 @@ func (p *Provider) CompletionStream(
 		defer close(chunks)
 		defer close(errs)
 
-		contents, cfg := p.convertParams(params)
+		contents, cfg, err := p.convertParams(params)
+		if err != nil {
+			select {
+			case errs <- err:
+			case <-ctx.Done():
+			}
+			return
+		}
 		state, err := newStreamState(params.Model)
 		if err != nil {
 			select {
@@ -346,7 +348,9 @@ func (p *Provider) Name() string {
 }
 
 // convertParams converts providers.CompletionParams to Gemini request format.
-func (p *Provider) convertParams(params providers.CompletionParams) ([]*genai.Content, *genai.GenerateContentConfig) {
+func (p *Provider) convertParams(
+	params providers.CompletionParams,
+) ([]*genai.Content, *genai.GenerateContentConfig, error) {
 	contents, systemInstruction := convertMessages(params.Messages)
 
 	cfg := &genai.GenerateContentConfig{}
@@ -381,13 +385,15 @@ func (p *Provider) convertParams(params providers.CompletionParams) ([]*genai.Co
 		cfg.ToolConfig = convertToolChoice(params.ToolChoice)
 	}
 
-	applyThinking(cfg, params.ReasoningEffort)
+	if err := applyThinking(cfg, params.Model, params.ReasoningEffort); err != nil {
+		return nil, nil, err
+	}
 
 	if params.ResponseFormat != nil {
 		applyResponseFormat(cfg, params.ResponseFormat)
 	}
 
-	return contents, cfg
+	return contents, cfg, nil
 }
 
 // newStreamState creates a new stream state.
@@ -505,23 +511,6 @@ func applyResponseFormat(cfg *genai.GenerateContentConfig, format *providers.Res
 		cfg.ResponseJsonSchema = format.JSONSchema.Schema
 	case responseFormatJSON:
 		cfg.ResponseMIMEType = responseMIMETypeJSON
-	}
-}
-
-// applyThinking configures thinking/reasoning on the config if applicable.
-func applyThinking(cfg *genai.GenerateContentConfig, effort providers.ReasoningEffort) {
-	if effort == "" || effort == providers.ReasoningEffortNone {
-		return
-	}
-
-	budget, ok := thinkingBudget(effort)
-	if !ok {
-		return
-	}
-
-	cfg.ThinkingConfig = &genai.ThinkingConfig{
-		IncludeThoughts: true,
-		ThinkingBudget:  &budget,
 	}
 }
 
@@ -949,18 +938,4 @@ func thoughtSignatureFromExtra(extra map[string]providers.ProviderData) []byte {
 	}
 
 	return sig
-}
-
-// thinkingBudget returns the token budget for the given reasoning effort.
-func thinkingBudget(effort providers.ReasoningEffort) (int32, bool) {
-	switch effort {
-	case providers.ReasoningEffortLow:
-		return thinkingBudgetLow, true
-	case providers.ReasoningEffortMedium:
-		return thinkingBudgetMedium, true
-	case providers.ReasoningEffortHigh:
-		return thinkingBudgetHigh, true
-	default:
-		return 0, false
-	}
 }
