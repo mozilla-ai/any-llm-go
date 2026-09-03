@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mozilla-ai/any-llm-go/config"
@@ -32,6 +32,21 @@ func TestNew(t *testing.T) {
 		provider, err := New()
 		require.NoError(t, err)
 		require.NotNil(t, provider)
+	})
+
+	t.Run("reads OPENAI_BASE_URL", func(t *testing.T) {
+		serverURL, _ := testutil.FakeCompletionServer(t)
+		t.Setenv("OPENAI_API_KEY", "env-api-key")
+		t.Setenv("OPENAI_BASE_URL", serverURL)
+
+		provider, err := New()
+		require.NoError(t, err)
+
+		_, err = provider.Completion(t.Context(), providers.CompletionParams{
+			Model:    "test-model",
+			Messages: testutil.SimpleMessages(),
+		})
+		require.NoError(t, err)
 	})
 
 	t.Run("returns error when API key is missing", func(t *testing.T) {
@@ -101,7 +116,7 @@ func TestConvertParams(t *testing.T) {
 		require.Equal(t, 0.9, req.TopP.Value)
 	})
 
-	t.Run("converts max_tokens", func(t *testing.T) {
+	t.Run("maps token limit to max_completion_tokens", func(t *testing.T) {
 		t.Parallel()
 
 		maxTokens := 100
@@ -113,6 +128,7 @@ func TestConvertParams(t *testing.T) {
 
 		req := convertParams(params)
 
+		require.False(t, req.MaxTokens.Valid())
 		require.Equal(t, int64(100), req.MaxCompletionTokens.Value)
 	})
 
@@ -208,18 +224,43 @@ func TestConvertParams(t *testing.T) {
 		require.NotNil(t, req.ResponseFormat)
 	})
 
-	t.Run("converts reasoning_effort", func(t *testing.T) {
+	t.Run("preserves current reasoning_effort values", func(t *testing.T) {
+		t.Parallel()
+
+		efforts := []providers.ReasoningEffort{
+			providers.ReasoningEffortNone,
+			providers.ReasoningEffortMinimal,
+			providers.ReasoningEffortLow,
+			providers.ReasoningEffortMedium,
+			providers.ReasoningEffortHigh,
+			providers.ReasoningEffortXHigh,
+			providers.ReasoningEffortMax,
+		}
+		for _, effort := range efforts {
+			params := providers.CompletionParams{
+				Model:           "test-model",
+				Messages:        testutil.SimpleMessages(),
+				ReasoningEffort: effort,
+			}
+
+			req := convertParams(params)
+
+			require.Equal(t, string(effort), string(req.ReasoningEffort))
+		}
+	})
+
+	t.Run("omits automatic reasoning_effort sentinel", func(t *testing.T) {
 		t.Parallel()
 
 		params := providers.CompletionParams{
-			Model:           "o1-mini",
+			Model:           "test-model",
 			Messages:        testutil.SimpleMessages(),
-			ReasoningEffort: providers.ReasoningEffortHigh,
+			ReasoningEffort: providers.ReasoningEffortAuto,
 		}
 
 		req := convertParams(params)
 
-		require.NotNil(t, req.ReasoningEffort)
+		require.Empty(t, req.ReasoningEffort)
 	})
 
 	t.Run("converts seed", func(t *testing.T) {
@@ -362,11 +403,16 @@ func TestConvertTools(t *testing.T) {
 		result := convertTools(tools)
 
 		require.Len(t, result, 1)
-		require.Equal(t, "get_weather", result[0].Function.Name)
-		require.Equal(t, "Get the current weather for a location.", result[0].Function.Description.Value)
+		require.NotNil(t, result[0].OfFunction)
+		require.Equal(t, "get_weather", result[0].OfFunction.Function.Name)
+		require.Equal(
+			t,
+			"Get the current weather for a location.",
+			result[0].OfFunction.Function.Description.Value,
+		)
 
 		// FunctionParameters is map[string]any - access directly.
-		params := result[0].Function.Parameters
+		params := result[0].OfFunction.Function.Parameters
 		require.Equal(t, "object", params["type"])
 
 		props, ok := params["properties"].(map[string]any)
@@ -391,10 +437,11 @@ func TestConvertTools(t *testing.T) {
 		result := convertTools(tools)
 
 		require.Len(t, result, 1)
-		require.Equal(t, "calculate", result[0].Function.Name)
+		require.NotNil(t, result[0].OfFunction)
+		require.Equal(t, "calculate", result[0].OfFunction.Function.Name)
 
 		// FunctionParameters is map[string]any - access directly.
-		params := result[0].Function.Parameters
+		params := result[0].OfFunction.Function.Parameters
 
 		props, ok := params["properties"].(map[string]any)
 		require.True(t, ok)
@@ -436,8 +483,10 @@ func TestConvertTools(t *testing.T) {
 		result := convertTools(tools)
 
 		require.Len(t, result, 2)
-		require.Equal(t, "get_weather", result[0].Function.Name)
-		require.Equal(t, "get_current_date", result[1].Function.Name)
+		require.NotNil(t, result[0].OfFunction)
+		require.NotNil(t, result[1].OfFunction)
+		require.Equal(t, "get_weather", result[0].OfFunction.Function.Name)
+		require.Equal(t, "get_current_date", result[1].OfFunction.Function.Name)
 	})
 }
 
@@ -464,10 +513,33 @@ func TestCompletionSendsMaxCompletionTokensOnWire(t *testing.T) {
 
 	body := capturedBody()
 
-	// OpenAI requires max_completion_tokens (not max_tokens) for current models.
 	require.Contains(t, body, "max_completion_tokens")
 	require.NotContains(t, body, "max_tokens")
 	require.Equal(t, float64(1024), body["max_completion_tokens"])
+}
+
+func TestCompletionPreservesReasoningEffortOnWire(t *testing.T) {
+	t.Parallel()
+
+	serverURL, capturedBody := testutil.FakeCompletionServer(t)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(serverURL),
+	)
+	require.NoError(t, err)
+
+	params := providers.CompletionParams{
+		Model:           "test-model",
+		Messages:        testutil.SimpleMessages(),
+		ReasoningEffort: providers.ReasoningEffortNone,
+	}
+
+	_, err = provider.Completion(context.Background(), params)
+	require.NoError(t, err)
+
+	body := capturedBody()
+	require.Equal(t, "none", body["reasoning_effort"])
 }
 
 func TestCompletionStreamSendsMaxCompletionTokensOnWire(t *testing.T) {
@@ -497,7 +569,6 @@ func TestCompletionStreamSendsMaxCompletionTokensOnWire(t *testing.T) {
 
 	body := capturedBody()
 
-	// OpenAI requires max_completion_tokens (not max_tokens) for current models.
 	require.Contains(t, body, "max_completion_tokens")
 	require.NotContains(t, body, "max_tokens")
 	require.Equal(t, float64(1024), body["max_completion_tokens"])
