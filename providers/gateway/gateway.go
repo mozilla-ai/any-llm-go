@@ -25,7 +25,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/v3"
 
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/errors"
@@ -373,7 +373,7 @@ func capabilities() providers.Capabilities {
 		CompletionImage:     true,
 		CompletionPDF:       true,
 		CompletionReasoning: true,
-		CompletionStreaming:  true,
+		CompletionStreaming: true,
 		CompletionTools:     true,
 		Embedding:           true,
 		ListModels:          true,
@@ -703,7 +703,9 @@ func (p *Provider) handleRerankErrorResponse(resp *http.Response) error {
 	case http.StatusTooManyRequests:
 		return errors.NewRateLimitError(providerName, fmt.Errorf("%s", msg))
 	case http.StatusBadGateway:
-		return &UpstreamProviderError{BaseError: errors.New(errCodeUpstreamProvider, providerName, fmt.Errorf("%s", msg), ErrUpstreamProvider)}
+		return &UpstreamProviderError{
+			BaseError: errors.New(errCodeUpstreamProvider, providerName, fmt.Errorf("%s", msg), ErrUpstreamProvider),
+		}
 	case http.StatusGatewayTimeout:
 		return &TimeoutError{BaseError: errors.New(errCodeTimeout, providerName, fmt.Errorf("%s", msg), ErrTimeout)}
 	default:
