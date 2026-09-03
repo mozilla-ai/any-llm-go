@@ -16,11 +16,14 @@ const (
 
 // Reasoning effort levels for extended thinking.
 const (
-	ReasoningEffortAuto   ReasoningEffort = "auto"
-	ReasoningEffortHigh   ReasoningEffort = "high"
-	ReasoningEffortLow    ReasoningEffort = "low"
-	ReasoningEffortMedium ReasoningEffort = "medium"
-	ReasoningEffortNone   ReasoningEffort = "none"
+	ReasoningEffortAuto    ReasoningEffort = "auto"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMax     ReasoningEffort = "max"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortNone    ReasoningEffort = "none"
+	ReasoningEffortXHigh   ReasoningEffort = "xhigh"
 )
 
 // Message roles.
@@ -95,7 +98,7 @@ type Capabilities struct {
 	CompletionImage     bool
 	CompletionPDF       bool
 	CompletionReasoning bool
-	CompletionStreaming  bool
+	CompletionStreaming bool
 	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
@@ -320,6 +323,10 @@ type ModelsResponse struct {
 // Reasoning represents extended thinking/reasoning content.
 type Reasoning struct {
 	Content string `json:"content,omitempty"`
+	// ProviderRaw retains provider-native blocks that Content cannot represent.
+	// Mistral requires complete assistant content for multi-turn reasoning replay:
+	// https://docs.mistral.ai/studio-api/conversations/reasoning
+	ProviderRaw json.RawMessage `json:"provider_raw,omitempty"`
 }
 
 // ResponseFormat specifies the format of the response.

@@ -4,10 +4,9 @@ package mistral
 
 import (
 	"context"
-	"slices"
 
-	oaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/packages/param"
+	oaisdk "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
 
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/providers"
@@ -51,14 +50,16 @@ type Provider struct {
 // New creates a new Mistral provider.
 func New(opts ...config.Option) (*Provider, error) {
 	base, err := openai.NewCompatible(openai.CompatibleConfig{
-		APIKeyEnvVar:                   envAPIKey,
-		BaseURLEnvVar:                  "",
-		Capabilities:                   capabilities(),
-		ChatCompletionRequestTransform: transformRequest,
-		DefaultAPIKey:                  "",
-		DefaultBaseURL:                 defaultBaseURL,
-		Name:                           providerName,
-		RequireAPIKey:                  true,
+		APIKeyEnvVar:                    envAPIKey,
+		BaseURLEnvVar:                   "",
+		Capabilities:                    capabilities(),
+		ChatCompletionChunkTransform:    transformChunk,
+		ChatCompletionRequestTransform:  transformRequest,
+		ChatCompletionResponseTransform: transformResponse,
+		DefaultAPIKey:                   "",
+		DefaultBaseURL:                  defaultBaseURL,
+		Name:                            providerName,
+		RequireAPIKey:                   true,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -93,7 +94,7 @@ func capabilities() providers.Capabilities {
 		Completion:          true,
 		CompletionImage:     true, // Pixtral models support vision.
 		CompletionPDF:       false,
-		CompletionReasoning: true, // Magistral models support reasoning.
+		CompletionReasoning: true, // Current Mistral models support adjustable reasoning.
 		CompletionStreaming: true,
 		CompletionTools:     true,
 		Embedding:           true, // mistral-embed model.
@@ -134,25 +135,25 @@ func patchMessages(messages []providers.Message) []providers.Message {
 	return result
 }
 
-// patchMessageParams handles Mistral's message-level requirements.
-// Mistral requires an assistant message between tool results and user messages.
+// patchMessageParams handles Mistral fields before shared request conversion.
 func patchMessageParams(params providers.CompletionParams) providers.CompletionParams {
-	params.Messages = patchMessages(slices.Clone(params.Messages))
+	params.Messages = patchMessages(params.Messages)
+	// Mistral calls its highest documented effort xhigh. Map the binding's
+	// provider-neutral max value instead of sending an invalid wire enum.
+	// https://docs.mistral.ai/api/endpoint/chat
+	if params.ReasoningEffort == providers.ReasoningEffortMax {
+		params.ReasoningEffort = providers.ReasoningEffortXHigh
+	}
 	return params
 }
 
-// transformRequest adjusts the OpenAI SDK request for Mistral's API.
-// Mistral uses max_tokens (not max_completion_tokens) and does not accept user or reasoning_effort fields.
-// If both are set, MaxCompletionTokens takes precedence over MaxTokens.
-// See: https://docs.mistral.ai/api/#tag/chat/operation/chat_completion_v1_chat_completions_post
+// transformRequest maps the shared token limit to Mistral's max_tokens field
+// and removes fields outside its Chat request schema.
+// https://docs.mistral.ai/api?property=operation-chat_completion_v1_chat_completions_post_request_max_tokens
 func transformRequest(req *oaisdk.ChatCompletionNewParams) {
 	if req.MaxCompletionTokens.Valid() {
-		// Set max_tokens using max_completion_tokens value.
 		req.MaxTokens = oaisdk.Int(req.MaxCompletionTokens.Value)
 	}
-
-	// Clear unsupported fields from the request.
 	req.MaxCompletionTokens = param.Opt[int64]{}
 	req.User = param.Opt[string]{}
-	req.ReasoningEffort = ""
 }

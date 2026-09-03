@@ -88,3 +88,27 @@ func TestToolCallExtraExcludedFromJSON(t *testing.T) {
 	require.Equal(t, "call_123", decoded["id"])
 	require.Equal(t, "function", decoded["type"])
 }
+
+func TestReasoningProviderRawRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	reasoning := Reasoning{
+		Content: "step one",
+		ProviderRaw: json.RawMessage(
+			`[{"type":"thinking","thinking":[{"type":"text","text":"step one"}],"signature":"sig-abc"}]`,
+		),
+	}
+
+	data, err := json.Marshal(reasoning)
+	require.NoError(t, err)
+
+	var decoded Reasoning
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.Equal(t, reasoning, decoded)
+
+	var empty Reasoning
+
+	emptyData, err := json.Marshal(empty)
+	require.NoError(t, err)
+	require.JSONEq(t, `{}`, string(emptyData))
+}
