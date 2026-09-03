@@ -2,6 +2,7 @@ package ollama
 
 import (
 	"context"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"strings"
@@ -18,6 +19,27 @@ import (
 )
 
 const testOllamaAvailabilityTimeout = 5 * time.Second
+
+type invalidMessageCase struct {
+	name    string
+	msg     providers.Message
+	wantErr error
+}
+
+func runInvalidMessageCases(t *testing.T, tests []invalidMessageCase) {
+	t.Helper()
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			converted, err := convertMessage(testCase.msg)
+
+			require.Nil(t, converted)
+			require.ErrorIs(t, err, testCase.wantErr)
+		})
+	}
+}
 
 func TestNew(t *testing.T) {
 	// Note: Not using t.Parallel() here because child test uses t.Setenv.
@@ -66,91 +88,41 @@ func TestCapabilities(t *testing.T) {
 	require.True(t, caps.ListModels)
 }
 
-func TestConvertMessages(t *testing.T) {
+func TestConvertMessagesPreservesToolResultNameAndReasoning(t *testing.T) {
 	t.Parallel()
 
-	t.Run("converts system message", func(t *testing.T) {
-		t.Parallel()
-
-		messages := []providers.Message{
-			{Role: providers.RoleSystem, Content: "You are a helpful assistant."},
-		}
-
-		result := convertMessages(messages)
-
-		require.Len(t, result, 1)
-		require.Equal(t, providers.RoleSystem, result[0].Role)
-		require.Equal(t, "You are a helpful assistant.", result[0].Content)
-	})
-
-	t.Run("converts user message", func(t *testing.T) {
-		t.Parallel()
-
-		messages := []providers.Message{
-			{Role: providers.RoleUser, Content: "Hello"},
-		}
-
-		result := convertMessages(messages)
-
-		require.Len(t, result, 1)
-		require.Equal(t, providers.RoleUser, result[0].Role)
-		require.Equal(t, "Hello", result[0].Content)
-	})
-
-	t.Run("converts assistant message", func(t *testing.T) {
-		t.Parallel()
-
-		messages := []providers.Message{
-			{Role: providers.RoleAssistant, Content: "Hi there!"},
-		}
-
-		result := convertMessages(messages)
-
-		require.Len(t, result, 1)
-		require.Equal(t, providers.RoleAssistant, result[0].Role)
-		require.Equal(t, "Hi there!", result[0].Content)
-	})
-
-	t.Run("converts tool message to user message", func(t *testing.T) {
-		t.Parallel()
-
-		messages := []providers.Message{
-			{Role: providers.RoleTool, Content: "sunny, 22°C", ToolCallID: "call_123"},
-		}
-
-		result := convertMessages(messages)
-
-		require.Len(t, result, 1)
-		require.Equal(t, providers.RoleUser, result[0].Role) // Ollama uses user for tool results.
-	})
-
-	t.Run("converts assistant message with tool calls", func(t *testing.T) {
-		t.Parallel()
-
-		messages := []providers.Message{
-			{
-				Role:    providers.RoleAssistant,
-				Content: "",
-				ToolCalls: []providers.ToolCall{
-					{
-						ID:   "call_123",
-						Type: toolTypeFunction,
-						Function: providers.FunctionCall{
-							Name:      "get_weather",
-							Arguments: `{"location": "Paris"}`,
-						},
-					},
+	messages := []providers.Message{
+		{Role: providers.RoleSystem, Content: "Use tools."},
+		{Role: providers.RoleUser, Content: "Weather?"},
+		{
+			Role:      providers.RoleAssistant,
+			Content:   "",
+			Reasoning: &providers.Reasoning{Content: "checking"},
+			ToolCalls: []providers.ToolCall{{
+				ID:   "call_weather",
+				Type: toolTypeFunction,
+				Function: providers.FunctionCall{
+					Name:      "get_weather",
+					Arguments: `{"city":"Paris"}`,
 				},
-			},
-		}
+			}},
+		},
+		{Role: providers.RoleTool, Content: "sunny", ToolCallID: "call_weather"},
+	}
 
-		result := convertMessages(messages)
+	converted, err := convertMessages(messages)
+	require.NoError(t, err)
 
-		require.Len(t, result, 1)
-		require.Equal(t, providers.RoleAssistant, result[0].Role)
-		require.Len(t, result[0].ToolCalls, 1)
-		require.Equal(t, "get_weather", result[0].ToolCalls[0].Function.Name)
-	})
+	wire, err := json.Marshal(converted)
+	require.NoError(t, err)
+	require.JSONEq(t, `[
+		{"role":"system","content":"Use tools."},
+		{"role":"user","content":"Weather?"},
+		{"role":"assistant","content":"","thinking":"checking","tool_calls":[
+			{"function":{"index":0,"name":"get_weather","arguments":{"city":"Paris"}}}
+		]},
+		{"role":"tool","content":"sunny","tool_name":"get_weather"}
+	]`, string(wire))
 }
 
 func TestConvertDoneReason(t *testing.T) {
@@ -193,32 +165,42 @@ func TestConvertDoneReason(t *testing.T) {
 	}
 }
 
-func TestExtractImages(t *testing.T) {
+func TestConvertMessageImages(t *testing.T) {
 	t.Parallel()
 
-	t.Run("extracts base64 image", func(t *testing.T) {
+	t.Run("decodes a base64 data URL once", func(t *testing.T) {
 		t.Parallel()
 
 		msg := providers.Message{
 			Role: providers.RoleUser,
-			Content: []providers.ContentPart{
-				{Type: "text", Text: "What's in this image?"},
-				{
-					Type: "image_url",
-					ImageURL: &providers.ImageURL{
-						URL: "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+			Content: []any{
+				map[string]any{"type": "text", "text": "What's in this image?"},
+				map[string]any{
+					"type": "image_url",
+					"image_url": map[string]any{
+						"url": "data:image/jpeg;base64,aGVsbG8=",
 					},
 				},
 			},
 		}
 
-		images := extractImages(msg)
+		converted, err := convertMessage(msg)
 
-		require.Len(t, images, 1)
-		require.Equal(t, "/9j/4AAQSkZJRg==", string(images[0]))
+		require.NoError(t, err)
+		require.Equal(t, "What's in this image?", converted.Content)
+		require.Len(t, converted.Images, 1)
+		require.Equal(t, "hello", string(converted.Images[0]))
+
+		wire, err := json.Marshal(converted)
+		require.NoError(t, err)
+		require.JSONEq(t, `{
+			"role":"user",
+			"content":"What's in this image?",
+			"images":["aGVsbG8="]
+		}`, string(wire))
 	})
 
-	t.Run("ignores non-data URLs", func(t *testing.T) {
+	t.Run("rejects image URLs the SDK cannot encode", func(t *testing.T) {
 		t.Parallel()
 
 		msg := providers.Message{
@@ -233,9 +215,10 @@ func TestExtractImages(t *testing.T) {
 			},
 		}
 
-		images := extractImages(msg)
+		converted, err := convertMessage(msg)
 
-		require.Empty(t, images)
+		require.Nil(t, converted)
+		require.ErrorIs(t, err, errors.ErrUnsupportedParam)
 	})
 }
 
@@ -337,45 +320,202 @@ func TestConvertResponseFormat(t *testing.T) {
 	})
 }
 
-func TestConvertMessage(t *testing.T) {
+func TestConvertMessageRejectsInvalidMetadata(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name         string
-		msg          providers.Message
-		expectedRole string
-	}{
+	tests := []invalidMessageCase{
 		{
-			name:         "user message",
-			msg:          providers.Message{Role: providers.RoleUser, Content: "Hello"},
-			expectedRole: providers.RoleUser,
+			name:    "unknown role",
+			msg:     providers.Message{Role: "developer", Content: "Hello"},
+			wantErr: errors.ErrInvalidRequest,
 		},
 		{
-			name:         "assistant message",
-			msg:          providers.Message{Role: providers.RoleAssistant, Content: "Hi"},
-			expectedRole: providers.RoleAssistant,
+			name:    "name on user message",
+			msg:     providers.Message{Role: providers.RoleUser, Content: "Hello", Name: "alice"},
+			wantErr: errors.ErrUnsupportedParam,
 		},
 		{
-			name:         "system message",
-			msg:          providers.Message{Role: providers.RoleSystem, Content: "You are helpful"},
-			expectedRole: providers.RoleSystem,
+			name: "tool call on user message",
+			msg: providers.Message{
+				Role: providers.RoleUser, Content: "Hello", ToolCalls: []providers.ToolCall{{}},
+			},
+			wantErr: errors.ErrUnsupportedParam,
 		},
 		{
-			name:         "tool message becomes user",
-			msg:          providers.Message{Role: providers.RoleTool, Content: "result", ToolCallID: "123"},
-			expectedRole: providers.RoleUser,
+			name: "reasoning on user message",
+			msg: providers.Message{
+				Role: providers.RoleUser, Content: "Hello", Reasoning: &providers.Reasoning{Content: "why"},
+			},
+			wantErr: errors.ErrUnsupportedParam,
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+	runInvalidMessageCases(t, tests)
+}
 
-			result := convertMessage(tc.msg)
-			require.NotNil(t, result)
-			require.Equal(t, tc.expectedRole, result.Role)
-		})
+func TestConvertMessageRejectsInvalidContent(t *testing.T) {
+	t.Parallel()
+
+	tests := []invalidMessageCase{
+		{
+			name:    "unsupported content representation",
+			msg:     providers.Message{Role: providers.RoleUser, Content: 42},
+			wantErr: errors.ErrInvalidRequest,
+		},
+		{
+			name:    "invalid dynamic content part",
+			msg:     providers.Message{Role: providers.RoleUser, Content: []any{"text"}},
+			wantErr: errors.ErrInvalidRequest,
+		},
+		{
+			name: "unknown dynamic content field",
+			msg: providers.Message{
+				Role: providers.RoleUser,
+				Content: []any{map[string]any{
+					"type": "text", "text": "Hello", "future": true,
+				}},
+			},
+			wantErr: errors.ErrInvalidRequest,
+		},
+		{
+			name: "unknown content part",
+			msg: providers.Message{
+				Role: providers.RoleUser, Content: []providers.ContentPart{{Type: "audio"}},
+			},
+			wantErr: errors.ErrUnsupportedParam,
+		},
 	}
+
+	runInvalidMessageCases(t, tests)
+}
+
+func TestConvertMessageRejectsInvalidImageContent(t *testing.T) {
+	t.Parallel()
+
+	tests := []invalidMessageCase{
+		{
+			name: "text part with image field",
+			msg: providers.Message{
+				Role: providers.RoleUser,
+				Content: []providers.ContentPart{{
+					Type: contentTypeText, ImageURL: &providers.ImageURL{URL: "data:image/png;base64,aA=="},
+				}},
+			},
+			wantErr: errors.ErrInvalidRequest,
+		},
+		{
+			name: "image part without URL",
+			msg: providers.Message{
+				Role: providers.RoleUser,
+				Content: []providers.ContentPart{{
+					Type: contentTypeImageURL,
+				}},
+			},
+			wantErr: errors.ErrInvalidRequest,
+		},
+		{
+			name: "invalid image base64",
+			msg: providers.Message{
+				Role: providers.RoleUser,
+				Content: []providers.ContentPart{{
+					Type: contentTypeImageURL, ImageURL: &providers.ImageURL{URL: "data:image/png;base64,!"},
+				}},
+			},
+			wantErr: errors.ErrInvalidRequest,
+		},
+		{
+			name: "unsupported image detail",
+			msg: providers.Message{
+				Role: providers.RoleUser,
+				Content: []providers.ContentPart{{
+					Type: contentTypeImageURL,
+					ImageURL: &providers.ImageURL{
+						URL: "data:image/png;base64,aA==", Detail: "high",
+					},
+				}},
+			},
+			wantErr: errors.ErrUnsupportedParam,
+		},
+	}
+
+	runInvalidMessageCases(t, tests)
+}
+
+func TestConvertMessageRejectsInvalidToolCall(t *testing.T) {
+	t.Parallel()
+
+	tests := []invalidMessageCase{
+		{
+			name: "unknown tool call type",
+			msg: providers.Message{
+				Role: providers.RoleAssistant,
+				ToolCalls: []providers.ToolCall{{
+					Type: "custom", Function: providers.FunctionCall{Arguments: `{}`},
+				}},
+			},
+			wantErr: errors.ErrUnsupportedParam,
+		},
+		{
+			name: "missing tool function name",
+			msg: providers.Message{
+				Role: providers.RoleAssistant,
+				ToolCalls: []providers.ToolCall{{
+					Type: toolTypeFunction, Function: providers.FunctionCall{Arguments: `{}`},
+				}},
+			},
+			wantErr: errors.ErrInvalidRequest,
+		},
+		{
+			name: "non-object tool arguments",
+			msg: providers.Message{
+				Role: providers.RoleAssistant,
+				ToolCalls: []providers.ToolCall{{
+					Type:     toolTypeFunction,
+					Function: providers.FunctionCall{Name: "get_weather", Arguments: `[]`},
+				}},
+			},
+			wantErr: errors.ErrInvalidRequest,
+		},
+		{
+			name: "null tool arguments",
+			msg: providers.Message{
+				Role: providers.RoleAssistant,
+				ToolCalls: []providers.ToolCall{{
+					Type:     toolTypeFunction,
+					Function: providers.FunctionCall{Name: "get_weather", Arguments: `null`},
+				}},
+			},
+			wantErr: errors.ErrInvalidRequest,
+		},
+	}
+
+	runInvalidMessageCases(t, tests)
+}
+
+func TestConvertMessagesRejectsUnresolvedToolResult(t *testing.T) {
+	t.Parallel()
+
+	converted, err := convertMessages([]providers.Message{{
+		Role: providers.RoleTool, Content: "sunny", ToolCallID: "missing",
+	}})
+
+	require.Nil(t, converted)
+	require.ErrorIs(t, err, errors.ErrInvalidRequest)
+}
+
+func TestCompletionEntryPointsRejectInvalidMessages(t *testing.T) {
+	t.Parallel()
+
+	provider := &Provider{}
+	params := providers.CompletionParams{Messages: []providers.Message{{Role: "developer"}}}
+
+	completion, err := provider.Completion(t.Context(), params)
+	require.Nil(t, completion)
+	require.ErrorIs(t, err, errors.ErrInvalidRequest)
+
+	chunks, streamErrors := provider.CompletionStream(t.Context(), params)
+	require.Empty(t, chunks)
+	require.ErrorIs(t, <-streamErrors, errors.ErrInvalidRequest)
 }
 
 func TestNewStreamState(t *testing.T) {

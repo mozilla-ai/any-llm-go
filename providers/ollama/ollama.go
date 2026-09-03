@@ -2,8 +2,10 @@
 package ollama
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	stderrors "errors"
@@ -80,7 +82,7 @@ const (
 // Content part constants.
 const (
 	contentTypeImageURL = "image_url"
-	dataImagePrefix     = "data:image/"
+	contentTypeText     = "text"
 )
 
 // Ensure Provider implements the required interfaces.
@@ -154,14 +156,17 @@ func (p *Provider) Completion(
 	ctx context.Context,
 	params providers.CompletionParams,
 ) (*providers.ChatCompletion, error) {
-	req := p.convertParams(params)
+	req, err := p.convertParams(params)
+	if err != nil {
+		return nil, err
+	}
 
 	// Disable streaming for non-stream requests.
 	stream := false
 	req.Stream = &stream
 
 	var response api.ChatResponse
-	err := p.client.Chat(ctx, req, func(resp api.ChatResponse) error {
+	err = p.client.Chat(ctx, req, func(resp api.ChatResponse) error {
 		response = resp
 		return nil
 	})
@@ -184,10 +189,14 @@ func (p *Provider) CompletionStream(
 		defer close(chunks)
 		defer close(errs)
 
-		req := p.convertParams(params)
+		req, err := p.convertParams(params)
+		if err != nil {
+			errs <- err
+			return
+		}
 		state := newStreamState()
 
-		err := p.client.Chat(ctx, req, func(resp api.ChatResponse) error {
+		err = p.client.Chat(ctx, req, func(resp api.ChatResponse) error {
 			chunk := state.handleChunk(&resp)
 			chunks <- chunk
 			return nil
@@ -273,36 +282,16 @@ func (p *Provider) Name() string {
 }
 
 // convertParams converts providers.CompletionParams to Ollama ChatRequest.
-func (p *Provider) convertParams(params providers.CompletionParams) *api.ChatRequest {
-	messages := convertMessages(params.Messages)
+func (p *Provider) convertParams(params providers.CompletionParams) (*api.ChatRequest, error) {
+	messages, err := convertMessages(params.Messages)
+	if err != nil {
+		return nil, err
+	}
 
 	req := &api.ChatRequest{
 		Model:    params.Model,
 		Messages: messages,
-		Options:  make(map[string]any),
-	}
-
-	// Set default context size.
-	req.Options[optionNumCtx] = defaultNumCtx
-
-	if params.Temperature != nil {
-		req.Options[optionTemperature] = *params.Temperature
-	}
-
-	if params.TopP != nil {
-		req.Options[optionTopP] = *params.TopP
-	}
-
-	if len(params.Stop) > 0 {
-		req.Options[optionStop] = params.Stop
-	}
-
-	if params.MaxTokens != nil {
-		req.Options[optionNumPredict] = *params.MaxTokens
-	}
-
-	if params.Seed != nil {
-		req.Options[optionSeed] = *params.Seed
+		Options:  convertOptions(params),
 	}
 
 	if len(params.Tools) > 0 {
@@ -323,7 +312,27 @@ func (p *Provider) convertParams(params providers.CompletionParams) *api.ChatReq
 		req.Think = &think
 	}
 
-	return req
+	return req, nil
+}
+
+func convertOptions(params providers.CompletionParams) map[string]any {
+	options := map[string]any{optionNumCtx: defaultNumCtx}
+	if params.Temperature != nil {
+		options[optionTemperature] = *params.Temperature
+	}
+	if params.TopP != nil {
+		options[optionTopP] = *params.TopP
+	}
+	if len(params.Stop) > 0 {
+		options[optionStop] = params.Stop
+	}
+	if params.MaxTokens != nil {
+		options[optionNumPredict] = *params.MaxTokens
+	}
+	if params.Seed != nil {
+		options[optionSeed] = *params.Seed
+	}
+	return options
 }
 
 // newStreamState creates a new stream state.
@@ -408,37 +417,6 @@ func (s *streamState) handleDone(resp *api.ChatResponse, chunk *providers.ChatCo
 	}
 }
 
-// convertAssistantMessage converts an assistant message to Ollama format.
-func convertAssistantMessage(msg providers.Message) *api.Message {
-	ollamaMsg := &api.Message{
-		Role:    msg.Role,
-		Content: msg.ContentString(),
-	}
-
-	if len(msg.ToolCalls) > 0 {
-		toolCalls := make([]api.ToolCall, 0, len(msg.ToolCalls))
-		for _, tc := range msg.ToolCalls {
-			var argsMap map[string]any
-			_ = json.Unmarshal([]byte(tc.Function.Arguments), &argsMap)
-
-			args := api.NewToolCallFunctionArguments()
-			for k, v := range argsMap {
-				args.Set(k, v)
-			}
-
-			toolCalls = append(toolCalls, api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name:      tc.Function.Name,
-					Arguments: args,
-				},
-			})
-		}
-		ollamaMsg.ToolCalls = toolCalls
-	}
-
-	return ollamaMsg
-}
-
 // convertDoneReason converts Ollama done reason to OpenAI finish reason.
 func convertDoneReason(reason string) string {
 	switch reason {
@@ -478,36 +456,234 @@ func convertEmbeddingResponse(resp *api.EmbedResponse, model string) *providers.
 	}
 }
 
-// convertMessage converts a single message to Ollama format.
-func convertMessage(msg providers.Message) *api.Message {
-	switch msg.Role {
-	case providers.RoleTool:
-		return convertToolMessage(msg)
-	case providers.RoleAssistant:
-		return convertAssistantMessage(msg)
-	case providers.RoleUser:
-		return convertUserMessage(msg)
-	default:
-		// System and other roles.
-		return &api.Message{
-			Role:    msg.Role,
-			Content: msg.ContentString(),
-		}
+// convertMessage converts a single message to Ollama's documented wire model.
+func convertMessage(msg providers.Message) (*api.Message, error) {
+	if err := validateMessageMetadata(msg); err != nil {
+		return nil, err
 	}
+
+	content, images, err := convertMessageContent(msg)
+	if err != nil {
+		return nil, err
+	}
+	toolCalls, err := convertRequestToolCalls(msg.ToolCalls)
+	if err != nil {
+		return nil, err
+	}
+
+	converted := &api.Message{
+		Role:      msg.Role,
+		Content:   content,
+		Images:    images,
+		ToolCalls: toolCalls,
+	}
+	if msg.Role == providers.RoleTool {
+		converted.ToolName = msg.Name
+	}
+	if msg.Reasoning != nil {
+		converted.Thinking = msg.Reasoning.Content
+	}
+
+	return converted, nil
+}
+
+func validateMessageMetadata(msg providers.Message) error {
+	switch msg.Role {
+	case providers.RoleSystem, providers.RoleUser, providers.RoleAssistant, providers.RoleTool:
+	default:
+		return errors.NewInvalidRequestError(providerName, fmt.Errorf("unsupported message role %q", msg.Role))
+	}
+	if msg.Role != providers.RoleTool && (msg.Name != "" || msg.ToolCallID != "") {
+		return errors.NewUnsupportedParamError(providerName, "messages.name/tool_call_id")
+	}
+	if msg.Role != providers.RoleAssistant && len(msg.ToolCalls) > 0 {
+		return errors.NewUnsupportedParamError(providerName, "messages.tool_calls")
+	}
+	if msg.Role != providers.RoleAssistant && msg.Reasoning != nil {
+		return errors.NewUnsupportedParamError(providerName, "messages.reasoning")
+	}
+	return nil
+}
+
+func convertRequestToolCalls(toolCalls []providers.ToolCall) ([]api.ToolCall, error) {
+	if len(toolCalls) == 0 {
+		return nil, nil
+	}
+
+	converted := make([]api.ToolCall, 0, len(toolCalls))
+	for _, toolCall := range toolCalls {
+		if toolCall.Type != toolTypeFunction {
+			return nil, errors.NewUnsupportedParamError(providerName, "messages.tool_calls.type")
+		}
+		if toolCall.Function.Name == "" {
+			return nil, errors.NewInvalidRequestError(
+				providerName,
+				stderrors.New("tool call requires a function name"),
+			)
+		}
+		argumentsJSON := strings.TrimSpace(toolCall.Function.Arguments)
+		if !strings.HasPrefix(argumentsJSON, "{") {
+			return nil, errors.NewInvalidRequestError(
+				providerName,
+				stderrors.New("tool arguments must be a JSON object"),
+			)
+		}
+		var arguments api.ToolCallFunctionArguments
+		if err := json.Unmarshal([]byte(argumentsJSON), &arguments); err != nil {
+			return nil, errors.NewInvalidRequestError(
+				providerName,
+				fmt.Errorf("tool arguments must be a JSON object: %w", err),
+			)
+		}
+		// https://docs.ollama.com/capabilities/tool-calling includes
+		// type:"function", but Chat OpenAPI and the Go SDK type used here omit it.
+		converted = append(converted, api.ToolCall{
+			Function: api.ToolCallFunction{
+				Name:      toolCall.Function.Name,
+				Arguments: arguments,
+			},
+		})
+	}
+
+	return converted, nil
 }
 
 // convertMessages converts provider messages to Ollama format.
-func convertMessages(messages []providers.Message) []api.Message {
+func convertMessages(messages []providers.Message) ([]api.Message, error) {
 	result := make([]api.Message, 0, len(messages))
+	toolNames := make(map[string]string)
 
 	for _, msg := range messages {
-		ollamaMsg := convertMessage(msg)
-		if ollamaMsg != nil {
-			result = append(result, *ollamaMsg)
+		converted, err := convertMessage(msg)
+		if err != nil {
+			return nil, err
+		}
+		for _, toolCall := range msg.ToolCalls {
+			if toolCall.ID != "" {
+				toolNames[toolCall.ID] = toolCall.Function.Name
+			}
+		}
+		// https://docs.ollama.com/capabilities/tool-calling identifies tool
+		// results by tool_name. Resolve the normalized call ID before encoding.
+		if msg.Role == providers.RoleTool && converted.ToolName == "" {
+			converted.ToolName = toolNames[msg.ToolCallID]
+			if converted.ToolName == "" {
+				return nil, errors.NewInvalidRequestError(
+					providerName,
+					stderrors.New("tool result requires a name or a matching tool call ID"),
+				)
+			}
+		}
+		result = append(result, *converted)
+	}
+
+	return result, nil
+}
+
+func convertMessageContent(msg providers.Message) (string, []api.ImageData, error) {
+	if content, ok := msg.Content.(string); ok {
+		return content, nil, nil
+	}
+	if msg.Content == nil {
+		return "", nil, nil
+	}
+	var parts []providers.ContentPart
+	switch content := msg.Content.(type) {
+	case []providers.ContentPart:
+		parts = content
+	case []any:
+		var err error
+		parts, err = decodeContentParts(content)
+		if err != nil {
+			return "", nil, err
+		}
+	default:
+		return "", nil, errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("unsupported message content type %T", msg.Content),
+		)
+	}
+
+	var content strings.Builder
+	var images []api.ImageData
+	for _, part := range parts {
+		text, image, err := convertContentPart(part)
+		if err != nil {
+			return "", nil, err
+		}
+		content.WriteString(text)
+		if image != nil {
+			images = append(images, image)
 		}
 	}
 
-	return result
+	return content.String(), images, nil
+}
+
+func decodeContentParts(rawParts []any) ([]providers.ContentPart, error) {
+	parts := make([]providers.ContentPart, 0, len(rawParts))
+	for _, rawPart := range rawParts {
+		encoded, err := json.Marshal(rawPart)
+		if err != nil {
+			return nil, errors.NewInvalidRequestError(providerName, fmt.Errorf("invalid content part: %w", err))
+		}
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.DisallowUnknownFields()
+
+		var part providers.ContentPart
+		if err := decoder.Decode(&part); err != nil {
+			return nil, errors.NewInvalidRequestError(providerName, fmt.Errorf("invalid content part: %w", err))
+		}
+		parts = append(parts, part)
+	}
+	return parts, nil
+}
+
+func convertContentPart(part providers.ContentPart) (string, api.ImageData, error) {
+	switch part.Type {
+	case contentTypeText:
+		if part.ImageURL != nil {
+			return "", nil, errors.NewInvalidRequestError(
+				providerName,
+				stderrors.New("text content cannot include image_url"),
+			)
+		}
+		return part.Text, nil, nil
+	case contentTypeImageURL:
+		if part.Text != "" || part.ImageURL == nil {
+			return "", nil, errors.NewInvalidRequestError(
+				providerName,
+				stderrors.New("image content requires image_url only"),
+			)
+		}
+		if part.ImageURL.Detail != "" {
+			return "", nil, errors.NewUnsupportedParamError(providerName, "messages.content.image_url.detail")
+		}
+		decoded, err := decodeImageDataURL(part.ImageURL.URL)
+		if err != nil {
+			return "", nil, err
+		}
+		return "", api.ImageData(decoded), nil
+	default:
+		return "", nil, errors.NewUnsupportedParamError(providerName, "messages.content.type")
+	}
+}
+
+func decodeImageDataURL(dataURL string) ([]byte, error) {
+	metadata, encoded, ok := strings.Cut(dataURL, ",")
+	if !ok || !strings.HasPrefix(metadata, "data:image/") || !strings.HasSuffix(metadata, ";base64") {
+		return nil, errors.NewUnsupportedParamError(providerName, "messages.content.image_url")
+	}
+	// Ollama's Go SDK models images as raw []byte and base64-encodes them when
+	// marshaling. Decode the normalized data URL here so it is encoded once.
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("image content must contain valid base64: %w", err),
+		)
+	}
+	return decoded, nil
 }
 
 // convertModelsResponse converts an Ollama list response to provider format.
@@ -612,15 +788,6 @@ func convertToolCalls(toolCalls []api.ToolCall) []providers.ToolCall {
 	return result
 }
 
-// convertToolMessage converts a tool message to Ollama format.
-func convertToolMessage(msg providers.Message) *api.Message {
-	// Ollama uses user role for tool results.
-	return &api.Message{
-		Role:    providers.RoleUser,
-		Content: msg.ContentString(),
-	}
-}
-
 // convertTools converts provider tools to Ollama format.
 func convertTools(tools []providers.Tool) api.Tools {
 	result := make(api.Tools, 0, len(tools))
@@ -670,50 +837,6 @@ func convertTools(tools []providers.Tool) api.Tools {
 	}
 
 	return result
-}
-
-// convertUserMessage converts a user message to Ollama format.
-func convertUserMessage(msg providers.Message) *api.Message {
-	ollamaMsg := &api.Message{
-		Role:    msg.Role,
-		Content: msg.ContentString(),
-	}
-
-	// Handle multi-modal messages with images.
-	if msg.IsMultiModal() {
-		images := extractImages(msg)
-		if len(images) > 0 {
-			ollamaMsg.Images = images
-		}
-	}
-
-	return ollamaMsg
-}
-
-// extractImages extracts base64 image data from a multi-modal message.
-func extractImages(msg providers.Message) []api.ImageData {
-	var images []api.ImageData
-
-	for _, part := range msg.ContentParts() {
-		if part.Type != contentTypeImageURL || part.ImageURL == nil {
-			continue
-		}
-
-		imgURL := part.ImageURL.URL
-		if !strings.HasPrefix(imgURL, dataImagePrefix) {
-			continue
-		}
-
-		// Extract base64 data from data URL.
-		parts := strings.SplitN(imgURL, ",", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		images = append(images, api.ImageData(parts[1]))
-	}
-
-	return images
 }
 
 // extractThinking extracts thinking content from response.
