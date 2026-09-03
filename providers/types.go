@@ -320,6 +320,10 @@ type ModelsResponse struct {
 // Reasoning represents extended thinking/reasoning content.
 type Reasoning struct {
 	Content string `json:"content,omitempty"`
+	// ProviderRaw retains provider-native blocks that Content cannot represent.
+	// Mistral requires complete assistant content for multi-turn reasoning replay:
+	// https://docs.mistral.ai/studio-api/conversations/reasoning
+	ProviderRaw json.RawMessage `json:"provider_raw,omitempty"`
 }
 
 // ResponseFormat specifies the format of the response.
