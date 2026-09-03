@@ -2,13 +2,16 @@
 package ollama
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -22,7 +25,6 @@ import (
 // Provider configuration constants.
 const (
 	defaultBaseURL = "http://localhost:11434"
-	defaultNumCtx  = 32000
 	envBaseURL     = "OLLAMA_HOST"
 	providerName   = "ollama"
 )
@@ -35,7 +37,6 @@ const (
 
 // Ollama option keys.
 const (
-	optionNumCtx      = "num_ctx"
 	optionNumPredict  = "num_predict"
 	optionSeed        = "seed"
 	optionStop        = "stop"
@@ -43,21 +44,12 @@ const (
 	optionTopP        = "top_p"
 )
 
-// JSON schema keys and types.
-const (
-	schemaKeyDescription = "description"
-	schemaKeyProperties  = "properties"
-	schemaKeyRequired    = "required"
-	schemaKeyType        = "type"
-	schemaTypeObject     = "object"
-)
-
 // Tool and response format constants.
 const (
-	emptyJSONObject      = "{}"
 	ollamaFormatJSON     = "json"
 	responseFormatJSON   = "json_object"
 	responseFormatSchema = "json_schema"
+	responseFormatText   = "text"
 	toolCallIDFormat     = "call_%d"
 	toolTypeFunction     = "function"
 )
@@ -71,16 +63,10 @@ const (
 	objectModel               = "model"
 )
 
-// Thinking tag constants.
-const (
-	thinkingTagClose = "</think>"
-	thinkingTagOpen  = "<think>"
-)
-
 // Content part constants.
 const (
 	contentTypeImageURL = "image_url"
-	dataImagePrefix     = "data:image/"
+	contentTypeText     = "text"
 )
 
 // Ensure Provider implements the required interfaces.
@@ -98,13 +84,12 @@ type Provider struct {
 	config *config.Config
 }
 
-// streamState tracks accumulated state during streaming.
+// streamState tracks response metadata and whether Ollama sent its terminal event.
 type streamState struct {
-	id        string
-	model     string
-	created   int64
-	content   strings.Builder
-	reasoning strings.Builder
+	id      string
+	model   string
+	created int64
+	done    bool
 }
 
 // New creates a new Ollama provider.
@@ -154,19 +139,30 @@ func (p *Provider) Completion(
 	ctx context.Context,
 	params providers.CompletionParams,
 ) (*providers.ChatCompletion, error) {
-	req := p.convertParams(params)
+	req, err := p.convertParams(params)
+	if err != nil {
+		return nil, err
+	}
 
 	// Disable streaming for non-stream requests.
 	stream := false
 	req.Stream = &stream
 
 	var response api.ChatResponse
-	err := p.client.Chat(ctx, req, func(resp api.ChatResponse) error {
+	done := false
+	err = p.client.Chat(ctx, req, func(resp api.ChatResponse) error {
 		response = resp
+		done = resp.Done
 		return nil
 	})
 	if err != nil {
 		return nil, p.ConvertError(err)
+	}
+	if !done {
+		return nil, errors.NewProviderError(
+			providerName,
+			stderrors.New("response ended before the terminal event"),
+		)
 	}
 
 	return convertResponse(&response), nil
@@ -184,16 +180,31 @@ func (p *Provider) CompletionStream(
 		defer close(chunks)
 		defer close(errs)
 
-		req := p.convertParams(params)
+		req, err := p.convertParams(params)
+		if err != nil {
+			errs <- err
+			return
+		}
 		state := newStreamState()
 
-		err := p.client.Chat(ctx, req, func(resp api.ChatResponse) error {
+		err = p.client.Chat(ctx, req, func(resp api.ChatResponse) error {
 			chunk := state.handleChunk(&resp)
-			chunks <- chunk
-			return nil
+			select {
+			case chunks <- chunk:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		})
 		if err != nil {
 			errs <- p.ConvertError(err)
+			return
+		}
+		if !state.done {
+			errs <- errors.NewProviderError(
+				providerName,
+				stderrors.New("stream ended before the terminal event"),
+			)
 		}
 	}()
 
@@ -224,9 +235,8 @@ func (p *Provider) ConvertError(err error) error {
 		case 429:
 			return errors.NewRateLimitError(providerName, err)
 		case 400:
-			if strings.Contains(statusErr.ErrorMessage, "context") {
-				return errors.NewContextLengthError(providerName, err)
-			}
+			// Ollama exposes only status and message, without a machine-readable
+			// context-length code. https://docs.ollama.com/api/errors
 			return errors.NewInvalidRequestError(providerName, err)
 		}
 	}
@@ -273,57 +283,64 @@ func (p *Provider) Name() string {
 }
 
 // convertParams converts providers.CompletionParams to Ollama ChatRequest.
-func (p *Provider) convertParams(params providers.CompletionParams) *api.ChatRequest {
-	messages := convertMessages(params.Messages)
+func (p *Provider) convertParams(params providers.CompletionParams) (*api.ChatRequest, error) {
+	messages, err := convertMessages(params.Messages)
+	if err != nil {
+		return nil, err
+	}
 
 	req := &api.ChatRequest{
 		Model:    params.Model,
 		Messages: messages,
-		Options:  make(map[string]any),
+		Options:  convertOptions(params),
 	}
 
-	// Set default context size.
-	req.Options[optionNumCtx] = defaultNumCtx
+	req.Tools, err = convertTools(params.Tools)
+	if err != nil {
+		return nil, err
+	}
 
+	req.Format, err = convertResponseFormat(params.ResponseFormat)
+	if err != nil {
+		return nil, err
+	}
+
+	// https://docs.ollama.com/api/chat defines think as a boolean or one of
+	// low, medium, high, and max. Preserve "none" as false on that wire type.
+	switch params.ReasoningEffort {
+	case "", providers.ReasoningEffortAuto:
+	case providers.ReasoningEffortNone:
+		req.Think = new(api.ThinkValue{Value: false})
+	case providers.ReasoningEffortLow,
+		providers.ReasoningEffortMedium,
+		providers.ReasoningEffortHigh,
+		providers.ReasoningEffort("max"):
+		req.Think = new(api.ThinkValue{Value: string(params.ReasoningEffort)})
+	default:
+		return nil, errors.NewUnsupportedParamError(providerName, "reasoning_effort")
+	}
+
+	return req, nil
+}
+
+func convertOptions(params providers.CompletionParams) map[string]any {
+	options := make(map[string]any)
 	if params.Temperature != nil {
-		req.Options[optionTemperature] = *params.Temperature
+		options[optionTemperature] = *params.Temperature
 	}
-
 	if params.TopP != nil {
-		req.Options[optionTopP] = *params.TopP
+		options[optionTopP] = *params.TopP
 	}
-
 	if len(params.Stop) > 0 {
-		req.Options[optionStop] = params.Stop
+		options[optionStop] = params.Stop
 	}
-
 	if params.MaxTokens != nil {
-		req.Options[optionNumPredict] = *params.MaxTokens
+		options[optionNumPredict] = *params.MaxTokens
 	}
-
 	if params.Seed != nil {
-		req.Options[optionSeed] = *params.Seed
+		options[optionSeed] = *params.Seed
 	}
-
-	if len(params.Tools) > 0 {
-		req.Tools = convertTools(params.Tools)
-	}
-
-	if params.ResponseFormat != nil {
-		if schema := convertResponseFormat(params.ResponseFormat); schema != nil {
-			req.Format = schema
-		}
-	}
-
-	// Handle reasoning/thinking.
-	if params.ReasoningEffort != "" &&
-		params.ReasoningEffort != providers.ReasoningEffortNone &&
-		params.ReasoningEffort != providers.ReasoningEffortAuto {
-		think := api.ThinkValue{Value: true}
-		req.Think = &think
-	}
-
-	return req
+	return options
 }
 
 // newStreamState creates a new stream state.
@@ -348,6 +365,9 @@ func (s *streamState) chunk() providers.ChatCompletionChunk {
 // handleChunk processes a streaming response and returns a chunk.
 func (s *streamState) handleChunk(resp *api.ChatResponse) providers.ChatCompletionChunk {
 	s.updateMetadata(resp)
+	if resp.Done {
+		s.done = true
+	}
 
 	chunk := s.chunk()
 	chunk.Choices[0].Delta = s.buildDelta(resp)
@@ -375,13 +395,11 @@ func (s *streamState) buildDelta(resp *api.ChatResponse) providers.ChunkDelta {
 
 	// Handle content.
 	if resp.Message.Content != "" {
-		s.content.WriteString(resp.Message.Content)
 		delta.Content = resp.Message.Content
 	}
 
 	// Handle thinking/reasoning.
 	if resp.Message.Thinking != "" {
-		s.reasoning.WriteString(resp.Message.Thinking)
 		delta.Reasoning = &providers.Reasoning{Content: resp.Message.Thinking}
 	}
 
@@ -408,44 +426,15 @@ func (s *streamState) handleDone(resp *api.ChatResponse, chunk *providers.ChatCo
 	}
 }
 
-// convertAssistantMessage converts an assistant message to Ollama format.
-func convertAssistantMessage(msg providers.Message) *api.Message {
-	ollamaMsg := &api.Message{
-		Role:    msg.Role,
-		Content: msg.ContentString(),
-	}
-
-	if len(msg.ToolCalls) > 0 {
-		toolCalls := make([]api.ToolCall, 0, len(msg.ToolCalls))
-		for _, tc := range msg.ToolCalls {
-			var argsMap map[string]any
-			_ = json.Unmarshal([]byte(tc.Function.Arguments), &argsMap)
-
-			args := api.NewToolCallFunctionArguments()
-			for k, v := range argsMap {
-				args.Set(k, v)
-			}
-
-			toolCalls = append(toolCalls, api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name:      tc.Function.Name,
-					Arguments: args,
-				},
-			})
-		}
-		ollamaMsg.ToolCalls = toolCalls
-	}
-
-	return ollamaMsg
-}
-
 // convertDoneReason converts Ollama done reason to OpenAI finish reason.
 func convertDoneReason(reason string) string {
 	switch reason {
 	case doneReasonLength:
 		return providers.FinishReasonLength
-	default:
+	case "", doneReasonStop:
 		return providers.FinishReasonStop
+	default:
+		return reason
 	}
 }
 
@@ -478,36 +467,234 @@ func convertEmbeddingResponse(resp *api.EmbedResponse, model string) *providers.
 	}
 }
 
-// convertMessage converts a single message to Ollama format.
-func convertMessage(msg providers.Message) *api.Message {
-	switch msg.Role {
-	case providers.RoleTool:
-		return convertToolMessage(msg)
-	case providers.RoleAssistant:
-		return convertAssistantMessage(msg)
-	case providers.RoleUser:
-		return convertUserMessage(msg)
-	default:
-		// System and other roles.
-		return &api.Message{
-			Role:    msg.Role,
-			Content: msg.ContentString(),
-		}
+// convertMessage converts a single message to Ollama's documented wire model.
+func convertMessage(msg providers.Message) (*api.Message, error) {
+	if err := validateMessageMetadata(msg); err != nil {
+		return nil, err
 	}
+
+	content, images, err := convertMessageContent(msg)
+	if err != nil {
+		return nil, err
+	}
+	toolCalls, err := convertRequestToolCalls(msg.ToolCalls)
+	if err != nil {
+		return nil, err
+	}
+
+	converted := &api.Message{
+		Role:      msg.Role,
+		Content:   content,
+		Images:    images,
+		ToolCalls: toolCalls,
+	}
+	if msg.Role == providers.RoleTool {
+		converted.ToolName = msg.Name
+	}
+	if msg.Reasoning != nil {
+		converted.Thinking = msg.Reasoning.Content
+	}
+
+	return converted, nil
+}
+
+func validateMessageMetadata(msg providers.Message) error {
+	switch msg.Role {
+	case providers.RoleSystem, providers.RoleUser, providers.RoleAssistant, providers.RoleTool:
+	default:
+		return errors.NewInvalidRequestError(providerName, fmt.Errorf("unsupported message role %q", msg.Role))
+	}
+	if msg.Role != providers.RoleTool && (msg.Name != "" || msg.ToolCallID != "") {
+		return errors.NewUnsupportedParamError(providerName, "messages.name/tool_call_id")
+	}
+	if msg.Role != providers.RoleAssistant && len(msg.ToolCalls) > 0 {
+		return errors.NewUnsupportedParamError(providerName, "messages.tool_calls")
+	}
+	if msg.Role != providers.RoleAssistant && msg.Reasoning != nil {
+		return errors.NewUnsupportedParamError(providerName, "messages.reasoning")
+	}
+	return nil
+}
+
+func convertRequestToolCalls(toolCalls []providers.ToolCall) ([]api.ToolCall, error) {
+	if len(toolCalls) == 0 {
+		return nil, nil
+	}
+
+	converted := make([]api.ToolCall, 0, len(toolCalls))
+	for _, toolCall := range toolCalls {
+		if toolCall.Type != toolTypeFunction {
+			return nil, errors.NewUnsupportedParamError(providerName, "messages.tool_calls.type")
+		}
+		if toolCall.Function.Name == "" {
+			return nil, errors.NewInvalidRequestError(
+				providerName,
+				stderrors.New("tool call requires a function name"),
+			)
+		}
+		argumentsJSON := strings.TrimSpace(toolCall.Function.Arguments)
+		if !strings.HasPrefix(argumentsJSON, "{") {
+			return nil, errors.NewInvalidRequestError(
+				providerName,
+				stderrors.New("tool arguments must be a JSON object"),
+			)
+		}
+		var arguments api.ToolCallFunctionArguments
+		if err := json.Unmarshal([]byte(argumentsJSON), &arguments); err != nil {
+			return nil, errors.NewInvalidRequestError(
+				providerName,
+				fmt.Errorf("tool arguments must be a JSON object: %w", err),
+			)
+		}
+		// https://docs.ollama.com/capabilities/tool-calling includes
+		// type:"function", but Chat OpenAPI and the Go SDK type used here omit it.
+		converted = append(converted, api.ToolCall{
+			Function: api.ToolCallFunction{
+				Name:      toolCall.Function.Name,
+				Arguments: arguments,
+			},
+		})
+	}
+
+	return converted, nil
 }
 
 // convertMessages converts provider messages to Ollama format.
-func convertMessages(messages []providers.Message) []api.Message {
+func convertMessages(messages []providers.Message) ([]api.Message, error) {
 	result := make([]api.Message, 0, len(messages))
+	toolNames := make(map[string]string)
 
 	for _, msg := range messages {
-		ollamaMsg := convertMessage(msg)
-		if ollamaMsg != nil {
-			result = append(result, *ollamaMsg)
+		converted, err := convertMessage(msg)
+		if err != nil {
+			return nil, err
+		}
+		for _, toolCall := range msg.ToolCalls {
+			if toolCall.ID != "" {
+				toolNames[toolCall.ID] = toolCall.Function.Name
+			}
+		}
+		// https://docs.ollama.com/capabilities/tool-calling identifies tool
+		// results by tool_name. Resolve the normalized call ID before encoding.
+		if msg.Role == providers.RoleTool && converted.ToolName == "" {
+			converted.ToolName = toolNames[msg.ToolCallID]
+			if converted.ToolName == "" {
+				return nil, errors.NewInvalidRequestError(
+					providerName,
+					stderrors.New("tool result requires a name or a matching tool call ID"),
+				)
+			}
+		}
+		result = append(result, *converted)
+	}
+
+	return result, nil
+}
+
+func convertMessageContent(msg providers.Message) (string, []api.ImageData, error) {
+	if content, ok := msg.Content.(string); ok {
+		return content, nil, nil
+	}
+	if msg.Content == nil {
+		return "", nil, nil
+	}
+	var parts []providers.ContentPart
+	switch content := msg.Content.(type) {
+	case []providers.ContentPart:
+		parts = content
+	case []any:
+		var err error
+		parts, err = decodeContentParts(content)
+		if err != nil {
+			return "", nil, err
+		}
+	default:
+		return "", nil, errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("unsupported message content type %T", msg.Content),
+		)
+	}
+
+	var content strings.Builder
+	var images []api.ImageData
+	for _, part := range parts {
+		text, image, err := convertContentPart(part)
+		if err != nil {
+			return "", nil, err
+		}
+		content.WriteString(text)
+		if image != nil {
+			images = append(images, image)
 		}
 	}
 
-	return result
+	return content.String(), images, nil
+}
+
+func decodeContentParts(rawParts []any) ([]providers.ContentPart, error) {
+	parts := make([]providers.ContentPart, 0, len(rawParts))
+	for _, rawPart := range rawParts {
+		encoded, err := json.Marshal(rawPart)
+		if err != nil {
+			return nil, errors.NewInvalidRequestError(providerName, fmt.Errorf("invalid content part: %w", err))
+		}
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.DisallowUnknownFields()
+
+		var part providers.ContentPart
+		if err := decoder.Decode(&part); err != nil {
+			return nil, errors.NewInvalidRequestError(providerName, fmt.Errorf("invalid content part: %w", err))
+		}
+		parts = append(parts, part)
+	}
+	return parts, nil
+}
+
+func convertContentPart(part providers.ContentPart) (string, api.ImageData, error) {
+	switch part.Type {
+	case contentTypeText:
+		if part.ImageURL != nil {
+			return "", nil, errors.NewInvalidRequestError(
+				providerName,
+				stderrors.New("text content cannot include image_url"),
+			)
+		}
+		return part.Text, nil, nil
+	case contentTypeImageURL:
+		if part.Text != "" || part.ImageURL == nil {
+			return "", nil, errors.NewInvalidRequestError(
+				providerName,
+				stderrors.New("image content requires image_url only"),
+			)
+		}
+		if part.ImageURL.Detail != "" {
+			return "", nil, errors.NewUnsupportedParamError(providerName, "messages.content.image_url.detail")
+		}
+		decoded, err := decodeImageDataURL(part.ImageURL.URL)
+		if err != nil {
+			return "", nil, err
+		}
+		return "", api.ImageData(decoded), nil
+	default:
+		return "", nil, errors.NewUnsupportedParamError(providerName, "messages.content.type")
+	}
+}
+
+func decodeImageDataURL(dataURL string) ([]byte, error) {
+	metadata, encoded, ok := strings.Cut(dataURL, ",")
+	if !ok || !strings.HasPrefix(metadata, "data:image/") || !strings.HasSuffix(metadata, ";base64") {
+		return nil, errors.NewUnsupportedParamError(providerName, "messages.content.image_url")
+	}
+	// Ollama's Go SDK models images as raw []byte and base64-encodes them when
+	// marshaling. Decode the normalized data URL here so it is encoded once.
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("image content must contain valid base64: %w", err),
+		)
+	}
+	return decoded, nil
 }
 
 // convertModelsResponse converts an Ollama list response to provider format.
@@ -531,12 +718,14 @@ func convertModelsResponse(resp *api.ListResponse) *providers.ModelsResponse {
 
 // convertResponse converts an Ollama response to provider format.
 func convertResponse(resp *api.ChatResponse) *providers.ChatCompletion {
-	content, reasoning := extractThinking(resp.Message.Content, resp.Message.Thinking)
-
 	message := providers.Message{
-		Role:      providers.RoleAssistant,
-		Content:   content,
-		Reasoning: reasoning,
+		Role:    providers.RoleAssistant,
+		Content: resp.Message.Content,
+	}
+	// The Chat schema exposes thinking separately, so content remains opaque.
+	// https://docs.ollama.com/api/chat
+	if resp.Message.Thinking != "" {
+		message.Reasoning = &providers.Reasoning{Content: resp.Message.Thinking}
 	}
 
 	// Handle tool calls.
@@ -568,22 +757,42 @@ func convertResponse(resp *api.ChatResponse) *providers.ChatCompletion {
 }
 
 // convertResponseFormat converts a response format to Ollama JSON schema.
-func convertResponseFormat(format *providers.ResponseFormat) json.RawMessage {
+func convertResponseFormat(format *providers.ResponseFormat) (json.RawMessage, error) {
 	if format == nil {
-		return nil
+		return nil, nil
 	}
 
 	if format.Type == responseFormatJSON {
-		return json.RawMessage(`"` + ollamaFormatJSON + `"`)
+		return json.RawMessage(`"` + ollamaFormatJSON + `"`), nil
+	}
+	if format.Type == responseFormatText {
+		return nil, nil
 	}
 
-	if format.Type == responseFormatSchema && format.JSONSchema != nil {
-		if schemaBytes, err := json.Marshal(format.JSONSchema.Schema); err == nil {
-			return schemaBytes
+	if format.Type == responseFormatSchema {
+		if format.JSONSchema == nil || format.JSONSchema.Schema == nil {
+			return nil, errors.NewInvalidRequestError(
+				providerName,
+				stderrors.New("json_schema response format requires a schema"),
+			)
 		}
+		if format.JSONSchema.Strict != nil && !*format.JSONSchema.Strict {
+			return nil, errors.NewUnsupportedParamError(providerName, "response_format.json_schema.strict")
+		}
+		// Ollama accepts the raw schema without OpenAI's name, description, or
+		// strict wrapper and enforces it by default. The schema itself is kept intact.
+		// https://docs.ollama.com/capabilities/structured-outputs
+		schemaBytes, err := json.Marshal(format.JSONSchema.Schema)
+		if err != nil {
+			return nil, errors.NewInvalidRequestError(
+				providerName,
+				fmt.Errorf("response schema must be valid JSON: %w", err),
+			)
+		}
+		return schemaBytes, nil
 	}
 
-	return nil
+	return nil, errors.NewUnsupportedParamError(providerName, "response_format.type")
 }
 
 // convertToolCalls converts Ollama tool calls to provider format.
@@ -591,20 +800,17 @@ func convertToolCalls(toolCalls []api.ToolCall) []providers.ToolCall {
 	result := make([]providers.ToolCall, 0, len(toolCalls))
 
 	for i, tc := range toolCalls {
-		args := emptyJSONObject
-		argsMap := tc.Function.Arguments.ToMap()
-		if len(argsMap) > 0 {
-			if argsBytes, err := json.Marshal(argsMap); err == nil {
-				args = string(argsBytes)
-			}
+		toolCallID := tc.ID
+		if toolCallID == "" {
+			toolCallID = fmt.Sprintf(toolCallIDFormat, i)
 		}
 
 		result = append(result, providers.ToolCall{
-			ID:   fmt.Sprintf(toolCallIDFormat, i),
+			ID:   toolCallID,
 			Type: toolTypeFunction,
 			Function: providers.FunctionCall{
 				Name:      tc.Function.Name,
-				Arguments: args,
+				Arguments: tc.Function.Arguments.String(),
 			},
 		})
 	}
@@ -612,137 +818,92 @@ func convertToolCalls(toolCalls []api.ToolCall) []providers.ToolCall {
 	return result
 }
 
-// convertToolMessage converts a tool message to Ollama format.
-func convertToolMessage(msg providers.Message) *api.Message {
-	// Ollama uses user role for tool results.
-	return &api.Message{
-		Role:    providers.RoleUser,
-		Content: msg.ContentString(),
-	}
-}
-
 // convertTools converts provider tools to Ollama format.
-func convertTools(tools []providers.Tool) api.Tools {
+func convertTools(tools []providers.Tool) (api.Tools, error) {
+	if len(tools) == 0 {
+		return nil, nil
+	}
+
 	result := make(api.Tools, 0, len(tools))
 
 	for _, tool := range tools {
-		params := api.ToolFunctionParameters{
-			Type: schemaTypeObject,
+		if tool.Type != toolTypeFunction {
+			return nil, errors.NewUnsupportedParamError(providerName, "tools.type")
 		}
-
-		// Convert properties.
-		if props, ok := tool.Function.Parameters[schemaKeyProperties].(map[string]any); ok {
-			propsMap := api.NewToolPropertiesMap()
-			for name, prop := range props {
-				if propMap, ok := prop.(map[string]any); ok {
-					tp := api.ToolProperty{}
-					if t, ok := propMap[schemaKeyType].(string); ok {
-						tp.Type = api.PropertyType{t}
-					}
-					if d, ok := propMap[schemaKeyDescription].(string); ok {
-						tp.Description = d
-					}
-					propsMap.Set(name, tp)
-				}
-			}
-			params.Properties = propsMap
+		if tool.Function.Name == "" {
+			return nil, errors.NewInvalidRequestError(providerName, stderrors.New("tool requires a function name"))
 		}
-
-		// Convert required fields.
-		if req, ok := tool.Function.Parameters[schemaKeyRequired].([]any); ok {
-			for _, r := range req {
-				if s, ok := r.(string); ok {
-					params.Required = append(params.Required, s)
-				}
-			}
+		parameters, err := convertToolParameters(tool.Function.Parameters)
+		if err != nil {
+			return nil, err
 		}
-
-		ollamaTool := api.Tool{
+		result = append(result, api.Tool{
 			Type: toolTypeFunction,
 			Function: api.ToolFunction{
 				Name:        tool.Function.Name,
 				Description: tool.Function.Description,
-				Parameters:  params,
+				Parameters:  parameters,
 			},
-		}
-
-		result = append(result, ollamaTool)
+		})
 	}
 
-	return result
+	return result, nil
 }
 
-// convertUserMessage converts a user message to Ollama format.
-func convertUserMessage(msg providers.Message) *api.Message {
-	ollamaMsg := &api.Message{
-		Role:    msg.Role,
-		Content: msg.ContentString(),
+func convertToolParameters(parameters map[string]any) (api.ToolFunctionParameters, error) {
+	if parameters == nil {
+		return api.ToolFunctionParameters{}, errors.NewInvalidRequestError(
+			providerName,
+			stderrors.New("tool requires a parameters schema"),
+		)
+	}
+	encoded, err := json.Marshal(parameters)
+	if err != nil {
+		return api.ToolFunctionParameters{}, errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("tool schema must be valid JSON: %w", err),
+		)
 	}
 
-	// Handle multi-modal messages with images.
-	if msg.IsMultiModal() {
-		images := extractImages(msg)
-		if len(images) > 0 {
-			ollamaMsg.Images = images
-		}
+	var converted api.ToolFunctionParameters
+	if unmarshalErr := json.Unmarshal(encoded, &converted); unmarshalErr != nil {
+		return api.ToolFunctionParameters{}, errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("tool schema is invalid: %w", unmarshalErr),
+		)
+	}
+	var normalized map[string]any
+	if unmarshalErr := json.Unmarshal(encoded, &normalized); unmarshalErr != nil {
+		return api.ToolFunctionParameters{}, errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("tool schema cannot be compared: %w", unmarshalErr),
+		)
 	}
 
-	return ollamaMsg
-}
-
-// extractImages extracts base64 image data from a multi-modal message.
-func extractImages(msg providers.Message) []api.ImageData {
-	var images []api.ImageData
-
-	for _, part := range msg.ContentParts() {
-		if part.Type != contentTypeImageURL || part.ImageURL == nil {
-			continue
-		}
-
-		imgURL := part.ImageURL.URL
-		if !strings.HasPrefix(imgURL, dataImagePrefix) {
-			continue
-		}
-
-		// Extract base64 data from data URL.
-		parts := strings.SplitN(imgURL, ",", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		images = append(images, api.ImageData(parts[1]))
+	// https://docs.ollama.com/api/chat accepts JSON Schema, while the Go SDK
+	// exposes a typed subset. Reject schemas the SDK would silently weaken.
+	roundTripJSON, err := json.Marshal(converted)
+	if err != nil {
+		return api.ToolFunctionParameters{}, errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("tool schema cannot be encoded: %w", err),
+		)
+	}
+	var roundTrip map[string]any
+	if err := json.Unmarshal(roundTripJSON, &roundTrip); err != nil {
+		return api.ToolFunctionParameters{}, errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("tool schema cannot be compared: %w", err),
+		)
+	}
+	if !reflect.DeepEqual(normalized, roundTrip) {
+		return api.ToolFunctionParameters{}, errors.NewUnsupportedParamError(
+			providerName,
+			"tools.function.parameters",
+		)
 	}
 
-	return images
-}
-
-// extractThinking extracts thinking content from response.
-// It checks the dedicated Thinking field first, then falls back to parsing <think> tags.
-func extractThinking(content, thinking string) (string, *providers.Reasoning) {
-	// Check for dedicated thinking content first.
-	if thinking != "" {
-		return content, &providers.Reasoning{Content: thinking}
-	}
-
-	// Fall back to parsing <think> tags in content.
-	if !strings.Contains(content, thinkingTagOpen) || !strings.Contains(content, thinkingTagClose) {
-		return content, nil
-	}
-
-	parts := strings.SplitN(content, thinkingTagOpen, 2)
-	if len(parts) != 2 {
-		return content, nil
-	}
-
-	thinkParts := strings.SplitN(parts[1], thinkingTagClose, 2)
-	if len(thinkParts) != 2 {
-		return content, nil
-	}
-
-	reasoning := &providers.Reasoning{Content: thinkParts[0]}
-	cleanContent := strings.TrimSpace(parts[0] + thinkParts[1])
-
-	return cleanContent, reasoning
+	return converted, nil
 }
 
 // generateID generates a unique ID for responses using crypto/rand.
