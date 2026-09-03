@@ -174,6 +174,29 @@ func TestConvertMessages(t *testing.T) {
 
 		require.Len(t, result, 3)
 	})
+
+	t.Run("preserves tool result errors", func(t *testing.T) {
+		t.Parallel()
+
+		message := convertToolMessage(providers.Message{
+			Role:              providers.RoleTool,
+			Content:           "weather service unavailable",
+			ToolCallID:        "call_123",
+			ToolResultIsError: true,
+		})
+		body, err := json.Marshal(message)
+
+		require.NoError(t, err)
+		require.JSONEq(t, `{
+			"role": "user",
+			"content": [{
+				"type": "tool_result",
+				"tool_use_id": "call_123",
+				"content": [{"type": "text", "text": "weather service unavailable"}],
+				"is_error": true
+			}]
+		}`, string(body))
+	})
 }
 
 func TestConvertImagePart(t *testing.T) {

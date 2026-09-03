@@ -671,8 +671,10 @@ func convertToolChoice(choice any, parallelToolCalls *bool) anthropic.ToolChoice
 
 // convertToolMessage converts a tool result message to Anthropic format.
 func convertToolMessage(msg providers.Message) *anthropic.MessageParam {
+	// Anthropic uses is_error to let Claude recover from client tool failures.
+	// https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls#handling-errors-with-is_error
 	m := anthropic.NewUserMessage(
-		anthropic.NewToolResultBlock(msg.ToolCallID, msg.ContentString(), false),
+		anthropic.NewToolResultBlock(msg.ToolCallID, msg.ContentString(), msg.ToolResultIsError),
 	)
 	return &m
 }

@@ -95,7 +95,7 @@ type Capabilities struct {
 	CompletionImage     bool
 	CompletionPDF       bool
 	CompletionReasoning bool
-	CompletionStreaming  bool
+	CompletionStreaming bool
 	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
@@ -300,7 +300,9 @@ type Message struct {
 	Name       string     `json:"name,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Reasoning  *Reasoning `json:"reasoning,omitempty"`
+	// ToolResultIsError tells providers that a tool message reports a failed execution.
+	ToolResultIsError bool       `json:"is_error,omitzero"`
+	Reasoning         *Reasoning `json:"reasoning,omitempty"`
 }
 
 // Model represents a model from the list models API.
