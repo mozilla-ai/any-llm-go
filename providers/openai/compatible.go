@@ -7,9 +7,9 @@ import (
 	stderrors "errors"
 	"fmt"
 
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/shared"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/errors"
@@ -59,6 +59,10 @@ type CompatibleConfig struct {
 	// Capabilities describes what the provider supports.
 	Capabilities providers.Capabilities
 
+	// ChatCompletionResponseTransform adapts provider-specific response fields
+	// after the SDK and shared converter preserve the response envelope.
+	ChatCompletionResponseTransform func(*openai.ChatCompletion, *providers.ChatCompletion) error
+
 	// DefaultAPIKey is used when RequireAPIKey is false (e.g., for local servers).
 	DefaultAPIKey string
 
@@ -68,13 +72,9 @@ type CompatibleConfig struct {
 	// Name is the provider name used in error messages.
 	Name string
 
-	// ChatCompletionRequestTransform is an optional function that modifies the chat
-	// completion request after convertParams() builds it and before it is serialized
-	// to the wire. Providers that are not fully OpenAI-compatible use this to adjust
-	// wire-level fields (e.g. swapping max_completion_tokens back to max_tokens).
-	// The pointer refers to a locally-constructed value owned by the caller; the
-	// function must not retain it beyond the call. Nil means no transformation.
-	ChatCompletionRequestTransform func(*openai.ChatCompletionNewParams)
+	// ChatCompletionRequestTransform adapts provider-specific request fields
+	// after shared conversion and before serialization.
+	ChatCompletionRequestTransform func(providers.CompletionParams, *openai.ChatCompletionNewParams) error
 
 	// RequireAPIKey indicates whether an API key is required.
 	RequireAPIKey bool
@@ -172,8 +172,12 @@ func (p *CompatibleProvider) Completion(
 	}
 
 	req := convertParams(params)
-	if p.compatibleConfig.ChatCompletionRequestTransform != nil {
-		p.compatibleConfig.ChatCompletionRequestTransform(&req)
+	requestTransform := p.compatibleConfig.ChatCompletionRequestTransform
+	if requestTransform != nil {
+		transformErr := requestTransform(params, &req)
+		if transformErr != nil {
+			return nil, transformErr
+		}
 	}
 
 	resp, err := p.client.Chat.Completions.New(ctx, req)
@@ -181,7 +185,16 @@ func (p *CompatibleProvider) Completion(
 		return nil, p.ConvertError(err)
 	}
 
-	return convertResponse(resp), nil
+	result := convertResponse(resp)
+	responseTransform := p.compatibleConfig.ChatCompletionResponseTransform
+	if responseTransform != nil {
+		err = responseTransform(resp, result)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return result, nil
 }
 
 // CompletionStream performs a streaming chat completion request.
@@ -202,9 +215,15 @@ func (p *CompatibleProvider) CompletionStream(
 		}
 
 		req := convertParams(params)
-		if p.compatibleConfig.ChatCompletionRequestTransform != nil {
-			p.compatibleConfig.ChatCompletionRequestTransform(&req)
+		requestTransform := p.compatibleConfig.ChatCompletionRequestTransform
+		if requestTransform != nil {
+			transformErr := requestTransform(params, &req)
+			if transformErr != nil {
+				errs <- transformErr
+				return
+			}
 		}
+
 		stream := p.client.Chat.Completions.NewStreaming(ctx, req)
 
 		for stream.Next() {
@@ -328,13 +347,15 @@ func convertAPIError(name string, apiErr *openai.Error, originalErr error) error
 // convertAssistantMessage converts an assistant message to OpenAI format.
 func convertAssistantMessage(msg providers.Message) openai.ChatCompletionMessageParamUnion {
 	if len(msg.ToolCalls) > 0 {
-		toolCalls := make([]openai.ChatCompletionMessageToolCallParam, 0, len(msg.ToolCalls))
+		toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(msg.ToolCalls))
 		for _, tc := range msg.ToolCalls {
-			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallParam{
-				ID: tc.ID,
-				Function: openai.ChatCompletionMessageToolCallFunctionParam{
-					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments,
+			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+					ID: tc.ID,
+					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					},
 				},
 			})
 		}
@@ -380,13 +401,16 @@ func convertChunk(chunk *openai.ChatCompletionChunk) providers.ChatCompletionChu
 		choices = append(choices, chunkChoice)
 	}
 
+	// Preserve the existing normalized field even though the v3 SDK marks the
+	// documented response field as deprecated.
+	// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
 	result := providers.ChatCompletionChunk{
 		ID:                chunk.ID,
 		Object:            objectChatCompletionChunk,
 		Created:           chunk.Created,
 		Model:             chunk.Model,
 		Choices:           choices,
-		SystemFingerprint: chunk.SystemFingerprint,
+		SystemFingerprint: chunk.SystemFingerprint, //nolint:staticcheck
 	}
 
 	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
@@ -512,6 +536,10 @@ func convertParams(params providers.CompletionParams) openai.ChatCompletionNewPa
 		req.TopP = openai.Float(*params.TopP)
 	}
 
+	// OpenAI documents max_completion_tokens as the replacement for the
+	// deprecated max_tokens field. Keep the binding's existing MaxTokens
+	// abstraction on the current wire field.
+	// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
 	if params.MaxTokens != nil {
 		req.MaxCompletionTokens = openai.Int(int64(*params.MaxTokens))
 	}
@@ -546,7 +574,10 @@ func convertParams(params providers.CompletionParams) openai.ChatCompletionNewPa
 		req.User = openai.String(params.User)
 	}
 
-	if params.ReasoningEffort != "" && params.ReasoningEffort != providers.ReasoningEffortNone {
+	// auto is the binding's omission sentinel. OpenAI documents none as an
+	// explicit value, so it must reach the wire unchanged.
+	// https://developers.openai.com/api/docs/guides/latest-model
+	if params.ReasoningEffort != "" && params.ReasoningEffort != providers.ReasoningEffortAuto {
 		req.ReasoningEffort = shared.ReasoningEffort(params.ReasoningEffort)
 	}
 
@@ -570,13 +601,16 @@ func convertResponse(resp *openai.ChatCompletion) *providers.ChatCompletion {
 		})
 	}
 
+	// Preserve the existing normalized field even though the v3 SDK marks the
+	// documented response field as deprecated.
+	// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
 	result := &providers.ChatCompletion{
 		ID:                resp.ID,
 		Object:            objectChatCompletion,
 		Created:           resp.Created,
 		Model:             resp.Model,
 		Choices:           choices,
-		SystemFingerprint: resp.SystemFingerprint,
+		SystemFingerprint: resp.SystemFingerprint, //nolint:staticcheck
 	}
 
 	if resp.Usage.PromptTokens > 0 || resp.Usage.CompletionTokens > 0 {
@@ -658,7 +692,7 @@ func convertToolChoice(choice any) openai.ChatCompletionToolChoiceOptionUnionPar
 		}
 	case providers.ToolChoice:
 		if v.Function != nil {
-			return openai.ChatCompletionToolChoiceOptionParamOfChatCompletionNamedToolChoice(
+			return openai.ToolChoiceOptionFunctionToolChoice(
 				openai.ChatCompletionNamedToolChoiceFunctionParam{
 					Name: v.Function.Name,
 				},
@@ -671,14 +705,16 @@ func convertToolChoice(choice any) openai.ChatCompletionToolChoiceOptionUnionPar
 }
 
 // convertTools converts provider tools to OpenAI format.
-func convertTools(tools []providers.Tool) []openai.ChatCompletionToolParam {
-	result := make([]openai.ChatCompletionToolParam, 0, len(tools))
+func convertTools(tools []providers.Tool) []openai.ChatCompletionToolUnionParam {
+	result := make([]openai.ChatCompletionToolUnionParam, 0, len(tools))
 	for _, tool := range tools {
-		result = append(result, openai.ChatCompletionToolParam{
-			Function: openai.FunctionDefinitionParam{
-				Name:        tool.Function.Name,
-				Description: openai.String(tool.Function.Description),
-				Parameters:  openai.FunctionParameters(tool.Function.Parameters),
+		result = append(result, openai.ChatCompletionToolUnionParam{
+			OfFunction: &openai.ChatCompletionFunctionToolParam{
+				Function: openai.FunctionDefinitionParam{
+					Name:        tool.Function.Name,
+					Description: openai.String(tool.Function.Description),
+					Parameters:  openai.FunctionParameters(tool.Function.Parameters),
+				},
 			},
 		})
 	}
