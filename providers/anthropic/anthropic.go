@@ -481,13 +481,29 @@ func convertMessages(messages []providers.Message) ([]anthropic.MessageParam, st
 	result := make([]anthropic.MessageParam, 0, len(messages))
 	var systemParts []string
 
+	seenConversation := false
+
 	for _, msg := range messages {
 		if msg.Role == providers.RoleSystem {
-			systemParts = append(systemParts, msg.ContentString())
+			if !seenConversation {
+				systemParts = append(systemParts, msg.ContentString())
+
+				continue
+			}
+			// Stable mid-conversation system messages are positional. Moving one to
+			// the top-level system field changes which later messages it governs.
+			// https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
+			result = append(result, anthropic.MessageParam{
+				Role: anthropic.MessageParamRoleSystem,
+				Content: []anthropic.ContentBlockParamUnion{
+					anthropic.NewTextBlock(msg.ContentString()),
+				},
+			})
 			continue
 		}
 
 		if converted := convertMessage(msg); converted != nil {
+			seenConversation = true
 			result = append(result, *converted)
 		}
 	}

@@ -66,6 +66,32 @@ func TestCapabilities(t *testing.T) {
 	require.False(t, caps.ListModels)
 }
 
+func TestConvertParamsPreservesSystemMessageScope(t *testing.T) {
+	t.Parallel()
+
+	request, err := new(Provider).convertParams(providers.CompletionParams{
+		Model: "claude-opus-5",
+		Messages: []providers.Message{
+			{Role: providers.RoleSystem, Content: "global instruction"},
+			{Role: providers.RoleUser, Content: "start"},
+			{Role: providers.RoleSystem, Content: "instruction from this point"},
+		},
+	})
+	require.NoError(t, err)
+
+	body, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"model": "claude-opus-5",
+		"max_tokens": 4096,
+		"system": [{"type": "text", "text": "global instruction"}],
+		"messages": [
+			{"role": "user", "content": [{"type": "text", "text": "start"}]},
+			{"role": "system", "content": [{"type": "text", "text": "instruction from this point"}]}
+		]
+	}`, string(body))
+}
+
 func TestConvertMessages(t *testing.T) {
 	t.Parallel()
 
