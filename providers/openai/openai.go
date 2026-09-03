@@ -9,6 +9,7 @@ import (
 const (
 	defaultBaseURL = "https://api.openai.com/v1"
 	envAPIKey      = "OPENAI_API_KEY"
+	envBaseURL     = "OPENAI_BASE_URL"
 	providerName   = "openai"
 )
 
@@ -31,6 +32,7 @@ type Provider struct {
 func New(opts ...config.Option) (*Provider, error) {
 	base, err := NewCompatible(CompatibleConfig{
 		APIKeyEnvVar:   envAPIKey,
+		BaseURLEnvVar:  envBaseURL,
 		Capabilities:   capabilities(),
 		DefaultBaseURL: defaultBaseURL,
 		Name:           providerName,
