@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -16,6 +18,11 @@ import (
 	"github.com/mozilla-ai/any-llm-go/errors"
 	"github.com/mozilla-ai/any-llm-go/internal/testutil"
 	"github.com/mozilla-ai/any-llm-go/providers"
+)
+
+const (
+	imagePartType = "image_url"
+	testImageURL  = "https://example.com/image.png"
 )
 
 func TestNew(t *testing.T) {
@@ -64,6 +71,134 @@ func TestCapabilities(t *testing.T) {
 	require.True(t, caps.CompletionTools)
 	require.False(t, caps.Embedding) // Anthropic doesn't support embeddings.
 	require.False(t, caps.ListModels)
+}
+
+func TestCompletionSerializesSupportedImageSources(t *testing.T) {
+	t.Parallel()
+
+	body, err := captureAnthropicRequest(t, []providers.Message{{
+		Role: providers.RoleUser,
+		Content: []providers.ContentPart{
+			{Type: imagePartType, ImageURL: new(providers.ImageURL{URL: testImageURL})},
+			{Type: imagePartType, ImageURL: new(providers.ImageURL{URL: "data:image/png;base64,aGVsbG8="})},
+			{Type: "text", Text: "Compare the images."},
+		},
+	}})
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"model": "claude-opus-5",
+		"max_tokens": 4096,
+		"messages": [{
+			"role": "user",
+			"content": [
+				{"type": "image", "source": {"type": "url", "url": "https://example.com/image.png"}},
+				{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aGVsbG8="}},
+				{"type": "text", "text": "Compare the images."}
+			]
+		}]
+	}`, string(body))
+}
+
+func TestCompletionRejectsInvalidImageContent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		image    *providers.ImageURL
+		sentinel error
+	}{
+		{
+			name:     "image without source",
+			image:    nil,
+			sentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name:     "image detail",
+			image:    new(providers.ImageURL{URL: testImageURL, Detail: "high"}),
+			sentinel: errors.ErrUnsupportedParam,
+		},
+		{
+			name:     "data URL without base64 marker",
+			image:    new(providers.ImageURL{URL: "data:image/png,aGVsbG8="}),
+			sentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name:     "empty base64 data",
+			image:    new(providers.ImageURL{URL: "data:image/png;base64,"}),
+			sentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name:     "unsupported image media type",
+			image:    new(providers.ImageURL{URL: "data:image/svg+xml;base64,PHN2Zy8+"}),
+			sentinel: errors.ErrInvalidRequest,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := captureAnthropicRequest(t, []providers.Message{{
+				Role: providers.RoleUser,
+				Content: []providers.ContentPart{{
+					Type:     imagePartType,
+					ImageURL: testCase.image,
+				}},
+			}})
+			require.ErrorIs(t, err, testCase.sentinel)
+		})
+	}
+}
+
+func captureAnthropicRequest(t *testing.T, messages []providers.Message) ([]byte, error) {
+	t.Helper()
+
+	requestBody := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+			http.Error(writer, "bad request", http.StatusBadRequest)
+
+			return
+		}
+
+		requestBody <- body
+
+		writer.Header().Set("Content-Type", "application/json")
+
+		_, err = io.WriteString(writer, `{
+			"id":"msg_test",
+			"type":"message",
+			"role":"assistant",
+			"model":"claude-opus-5",
+			"content":[{"type":"text","text":"ok"}],
+			"stop_reason":"end_turn",
+			"stop_sequence":null,
+			"usage":{"input_tokens":1,"output_tokens":1}
+		}`)
+		if err != nil {
+			t.Errorf("write response body: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(server.URL),
+	)
+	if err != nil {
+		return nil, err
+	}
+	_, err = provider.Completion(t.Context(), providers.CompletionParams{
+		Model:    "claude-opus-5",
+		Messages: messages,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return <-requestBody, nil
 }
 
 func TestConvertMessages(t *testing.T) {

@@ -167,6 +167,20 @@ func (p *Provider) Completion(
 
 // convertParams converts providers.CompletionParams to Anthropic request parameters.
 func (p *Provider) convertParams(params providers.CompletionParams) (anthropic.MessageNewParams, error) {
+	for _, message := range params.Messages {
+		if message.Role != providers.RoleUser || !message.IsMultiModal() {
+			continue
+		}
+
+		for _, part := range message.ContentParts() {
+			if part.Type == "image_url" {
+				err := validateImagePart(part.ImageURL)
+				if err != nil {
+					return anthropic.MessageNewParams{}, err
+				}
+			}
+		}
+	}
 	messages, system := convertMessages(params.Messages)
 
 	maxTokens := int64(defaultMaxTokens)
@@ -219,6 +233,40 @@ func (p *Provider) convertParams(params providers.CompletionParams) (anthropic.M
 	applyThinking(&req, params.ReasoningEffort, maxTokens)
 
 	return req, nil
+}
+
+func validateImagePart(image *providers.ImageURL) error {
+	if image == nil {
+		return errors.NewInvalidRequestError(providerName, fmt.Errorf("image content is missing image_url"))
+	}
+
+	if image.Detail != "" {
+		// Anthropic image blocks have no OpenAI-style detail control.
+		// https://platform.claude.com/docs/en/api/messages/create#body-messages-content-source
+		return errors.NewUnsupportedParamError(providerName, "image_url.detail")
+	}
+
+	if !strings.HasPrefix(image.URL, "data:") {
+		return nil
+	}
+
+	header, data, ok := strings.Cut(image.URL, ",")
+	if !ok || data == "" || !strings.HasSuffix(header, ";base64") {
+		return errors.NewInvalidRequestError(providerName, fmt.Errorf("invalid base64 image data URL"))
+	}
+
+	mediaType := strings.TrimSuffix(strings.TrimPrefix(header, "data:"), ";base64")
+	// Anthropic accepts only these four media types for base64 image blocks.
+	// https://platform.claude.com/docs/en/build-with-claude/vision#supported-formats
+	switch mediaType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return nil
+	default:
+		return errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("unsupported Anthropic image media type %q", mediaType),
+		)
+	}
 }
 
 // CompletionStream performs a streaming chat completion request.
