@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-go/v3/option"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mozilla-ai/any-llm-go/config"
@@ -190,6 +192,29 @@ func TestNewCompatibleRequireBaseURL(t *testing.T) {
 			require.NotNil(t, provider)
 		})
 	}
+}
+
+func TestNewCompatibleUsesConfiguredClientOptions(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "configured-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	provider, err := NewCompatible(CompatibleConfig{
+		Name: "configured-client",
+		ClientOptions: []option.RequestOption{
+			option.WithBaseURL(srv.URL),
+			option.WithHeader("Authorization", "configured-key"),
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = provider.ListModels(t.Context())
+	require.NoError(t, err)
 }
 
 func TestCompatibleProviderCapabilities(t *testing.T) {
