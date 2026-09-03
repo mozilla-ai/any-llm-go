@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -313,6 +314,42 @@ func TestConvertResponseFormat(t *testing.T) {
 		result := convertResponseFormat(format)
 		require.NotNil(t, result.OfText)
 	})
+}
+
+func TestConvertToolsPreservesStrict(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		strict *bool
+	}{
+		{name: "omitted"},
+		{name: "false", strict: new(false)},
+		{name: "true", strict: new(true)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tools := convertTools([]providers.Tool{{
+				Type: "function",
+				Function: providers.Function{
+					Name:       "lookup",
+					Parameters: map[string]any{"type": "object"},
+					Strict:     tc.strict,
+				},
+			}})
+			body, err := json.Marshal(tools)
+			require.NoError(t, err)
+
+			var wire []struct {
+				Function struct {
+					Strict *bool `json:"strict"`
+				} `json:"function"`
+			}
+			require.NoError(t, json.Unmarshal(body, &wire))
+			require.Equal(t, tc.strict, wire[0].Function.Strict)
+		})
+	}
 }
 
 func TestConvertEmbeddingParams(t *testing.T) {
