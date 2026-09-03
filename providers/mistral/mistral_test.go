@@ -289,30 +289,50 @@ func TestCompletionStripsUserField(t *testing.T) {
 	require.NotContains(t, body, "user")
 }
 
-func TestCompletionStripsReasoningEffort(t *testing.T) {
+func TestCompletionMapsReasoningEffort(t *testing.T) {
 	t.Parallel()
 
-	serverURL, capturedBody := testutil.FakeCompletionServer(t)
+	for _, testCase := range []struct {
+		effort  providers.ReasoningEffort
+		want    string
+		present bool
+	}{
+		{effort: providers.ReasoningEffortNone, want: "none", present: true},
+		{effort: providers.ReasoningEffortMinimal, want: "minimal", present: true},
+		{effort: providers.ReasoningEffortLow, want: "low", present: true},
+		{effort: providers.ReasoningEffortMedium, want: "medium", present: true},
+		{effort: providers.ReasoningEffortHigh, want: "high", present: true},
+		{effort: providers.ReasoningEffortXHigh, want: "xhigh", present: true},
+		{effort: providers.ReasoningEffortMax, want: "xhigh", present: true},
+		{effort: providers.ReasoningEffortAuto, want: "", present: false},
+	} {
+		t.Run(string(testCase.effort), func(t *testing.T) {
+			t.Parallel()
 
-	provider, err := New(
-		config.WithAPIKey("test-key"),
-		config.WithBaseURL(serverURL),
-	)
-	require.NoError(t, err)
+			serverURL, capturedBody := testutil.FakeCompletionServer(t)
+			provider, err := New(
+				config.WithAPIKey("test-key"),
+				config.WithBaseURL(serverURL),
+			)
+			require.NoError(t, err)
 
-	params := providers.CompletionParams{
-		Model:           "magistral-small-latest",
-		Messages:        testutil.SimpleMessages(),
-		ReasoningEffort: providers.ReasoningEffortHigh,
+			_, err = provider.Completion(t.Context(), providers.CompletionParams{
+				Model:           "mistral-small-latest",
+				Messages:        testutil.SimpleMessages(),
+				ReasoningEffort: testCase.effort,
+			})
+			require.NoError(t, err)
+
+			// The current Mistral Chat schema accepts efforts from none through xhigh.
+			// https://docs.mistral.ai/api/endpoint/chat
+			got, present := capturedBody()["reasoning_effort"]
+			require.Equal(t, testCase.present, present)
+
+			if testCase.present {
+				require.Equal(t, testCase.want, got)
+			}
+		})
 	}
-
-	_, err = provider.Completion(context.Background(), params)
-	require.NoError(t, err)
-
-	body := capturedBody()
-
-	// Mistral doesn't support reasoning_effort; it must not appear on the wire.
-	require.NotContains(t, body, "reasoning_effort")
 }
 
 func TestCompletionStreamSendsMaxTokensOnWire(t *testing.T) {
