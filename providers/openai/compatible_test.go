@@ -2,15 +2,19 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
+	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	oaisdk "github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/errors"
+	"github.com/mozilla-ai/any-llm-go/internal/testutil"
 	"github.com/mozilla-ai/any-llm-go/providers"
 )
 
@@ -213,6 +217,58 @@ func TestCompatibleProviderCapabilities(t *testing.T) {
 	require.Equal(t, expectedCaps, caps)
 }
 
+func TestCompletionReturnsResponseTransformError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := stderrors.New("transform failed")
+	serverURL, _ := testutil.FakeCompletionServer(t)
+	provider, err := NewCompatible(CompatibleConfig{
+		ChatCompletionResponseTransform: func(
+			*oaisdk.ChatCompletion,
+			*providers.ChatCompletion,
+		) error {
+			return wantErr
+		},
+		DefaultAPIKey:  "test-key",
+		DefaultBaseURL: serverURL,
+		Name:           "test-provider",
+	})
+	require.NoError(t, err)
+
+	_, err = provider.Completion(t.Context(), providers.CompletionParams{
+		Model:    "test-model",
+		Messages: []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
+	})
+	require.ErrorIs(t, err, wantErr)
+}
+
+func TestCompletionStreamReturnsChunkTransformError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := stderrors.New("transform failed")
+	serverURL, _ := testutil.FakeStreamingServer(t)
+	provider, err := NewCompatible(CompatibleConfig{
+		ChatCompletionChunkTransform: func(
+			*oaisdk.ChatCompletionChunk,
+			*providers.ChatCompletionChunk,
+		) error {
+			return wantErr
+		},
+		DefaultAPIKey:  "test-key",
+		DefaultBaseURL: serverURL,
+		Name:           "test-provider",
+	})
+	require.NoError(t, err)
+
+	chunks, errs := provider.CompletionStream(t.Context(), providers.CompletionParams{
+		Model:    "test-model",
+		Messages: []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
+	})
+	for range chunks {
+	}
+	require.ErrorIs(t, <-errs, wantErr)
+}
+
 func TestValidateCompletionParams(t *testing.T) {
 	t.Parallel()
 
@@ -313,6 +369,42 @@ func TestConvertResponseFormat(t *testing.T) {
 		result := convertResponseFormat(format)
 		require.NotNil(t, result.OfText)
 	})
+}
+
+func TestConvertToolsPreservesStrict(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		strict *bool
+	}{
+		{name: "omitted"},
+		{name: "false", strict: new(false)},
+		{name: "true", strict: new(true)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tools := convertTools([]providers.Tool{{
+				Type: "function",
+				Function: providers.Function{
+					Name:       "lookup",
+					Parameters: map[string]any{"type": "object"},
+					Strict:     tc.strict,
+				},
+			}})
+			body, err := json.Marshal(tools)
+			require.NoError(t, err)
+
+			var wire []struct {
+				Function struct {
+					Strict *bool `json:"strict"`
+				} `json:"function"`
+			}
+			require.NoError(t, json.Unmarshal(body, &wire))
+			require.Equal(t, tc.strict, wire[0].Function.Strict)
+		})
+	}
 }
 
 func TestConvertEmbeddingParams(t *testing.T) {
