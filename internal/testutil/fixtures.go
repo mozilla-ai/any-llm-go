@@ -23,7 +23,7 @@ var ProviderModelMap = map[string]string{
 	"llamafile":  "LLaMA_CPP",
 	"together":   "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
 	"perplexity": "llama-3.1-sonar-small-128k-online",
-	"deepseek":   "deepseek-chat",
+	"deepseek":   "deepseek-v4-flash",
 	"fireworks":  "accounts/fireworks/models/llama-v3p1-8b-instruct",
 	"xai":        "grok-beta",
 	"cerebras":   "llama3.1-8b",
@@ -38,7 +38,7 @@ var ProviderReasoningModelMap = map[string]string{
 	"anthropic": "claude-sonnet-4-20250514",
 	"gemini":    "gemini-3-flash-preview",
 	"mistral":   "magistral-small-latest",
-	"deepseek":  "deepseek-reasoner",
+	"deepseek":  "deepseek-v4-pro",
 	"ollama":    "deepseek-r1",
 	"zai":       "glm-4.7-flash",
 }
