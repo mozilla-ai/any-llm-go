@@ -167,6 +167,20 @@ func (p *Provider) Completion(
 
 // convertParams converts providers.CompletionParams to Anthropic request parameters.
 func (p *Provider) convertParams(params providers.CompletionParams) (anthropic.MessageNewParams, error) {
+	for _, message := range params.Messages {
+		if message.Role != providers.RoleAssistant {
+			continue
+		}
+
+		for _, toolCall := range message.ToolCalls {
+			if !validToolInput(toolCall.Function.Arguments) {
+				return anthropic.MessageNewParams{}, errors.NewInvalidRequestError(
+					providerName,
+					stderrors.New("tool input must be a JSON object"),
+				)
+			}
+		}
+	}
 	messages, system := convertMessages(params.Messages)
 
 	maxTokens := int64(defaultMaxTokens)
@@ -219,6 +233,12 @@ func (p *Provider) convertParams(params providers.CompletionParams) (anthropic.M
 	applyThinking(&req, params.ReasoningEffort, maxTokens)
 
 	return req, nil
+}
+
+func validToolInput(arguments string) bool {
+	var input map[string]json.RawMessage
+
+	return json.Unmarshal([]byte(arguments), &input) == nil && input != nil
 }
 
 // CompletionStream performs a streaming chat completion request.
@@ -613,16 +633,16 @@ func buildToolParam(tool providers.Tool, schema anthropic.ToolInputSchemaParam) 
 }
 
 // convertToolCall converts a tool call to Anthropic content block format.
-func convertToolCall(tc providers.ToolCall) anthropic.ContentBlockParamUnion {
-	var input map[string]any
-	_ = json.Unmarshal([]byte(tc.Function.Arguments), &input) // Ignore error: use nil on failure.
-
+func convertToolCall(toolCall providers.ToolCall) anthropic.ContentBlockParamUnion {
 	return anthropic.ContentBlockParamUnion{
 		OfToolUse: &anthropic.ToolUseBlockParam{
-			Type:  "tool_use",
-			ID:    tc.ID,
-			Name:  tc.Function.Name,
-			Input: input,
+			Type: "tool_use",
+			ID:   toolCall.ID,
+			Name: toolCall.Function.Name,
+			// RawMessage preserves JSON integers that map[string]any would round
+			// through float64. convertParams validates the required object shape.
+			// https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls
+			Input: json.RawMessage(toolCall.Function.Arguments),
 		},
 	}
 }

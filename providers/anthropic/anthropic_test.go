@@ -463,65 +463,21 @@ func TestConvertMessage(t *testing.T) {
 func TestConvertToolCall(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name        string
-		toolCall    providers.ToolCall
-		expectInput bool
-	}{
-		{
-			name: "valid JSON arguments",
-			toolCall: providers.ToolCall{
-				ID:   "call_123",
-				Type: "function",
-				Function: providers.FunctionCall{
-					Name:      "get_weather",
-					Arguments: `{"location": "Paris"}`,
-				},
-			},
-			expectInput: true,
-		},
-		{
-			name: "invalid JSON arguments results in nil input",
-			toolCall: providers.ToolCall{
-				ID:   "call_456",
-				Type: "function",
-				Function: providers.FunctionCall{
-					Name:      "get_weather",
-					Arguments: `{invalid json`,
-				},
-			},
-			expectInput: false,
-		},
-		{
-			name: "empty arguments results in nil input",
-			toolCall: providers.ToolCall{
-				ID:   "call_789",
-				Type: "function",
-				Function: providers.FunctionCall{
-					Name:      "get_weather",
-					Arguments: "",
-				},
-			},
-			expectInput: false,
+	toolCall := providers.ToolCall{
+		ID:   "call_123",
+		Type: "function",
+		Function: providers.FunctionCall{
+			Name:      "get_weather",
+			Arguments: `{"location": "Paris"}`,
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			result := convertToolCall(tc.toolCall)
-			require.NotNil(t, result.OfToolUse)
-			require.Equal(t, tc.toolCall.ID, result.OfToolUse.ID)
-			require.Equal(t, tc.toolCall.Function.Name, result.OfToolUse.Name)
-			require.Equal(t, "tool_use", string(result.OfToolUse.Type))
-			if tc.expectInput {
-				require.NotNil(t, result.OfToolUse.Input)
-			} else {
-				require.Nil(t, result.OfToolUse.Input)
-			}
-		})
-	}
+	result := convertToolCall(toolCall)
+	require.NotNil(t, result.OfToolUse)
+	require.Equal(t, toolCall.ID, result.OfToolUse.ID)
+	require.Equal(t, toolCall.Function.Name, result.OfToolUse.Name)
+	require.Equal(t, "tool_use", string(result.OfToolUse.Type))
+	require.NotNil(t, result.OfToolUse.Input)
 }
 
 func TestConvertTool(t *testing.T) {
