@@ -48,8 +48,8 @@ github.com/mailru/easyjson v0.7.7 h1:UGYAvKxe3sBsEDzO8ZeWOSlIQfWFlxbzLZe7hwFURr0
 github.com/mailru/easyjson v0.7.7/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
 github.com/mozilla-ai/any-llm-platform-client-go v0.0.1 h1:AXmEYxIEIESUt2LyB6GFD0nhStuV8Czhd0STF/hUf4I=
 github.com/mozilla-ai/any-llm-platform-client-go v0.0.1/go.mod h1:bqmvllQOUir9G2bmglRQDEgsfHCF6jAC339JGWkzH4U=
-github.com/ollama/ollama v0.32.5 h1:5jeKnTJmDTR+xgB8qh68szdXM9zwnMBMtGl890frdzo=
-github.com/ollama/ollama v0.32.5/go.mod h1:b1ydCt2oVg0VAg22WWDgCbwW0AyOaRKAFzlS91NI4OY=
+github.com/ollama/ollama v0.33.2 h1:fVHQI2wktPSTI97GdabnChKxGX5EiLJEfzcq6gO3oak=
+github.com/ollama/ollama v0.33.2/go.mod h1:Kekx/+OtFZHmqbkVH/QUUDVcMQS+1pg1dcz4Qy7TGn4=
 github.com/openai/openai-go v1.12.0 h1:NBQCnXzqOTv5wsgNC36PrFEiskGfO5wccfCWDo9S1U0=
 github.com/openai/openai-go v1.12.0/go.mod h1:g461MYGXEXBVdV5SaR/5tNzNbSfwTBBefwc+LlDCK0Y=
 github.com/pb33f/ordered-map/v2 v2.3.1 h1:5319HDO0aw4DA4gzi+zv4FXU9UlSs3xGZ40wcP1nBjY=
