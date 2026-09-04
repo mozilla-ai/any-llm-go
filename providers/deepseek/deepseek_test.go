@@ -67,6 +67,8 @@ func TestCapabilities(t *testing.T) {
 	require.True(t, caps.CompletionTools)
 	require.False(t, caps.Embedding)
 	require.True(t, caps.ListModels)
+	require.True(t, caps.Responses)
+	require.True(t, caps.ResponsesStreaming)
 }
 
 func TestProviderName(t *testing.T) {

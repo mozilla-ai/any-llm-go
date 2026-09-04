@@ -8,10 +8,11 @@ import (
 	"fmt"
 	"slices"
 
-	oaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/packages/param"
+	oaisdk "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
 
 	"github.com/mozilla-ai/any-llm-go/config"
+	"github.com/mozilla-ai/any-llm-go/errors"
 	"github.com/mozilla-ai/any-llm-go/providers"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
 )
@@ -42,6 +43,7 @@ var (
 	_ providers.ErrorConverter     = (*Provider)(nil)
 	_ providers.ModelLister        = (*Provider)(nil)
 	_ providers.Provider           = (*Provider)(nil)
+	_ providers.ResponsesProvider  = (*Provider)(nil)
 )
 
 // Provider implements the providers.Provider interface for DeepSeek.
@@ -89,6 +91,27 @@ func (p *Provider) CompletionStream(
 	return p.CompatibleProvider.CompletionStream(ctx, params)
 }
 
+// Responses validates the two requirements that differ from OpenAI's
+// portable contract before using the shared Responses transport.
+func (p *Provider) Responses(
+	ctx context.Context,
+	params providers.ResponsesParams,
+) (*providers.ResponsesResult, error) {
+	// DeepSeek requires a model and at least one of input or instructions.
+	// https://api-docs.deepseek.com/guides/responses_api
+	if params.Model == "" {
+		return nil, errors.NewInvalidRequestError(providerName, fmt.Errorf("model is required"))
+	}
+	if len(params.Input) == 0 && params.Instructions == nil {
+		return nil, errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("at least one of input or instructions is required"),
+		)
+	}
+
+	return p.CompatibleProvider.Responses(ctx, params)
+}
+
 // capabilities returns the capabilities for the DeepSeek provider.
 func capabilities() providers.Capabilities {
 	return providers.Capabilities{
@@ -100,6 +123,8 @@ func capabilities() providers.Capabilities {
 		CompletionTools:     true,
 		Embedding:           false, // DeepSeek doesn't host embedding models.
 		ListModels:          true,
+		Responses:           true,
+		ResponsesStreaming:  true,
 	}
 }
 
@@ -160,17 +185,12 @@ func preprocessParams(params providers.CompletionParams) providers.CompletionPar
 	}
 }
 
-// transformRequest adjusts the OpenAI SDK request for DeepSeek's API.
-// DeepSeek uses max_tokens, not max_completion_tokens.
-// If both are set, MaxCompletionTokens takes precedence over MaxTokens.
-// See: https://api-docs.deepseek.com/api/create-chat-completion
+// transformRequest maps the shared token limit to DeepSeek's max_tokens field.
+// https://api-docs.deepseek.com/api/create-chat-completion
 func transformRequest(req *oaisdk.ChatCompletionNewParams) {
 	if req.MaxCompletionTokens.Valid() {
-		// Set max_tokens using max_completion_tokens value.
 		req.MaxTokens = oaisdk.Int(req.MaxCompletionTokens.Value)
 	}
-
-	// Clear unsupported fields from the request.
 	req.MaxCompletionTokens = param.Opt[int64]{}
 }
 
