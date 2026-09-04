@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"slices"
 
-	oaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/packages/param"
+	oaisdk "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
 
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/providers"
@@ -40,6 +40,7 @@ const (
 var (
 	_ providers.CapabilityProvider = (*Provider)(nil)
 	_ providers.ErrorConverter     = (*Provider)(nil)
+	_ providers.FileProvider       = (*Provider)(nil)
 	_ providers.ModelLister        = (*Provider)(nil)
 	_ providers.Provider           = (*Provider)(nil)
 )
@@ -99,6 +100,7 @@ func capabilities() providers.Capabilities {
 		CompletionStreaming: true,
 		CompletionTools:     true,
 		Embedding:           false, // DeepSeek doesn't host embedding models.
+		Files:               true,
 		ListModels:          true,
 	}
 }
@@ -160,17 +162,12 @@ func preprocessParams(params providers.CompletionParams) providers.CompletionPar
 	}
 }
 
-// transformRequest adjusts the OpenAI SDK request for DeepSeek's API.
-// DeepSeek uses max_tokens, not max_completion_tokens.
-// If both are set, MaxCompletionTokens takes precedence over MaxTokens.
-// See: https://api-docs.deepseek.com/api/create-chat-completion
+// transformRequest maps the shared token limit to DeepSeek's max_tokens field.
+// https://api-docs.deepseek.com/api/create-chat-completion
 func transformRequest(req *oaisdk.ChatCompletionNewParams) {
 	if req.MaxCompletionTokens.Valid() {
-		// Set max_tokens using max_completion_tokens value.
 		req.MaxTokens = oaisdk.Int(req.MaxCompletionTokens.Value)
 	}
-
-	// Clear unsupported fields from the request.
 	req.MaxCompletionTokens = param.Opt[int64]{}
 }
 
