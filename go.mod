@@ -9,7 +9,7 @@ require (
 	github.com/ollama/ollama v0.32.5
 	github.com/openai/openai-go v1.12.0
 	github.com/stretchr/testify v1.11.1
-	google.golang.org/genai v1.66.0
+	google.golang.org/genai v1.71.0
 )
 
 require (
