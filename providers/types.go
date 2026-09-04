@@ -16,11 +16,14 @@ const (
 
 // Reasoning effort levels for extended thinking.
 const (
-	ReasoningEffortAuto   ReasoningEffort = "auto"
-	ReasoningEffortHigh   ReasoningEffort = "high"
-	ReasoningEffortLow    ReasoningEffort = "low"
-	ReasoningEffortMedium ReasoningEffort = "medium"
-	ReasoningEffortNone   ReasoningEffort = "none"
+	ReasoningEffortAuto    ReasoningEffort = "auto"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMax     ReasoningEffort = "max"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortNone    ReasoningEffort = "none"
+	ReasoningEffortXHigh   ReasoningEffort = "xhigh"
 )
 
 // Message roles.
@@ -95,7 +98,7 @@ type Capabilities struct {
 	CompletionImage     bool
 	CompletionPDF       bool
 	CompletionReasoning bool
-	CompletionStreaming  bool
+	CompletionStreaming bool
 	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
@@ -127,16 +130,42 @@ type ChatCompletionChunk struct {
 
 // Choice represents a completion choice.
 type Choice struct {
-	Index        int     `json:"index"`
-	Message      Message `json:"message"`
-	FinishReason string  `json:"finish_reason,omitempty"`
+	Index        int                     `json:"index"`
+	Message      Message                 `json:"message"`
+	FinishReason string                  `json:"finish_reason,omitempty"`
+	Logprobs     *ChatCompletionLogprobs `json:"logprobs,omitempty"`
 }
 
 // ChunkChoice represents a choice in a streaming chunk.
 type ChunkChoice struct {
-	Index        int        `json:"index"`
-	Delta        ChunkDelta `json:"delta"`
-	FinishReason string     `json:"finish_reason,omitempty"`
+	Index        int                     `json:"index"`
+	Delta        ChunkDelta              `json:"delta"`
+	FinishReason string                  `json:"finish_reason,omitempty"`
+	Logprobs     *ChatCompletionLogprobs `json:"logprobs,omitempty"`
+}
+
+// ChatCompletionLogprobs contains token-level log probabilities returned for a
+// completion choice. ReasoningContent is used by providers such as DeepSeek,
+// while Refusal is used by OpenAI-compatible providers that return refusal tokens.
+type ChatCompletionLogprobs struct {
+	Content          []ChatCompletionTokenLogprob `json:"content"`
+	ReasoningContent []ChatCompletionTokenLogprob `json:"reasoning_content,omitempty"`
+	Refusal          []ChatCompletionTokenLogprob `json:"refusal,omitempty"`
+}
+
+// ChatCompletionTokenLogprob describes one generated token and its alternatives.
+type ChatCompletionTokenLogprob struct {
+	Token       string                     `json:"token"`
+	Bytes       []int                      `json:"bytes"`
+	Logprob     float64                    `json:"logprob"`
+	TopLogprobs []ChatCompletionTopLogprob `json:"top_logprobs"`
+}
+
+// ChatCompletionTopLogprob describes an alternative token at one output position.
+type ChatCompletionTopLogprob struct {
+	Token   string  `json:"token"`
+	Bytes   []int   `json:"bytes"`
+	Logprob float64 `json:"logprob"`
 }
 
 // ChunkDelta represents the delta content in a streaming chunk.
@@ -153,6 +182,8 @@ type CompletionParams struct {
 	Messages          []Message       `json:"messages"`
 	Temperature       *float64        `json:"temperature,omitempty"`
 	TopP              *float64        `json:"top_p,omitempty"`
+	Logprobs          *bool           `json:"logprobs,omitempty"`
+	TopLogprobs       *int            `json:"top_logprobs,omitempty"`
 	MaxTokens         *int            `json:"max_tokens,omitempty"`
 	Stop              []string        `json:"stop,omitempty"`
 	Stream            bool            `json:"stream,omitempty"`
@@ -271,6 +302,8 @@ type Function struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+	// Strict requests schema-constrained function arguments when the provider supports it.
+	Strict *bool `json:"strict,omitempty"`
 }
 
 // FunctionCall represents the function being called.
