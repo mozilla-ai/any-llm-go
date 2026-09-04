@@ -16,11 +16,14 @@ const (
 
 // Reasoning effort levels for extended thinking.
 const (
-	ReasoningEffortAuto   ReasoningEffort = "auto"
-	ReasoningEffortHigh   ReasoningEffort = "high"
-	ReasoningEffortLow    ReasoningEffort = "low"
-	ReasoningEffortMedium ReasoningEffort = "medium"
-	ReasoningEffortNone   ReasoningEffort = "none"
+	ReasoningEffortAuto    ReasoningEffort = "auto"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMax     ReasoningEffort = "max"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortNone    ReasoningEffort = "none"
+	ReasoningEffortXHigh   ReasoningEffort = "xhigh"
 )
 
 // Message roles.
@@ -95,12 +98,14 @@ type Capabilities struct {
 	CompletionImage     bool
 	CompletionPDF       bool
 	CompletionReasoning bool
-	CompletionStreaming  bool
+	CompletionStreaming bool
 	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
 	Moderation          bool
 	Rerank              bool
+	Responses           bool
+	ResponsesStreaming  bool
 }
 
 // ChatCompletion represents a chat completion response in OpenAI format.
@@ -271,6 +276,8 @@ type Function struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+	// Strict requests schema-constrained function arguments when the provider supports it.
+	Strict *bool `json:"strict,omitempty"`
 }
 
 // FunctionCall represents the function being called.
