@@ -7,6 +7,7 @@ any-llm-go supports multiple LLM providers through a unified interface. Each pro
 | Provider                | ID          | Completion | Streaming | Tools | Reasoning | Embeddings | List Models |
 |-------------------------|:------------|:----------:|:---------:|:-----:|:---------:|:----------:|:-----------:|
 | [Anthropic](#anthropic) | `anthropic` |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |      ❌      |
+| [Azure OpenAI](#azure-openai) | `azureopenai` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [DeepSeek](#deepseek)   | `deepseek`  |     ✅      |     ✅     |   ✅   |     ✅     |     ❌      |      ✅      |
 | [Gemini](#gemini)       | `gemini`    |     ✅      |     ✅     |   ✅   |     ✅     |     ✅      |      ✅      |
 | [Groq](#groq)           | `groq`      |     ✅      |     ✅     |   ✅   |     ❌     |     ❌      |      ✅      |
@@ -426,6 +427,25 @@ for _, model := range models.Data {
 }
 ```
 
+### Azure OpenAI
+
+```go
+import (
+    anyllm "github.com/mozilla-ai/any-llm-go"
+    "github.com/mozilla-ai/any-llm-go/providers/azureopenai"
+)
+
+provider, err := azureopenai.New(
+    anyllm.WithAPIKey("your-azure-key"),
+    anyllm.WithBaseURL("https://your-resource.openai.azure.com"),
+)
+```
+
+**Environment Variables:** `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_ENDPOINT`
+
+The provider uses Azure's current `/openai/v1/` endpoint. `Model` values are
+Azure deployment names.
+
 ### OpenAI
 
 ```go
@@ -440,10 +460,10 @@ provider, err := openai.New()
 // Or with explicit API key.
 provider, err := openai.New(anyllm.WithAPIKey("sk-..."))
 
-// Or with custom base URL (for Azure, proxies, etc.).
+// Or with a custom OpenAI-compatible base URL.
 provider, err := openai.New(
     anyllm.WithAPIKey("your-key"),
-    anyllm.WithBaseURL("https://your-endpoint.openai.azure.com"),
+    anyllm.WithBaseURL("https://gateway.example.com/v1"),
 )
 ```
 
@@ -502,12 +522,11 @@ resp, err := provider.Completion(ctx, anyllm.CompletionParams{
 
 The following providers are planned for future releases:
 
-| Provider     | Status                                            |
-|--------------|---------------------------------------------------|
-| Cohere       | Planned                                           |
-| Together AI  | Planned                                           |
-| AWS Bedrock  | Planned                                           |
-| Azure OpenAI | Planned (use OpenAI with custom base URL for now) |
+| Provider     | Status   |
+|--------------|----------|
+| Cohere       | Planned  |
+| Together AI  | Planned  |
+| AWS Bedrock  | Planned  |
 
 ## Adding a New Provider
 

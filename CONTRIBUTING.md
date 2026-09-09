@@ -42,6 +42,14 @@ export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
+For Azure OpenAI, configure the resource endpoint and a chat deployment:
+
+```bash
+export AZURE_OPENAI_API_KEY="..."
+export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com"
+export AZURE_OPENAI_DEPLOYMENT="<chat-deployment-name>"
+```
+
 ## Version Management
 
 The library version is a `const` in `sdk/version.go`. This is the single source of truth.

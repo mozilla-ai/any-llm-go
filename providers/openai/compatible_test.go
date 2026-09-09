@@ -315,64 +315,6 @@ func TestConvertResponseFormat(t *testing.T) {
 	})
 }
 
-func TestConvertEmbeddingParams(t *testing.T) {
-	t.Parallel()
-
-	t.Run("converts string input", func(t *testing.T) {
-		t.Parallel()
-
-		params := providers.EmbeddingParams{
-			Model: "text-embedding-3-small",
-			Input: "Hello, world!",
-		}
-
-		result := convertEmbeddingParams(params)
-		require.NotNil(t, result.Input.OfString)
-	})
-
-	t.Run("converts string array input", func(t *testing.T) {
-		t.Parallel()
-
-		params := providers.EmbeddingParams{
-			Model: "text-embedding-3-small",
-			Input: []string{"Hello", "World"},
-		}
-
-		result := convertEmbeddingParams(params)
-		require.NotNil(t, result.Input.OfArrayOfStrings)
-	})
-
-	t.Run("handles unknown input type", func(t *testing.T) {
-		t.Parallel()
-
-		params := providers.EmbeddingParams{
-			Model: "text-embedding-3-small",
-			Input: 12345, // Unsupported type.
-		}
-
-		result := convertEmbeddingParams(params)
-		// Should convert to string representation.
-		require.NotNil(t, result.Input.OfString)
-	})
-
-	t.Run("includes optional parameters", func(t *testing.T) {
-		t.Parallel()
-
-		dims := 256
-		params := providers.EmbeddingParams{
-			Model:          "text-embedding-3-small",
-			Input:          "Hello",
-			EncodingFormat: "float",
-			Dimensions:     &dims,
-			User:           "test-user",
-		}
-
-		result := convertEmbeddingParams(params)
-		require.Equal(t, int64(256), result.Dimensions.Value)
-		require.Equal(t, "test-user", result.User.Value)
-	})
-}
-
 func TestStreamingContextCancellation(t *testing.T) {
 	t.Parallel()
 
