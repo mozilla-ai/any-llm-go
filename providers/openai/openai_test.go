@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mozilla-ai/any-llm-go/config"
@@ -362,11 +362,16 @@ func TestConvertTools(t *testing.T) {
 		result := convertTools(tools)
 
 		require.Len(t, result, 1)
-		require.Equal(t, "get_weather", result[0].Function.Name)
-		require.Equal(t, "Get the current weather for a location.", result[0].Function.Description.Value)
+		require.NotNil(t, result[0].OfFunction)
+		require.Equal(t, "get_weather", result[0].OfFunction.Function.Name)
+		require.Equal(
+			t,
+			"Get the current weather for a location.",
+			result[0].OfFunction.Function.Description.Value,
+		)
 
 		// FunctionParameters is map[string]any - access directly.
-		params := result[0].Function.Parameters
+		params := result[0].OfFunction.Function.Parameters
 		require.Equal(t, "object", params["type"])
 
 		props, ok := params["properties"].(map[string]any)
@@ -391,10 +396,11 @@ func TestConvertTools(t *testing.T) {
 		result := convertTools(tools)
 
 		require.Len(t, result, 1)
-		require.Equal(t, "calculate", result[0].Function.Name)
+		require.NotNil(t, result[0].OfFunction)
+		require.Equal(t, "calculate", result[0].OfFunction.Function.Name)
 
 		// FunctionParameters is map[string]any - access directly.
-		params := result[0].Function.Parameters
+		params := result[0].OfFunction.Function.Parameters
 
 		props, ok := params["properties"].(map[string]any)
 		require.True(t, ok)
@@ -436,8 +442,10 @@ func TestConvertTools(t *testing.T) {
 		result := convertTools(tools)
 
 		require.Len(t, result, 2)
-		require.Equal(t, "get_weather", result[0].Function.Name)
-		require.Equal(t, "get_current_date", result[1].Function.Name)
+		require.NotNil(t, result[0].OfFunction)
+		require.NotNil(t, result[1].OfFunction)
+		require.Equal(t, "get_weather", result[0].OfFunction.Function.Name)
+		require.Equal(t, "get_current_date", result[1].OfFunction.Function.Name)
 	})
 }
 
