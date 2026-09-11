@@ -10,6 +10,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"time"
 
@@ -25,14 +26,6 @@ const (
 	envAPIKey       = "GEMINI_API_KEY"
 	envAPIKeyGoogle = "GOOGLE_API_KEY"
 	providerName    = "gemini"
-)
-
-// Default thinking budgets for reasoning effort levels.
-// These match the Python any-llm library.
-const (
-	thinkingBudgetHigh   int32 = 24576
-	thinkingBudgetLow    int32 = 1024
-	thinkingBudgetMedium int32 = 8192
 )
 
 // Content part types.
@@ -110,10 +103,9 @@ type Provider struct {
 type streamState struct {
 	content      strings.Builder
 	finishReason genai.FinishReason
+	hasToolCalls bool
 	messageID    string
 	model        string
-	reasoning    strings.Builder
-	toolCalls    []providers.ToolCall
 	usage        *providers.Usage
 }
 
@@ -166,7 +158,10 @@ func (p *Provider) Completion(
 	ctx context.Context,
 	params providers.CompletionParams,
 ) (*providers.ChatCompletion, error) {
-	contents, cfg := p.convertParams(params)
+	contents, cfg, err := p.convertParams(params)
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := p.client.Models.GenerateContent(ctx, params.Model, contents, cfg)
 	if err != nil {
@@ -188,31 +183,27 @@ func (p *Provider) CompletionStream(
 		defer close(chunks)
 		defer close(errs)
 
-		contents, cfg := p.convertParams(params)
+		contents, cfg, err := p.convertParams(params)
+		if err != nil {
+			sendStreamError(ctx, errs, err)
+
+			return
+		}
 		state, err := newStreamState(params.Model)
 		if err != nil {
-			select {
-			case errs <- err:
-			case <-ctx.Done():
-			}
+			sendStreamError(ctx, errs, err)
 			return
 		}
 
 		for resp, err := range p.client.Models.GenerateContentStream(ctx, params.Model, contents, cfg) {
 			if err != nil {
-				select {
-				case errs <- p.ConvertError(err):
-				case <-ctx.Done():
-				}
+				sendStreamError(ctx, errs, p.ConvertError(err))
 				return
 			}
 
 			responseChunks, err := state.processResponse(resp)
 			if err != nil {
-				select {
-				case errs <- err:
-				case <-ctx.Done():
-				}
+				sendStreamError(ctx, errs, err)
 				return
 			}
 
@@ -235,6 +226,13 @@ func (p *Provider) CompletionStream(
 	}()
 
 	return chunks, errs
+}
+
+func sendStreamError(ctx context.Context, errs chan<- error, err error) {
+	select {
+	case errs <- err:
+	case <-ctx.Done():
+	}
 }
 
 // ConvertError converts a Gemini SDK error to a unified error type.
@@ -346,7 +344,9 @@ func (p *Provider) Name() string {
 }
 
 // convertParams converts providers.CompletionParams to Gemini request format.
-func (p *Provider) convertParams(params providers.CompletionParams) ([]*genai.Content, *genai.GenerateContentConfig) {
+func (p *Provider) convertParams(
+	params providers.CompletionParams,
+) ([]*genai.Content, *genai.GenerateContentConfig, error) {
 	contents, systemInstruction := convertMessages(params.Messages)
 
 	cfg := &genai.GenerateContentConfig{}
@@ -365,8 +365,8 @@ func (p *Provider) convertParams(params providers.CompletionParams) ([]*genai.Co
 		cfg.TopP = &tp
 	}
 
-	if params.MaxTokens != nil {
-		cfg.MaxOutputTokens = int32(*params.MaxTokens)
+	if err := applyMaxTokens(cfg, params.MaxTokens); err != nil {
+		return nil, nil, err
 	}
 
 	if len(params.Stop) > 0 {
@@ -381,13 +381,32 @@ func (p *Provider) convertParams(params providers.CompletionParams) ([]*genai.Co
 		cfg.ToolConfig = convertToolChoice(params.ToolChoice)
 	}
 
-	applyThinking(cfg, params.ReasoningEffort)
+	if err := applyThinking(cfg, params.Model, params.ReasoningEffort); err != nil {
+		return nil, nil, err
+	}
 
 	if params.ResponseFormat != nil {
 		applyResponseFormat(cfg, params.ResponseFormat)
 	}
 
-	return contents, cfg
+	return contents, cfg, nil
+}
+
+func applyMaxTokens(cfg *genai.GenerateContentConfig, maxTokens *int) error {
+	if maxTokens == nil {
+		return nil
+	}
+
+	if *maxTokens < math.MinInt32 || *maxTokens > math.MaxInt32 {
+		return errors.NewInvalidRequestError(
+			providerName,
+			fmt.Errorf("max_tokens must be between %d and %d", math.MinInt32, math.MaxInt32),
+		)
+	}
+
+	cfg.MaxOutputTokens = int32(*maxTokens)
+
+	return nil
 }
 
 // newStreamState creates a new stream state.
@@ -420,7 +439,7 @@ func (s *streamState) finalChunk() *providers.ChatCompletionChunk {
 	chunk := s.chunk(providers.ChunkDelta{})
 
 	finishReason := convertFinishReason(s.finishReason)
-	if len(s.toolCalls) > 0 && finishReason == providers.FinishReasonStop {
+	if s.hasToolCalls && finishReason == providers.FinishReasonStop {
 		finishReason = providers.FinishReasonToolCalls
 	}
 
@@ -469,12 +488,11 @@ func (s *streamState) processResponse(resp *genai.GenerateContentResponse) ([]pr
 				setProviderExtra(&toolCall, providerName, extraKeyThoughtSignature,
 					base64.StdEncoding.EncodeToString(part.ThoughtSignature))
 			}
-			s.toolCalls = append(s.toolCalls, toolCall)
+			s.hasToolCalls = true
 			result = append(result, s.chunk(providers.ChunkDelta{
 				ToolCalls: []providers.ToolCall{toolCall},
 			}))
 		case part.Thought:
-			s.reasoning.WriteString(part.Text)
 			result = append(result, s.chunk(providers.ChunkDelta{
 				Reasoning: &providers.Reasoning{Content: part.Text},
 			}))
@@ -505,23 +523,6 @@ func applyResponseFormat(cfg *genai.GenerateContentConfig, format *providers.Res
 		cfg.ResponseJsonSchema = format.JSONSchema.Schema
 	case responseFormatJSON:
 		cfg.ResponseMIMEType = responseMIMETypeJSON
-	}
-}
-
-// applyThinking configures thinking/reasoning on the config if applicable.
-func applyThinking(cfg *genai.GenerateContentConfig, effort providers.ReasoningEffort) {
-	if effort == "" || effort == providers.ReasoningEffortNone {
-		return
-	}
-
-	budget, ok := thinkingBudget(effort)
-	if !ok {
-		return
-	}
-
-	cfg.ThinkingConfig = &genai.ThinkingConfig{
-		IncludeThoughts: true,
-		ThinkingBudget:  &budget,
 	}
 }
 
@@ -949,18 +950,4 @@ func thoughtSignatureFromExtra(extra map[string]providers.ProviderData) []byte {
 	}
 
 	return sig
-}
-
-// thinkingBudget returns the token budget for the given reasoning effort.
-func thinkingBudget(effort providers.ReasoningEffort) (int32, bool) {
-	switch effort {
-	case providers.ReasoningEffortLow:
-		return thinkingBudgetLow, true
-	case providers.ReasoningEffortMedium:
-		return thinkingBudgetMedium, true
-	case providers.ReasoningEffortHigh:
-		return thinkingBudgetHigh, true
-	default:
-		return 0, false
-	}
 }
