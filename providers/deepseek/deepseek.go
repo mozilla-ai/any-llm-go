@@ -8,9 +8,6 @@ import (
 	"fmt"
 	"slices"
 
-	oaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/packages/param"
-
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/providers"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
@@ -53,17 +50,20 @@ type Provider struct {
 // New creates a new DeepSeek provider.
 func New(opts ...config.Option) (*Provider, error) {
 	base, err := openai.NewCompatible(openai.CompatibleConfig{
-		APIKeyEnvVar:                   envAPIKey,
-		BaseURLEnvVar:                  "",
-		Capabilities:                   capabilities(),
-		ChatCompletionRequestTransform: transformRequest,
-		DefaultAPIKey:                  "",
-		DefaultBaseURL:                 defaultBaseURL,
-		Name:                           providerName,
-		RequireAPIKey:                  true,
+		APIKeyEnvVar:                    envAPIKey,
+		APIErrorTransform:               transformAPIError,
+		BaseURLEnvVar:                   "",
+		Capabilities:                    capabilities(),
+		ChatCompletionChunkTransform:    transformChunk,
+		ChatCompletionRequestTransform:  transformRequest,
+		ChatCompletionResponseTransform: transformResponse,
+		DefaultAPIKey:                   "",
+		DefaultBaseURL:                  defaultBaseURL,
+		Name:                            providerName,
+		RequireAPIKey:                   true,
 	}, opts...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating DeepSeek compatible provider: %w", err)
 	}
 
 	return &Provider{CompatibleProvider: base}, nil
@@ -92,10 +92,12 @@ func (p *Provider) CompletionStream(
 // capabilities returns the capabilities for the DeepSeek provider.
 func capabilities() providers.Capabilities {
 	return providers.Capabilities{
-		Completion:          true,
-		CompletionImage:     false, // DeepSeek doesn't support images.
+		Completion: true,
+		// Vision Exp accepts external and inline data URLs.
+		// https://api-docs.deepseek.com/guides/vision
+		CompletionImage:     true,
 		CompletionPDF:       false,
-		CompletionReasoning: true, // DeepSeek R1 supports reasoning.
+		CompletionReasoning: true, // DeepSeek V4 supports reasoning.
 		CompletionStreaming: true,
 		CompletionTools:     true,
 		Embedding:           false, // DeepSeek doesn't host embedding models.
@@ -138,40 +140,9 @@ func preprocessParams(params providers.CompletionParams) providers.CompletionPar
 	}
 
 	// Return modified params with json_object format.
-	return providers.CompletionParams{
-		Model:             params.Model,
-		Messages:          modifiedMessages,
-		Temperature:       params.Temperature,
-		TopP:              params.TopP,
-		MaxTokens:         params.MaxTokens,
-		Stop:              params.Stop,
-		Stream:            params.Stream,
-		StreamOptions:     params.StreamOptions,
-		Tools:             params.Tools,
-		ToolChoice:        params.ToolChoice,
-		ParallelToolCalls: params.ParallelToolCalls,
-		ResponseFormat: &providers.ResponseFormat{
-			Type: responseFormatJSONObject,
-		},
-		ReasoningEffort: params.ReasoningEffort,
-		Seed:            params.Seed,
-		User:            params.User,
-		Extra:           params.Extra,
-	}
-}
-
-// transformRequest adjusts the OpenAI SDK request for DeepSeek's API.
-// DeepSeek uses max_tokens, not max_completion_tokens.
-// If both are set, MaxCompletionTokens takes precedence over MaxTokens.
-// See: https://api-docs.deepseek.com/api/create-chat-completion
-func transformRequest(req *oaisdk.ChatCompletionNewParams) {
-	if req.MaxCompletionTokens.Valid() {
-		// Set max_tokens using max_completion_tokens value.
-		req.MaxTokens = oaisdk.Int(req.MaxCompletionTokens.Value)
-	}
-
-	// Clear unsupported fields from the request.
-	req.MaxCompletionTokens = param.Opt[int64]{}
+	params.Messages = modifiedMessages
+	params.ResponseFormat = &providers.ResponseFormat{Type: responseFormatJSONObject}
+	return params
 }
 
 // preprocessMessagesForJSONSchema injects the JSON schema into the last user message.
@@ -184,7 +155,8 @@ func preprocessMessagesForJSONSchema(messages []providers.Message, schema map[st
 
 	// Find the last user message.
 	lastUserIdx := -1
-	for i := len(messages) - 1; i >= 0; i-- {
+
+	for i := range slices.Backward(messages) {
 		if messages[i].Role == providers.RoleUser {
 			lastUserIdx = i
 			break
@@ -223,14 +195,8 @@ Return the JSON object only, no other text, do not wrap it in `+"```json"+` or `
 	result := slices.Clone(messages)
 
 	// Update the message, preserving all fields from the original.
-	result[lastUserIdx] = providers.Message{
-		Content:    modifiedContent,
-		Name:       targetMsg.Name,
-		Reasoning:  targetMsg.Reasoning,
-		Role:       targetMsg.Role,
-		ToolCallID: targetMsg.ToolCallID,
-		ToolCalls:  targetMsg.ToolCalls,
-	}
+	targetMsg.Content = modifiedContent
+	result[lastUserIdx] = targetMsg
 
 	return result, true
 }
