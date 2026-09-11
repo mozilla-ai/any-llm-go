@@ -209,9 +209,19 @@ provider, err := mistral.New(anyllm.WithAPIKey("your-key"))
 - `mistral-large-latest` - Most capable model
 - `mistral-medium-latest` - Balanced performance
 
-**Reasoning Models:**
-- `magistral-small-latest` - Fast reasoning model
-- `magistral-medium-latest` - More capable reasoning model
+**Reasoning:**
+
+See the [official reasoning guide](https://docs.mistral.ai/studio-api/conversations/reasoning) for supported models and effort settings.
+For multi-turn replay, retain the assistant message returned by `Completion`, including `Reasoning.ProviderRaw`.
+The adapter rejects raw replay content whose answer differs from `Message.Content` rather than overwriting that answer.
+Matching answer text does not establish that the raw thinking blocks are complete.
+
+`CompletionStream` exposes text and per-delta reasoning metadata. After a structurally closed reasoning sequence,
+the finish delta carries the ordered `Reasoning.ProviderRaw` snapshot, including subsequent answer text.
+Earlier fragments are not cumulative snapshots. Concatenate `Content` and `Reasoning.Content` deltas separately,
+retain the finish snapshot, and check the error channel before replaying the assembled message.
+The adapter preserves individual thinking chunks and signatures without combining their signed payloads.
+The adapter also rejects non-text content it cannot retain, instead of returning partial text as a successful response.
 
 **Embedding Models:**
 - `mistral-embed` - Text embeddings

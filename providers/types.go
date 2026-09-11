@@ -16,16 +16,20 @@ const (
 
 // Reasoning effort levels for extended thinking.
 const (
-	ReasoningEffortAuto   ReasoningEffort = "auto"
-	ReasoningEffortHigh   ReasoningEffort = "high"
-	ReasoningEffortLow    ReasoningEffort = "low"
-	ReasoningEffortMedium ReasoningEffort = "medium"
-	ReasoningEffortNone   ReasoningEffort = "none"
+	ReasoningEffortAuto    ReasoningEffort = "auto"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMax     ReasoningEffort = "max"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortNone    ReasoningEffort = "none"
+	ReasoningEffortXHigh   ReasoningEffort = "xhigh"
 )
 
 // Message roles.
 const (
 	RoleAssistant = "assistant"
+	RoleDeveloper = "developer"
 	RoleSystem    = "system"
 	RoleTool      = "tool"
 	RoleUser      = "user"
@@ -95,7 +99,7 @@ type Capabilities struct {
 	CompletionImage     bool
 	CompletionPDF       bool
 	CompletionReasoning bool
-	CompletionStreaming  bool
+	CompletionStreaming bool
 	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
@@ -127,16 +131,42 @@ type ChatCompletionChunk struct {
 
 // Choice represents a completion choice.
 type Choice struct {
-	Index        int     `json:"index"`
-	Message      Message `json:"message"`
-	FinishReason string  `json:"finish_reason,omitempty"`
+	Index        int                     `json:"index"`
+	Message      Message                 `json:"message"`
+	FinishReason string                  `json:"finish_reason,omitempty"`
+	Logprobs     *ChatCompletionLogprobs `json:"logprobs,omitempty"`
 }
 
 // ChunkChoice represents a choice in a streaming chunk.
 type ChunkChoice struct {
-	Index        int        `json:"index"`
-	Delta        ChunkDelta `json:"delta"`
-	FinishReason string     `json:"finish_reason,omitempty"`
+	Index        int                     `json:"index"`
+	Delta        ChunkDelta              `json:"delta"`
+	FinishReason string                  `json:"finish_reason,omitempty"`
+	Logprobs     *ChatCompletionLogprobs `json:"logprobs,omitempty"`
+}
+
+// ChatCompletionLogprobs contains token-level log probabilities returned for a
+// completion choice. ReasoningContent is used by providers such as DeepSeek,
+// while Refusal is used by OpenAI-compatible providers that return refusal tokens.
+type ChatCompletionLogprobs struct {
+	Content          []ChatCompletionTokenLogprob `json:"content"`
+	ReasoningContent []ChatCompletionTokenLogprob `json:"reasoning_content,omitempty"`
+	Refusal          []ChatCompletionTokenLogprob `json:"refusal,omitempty"`
+}
+
+// ChatCompletionTokenLogprob describes one generated token and its alternatives.
+type ChatCompletionTokenLogprob struct {
+	Token       string                     `json:"token"`
+	Bytes       []int                      `json:"bytes"`
+	Logprob     float64                    `json:"logprob"`
+	TopLogprobs []ChatCompletionTopLogprob `json:"top_logprobs"`
+}
+
+// ChatCompletionTopLogprob describes an alternative token at one output position.
+type ChatCompletionTopLogprob struct {
+	Token   string  `json:"token"`
+	Bytes   []int   `json:"bytes"`
+	Logprob float64 `json:"logprob"`
 }
 
 // ChunkDelta represents the delta content in a streaming chunk.
@@ -153,6 +183,8 @@ type CompletionParams struct {
 	Messages          []Message       `json:"messages"`
 	Temperature       *float64        `json:"temperature,omitempty"`
 	TopP              *float64        `json:"top_p,omitempty"`
+	Logprobs          *bool           `json:"logprobs,omitempty"`
+	TopLogprobs       *int            `json:"top_logprobs,omitempty"`
 	MaxTokens         *int            `json:"max_tokens,omitempty"`
 	Stop              []string        `json:"stop,omitempty"`
 	Stream            bool            `json:"stream,omitempty"`
@@ -169,9 +201,17 @@ type CompletionParams struct {
 
 // ContentPart represents a part of a multi-modal message.
 type ContentPart struct {
-	Type     string    `json:"type"`
-	Text     string    `json:"text,omitempty"`
-	ImageURL *ImageURL `json:"image_url,omitempty"`
+	Type     string       `json:"type"`
+	Text     string       `json:"text,omitempty"`
+	ImageURL *ImageURL    `json:"image_url,omitempty"`
+	File     *FileContent `json:"file,omitempty"`
+}
+
+// FileContent identifies an uploaded file or carries inline file data.
+type FileContent struct {
+	FileID   string `json:"file_id,omitempty"`
+	FileData string `json:"file_data,omitempty"`
+	Filename string `json:"filename,omitempty"`
 }
 
 // EmbeddingData represents a single embedding.
@@ -320,6 +360,12 @@ type ModelsResponse struct {
 // Reasoning represents extended thinking/reasoning content.
 type Reasoning struct {
 	Content string `json:"content,omitempty"`
+	// Provider identifies the producer whose adapter may replay ProviderRaw.
+	Provider string `json:"provider,omitempty"`
+	// ProviderRaw retains provider-native blocks that Content cannot represent.
+	// Streaming fragments are not necessarily replayable; replay requires a
+	// complete snapshot under the provider's reasoning contract.
+	ProviderRaw json.RawMessage `json:"provider_raw,omitempty"`
 }
 
 // ResponseFormat specifies the format of the response.
@@ -363,6 +409,8 @@ type ToolChoiceFunction struct {
 
 // Usage represents token usage information.
 type Usage struct {
+	// CachedTokens is the subset of PromptTokens served from an input cache.
+	CachedTokens     int `json:"cached_tokens,omitempty"`
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
@@ -381,16 +429,19 @@ func (m *Message) ContentParts() []ContentPart {
 
 	if parts, ok := m.Content.([]any); ok {
 		result := make([]ContentPart, 0, len(parts))
+
 		for _, p := range parts {
 			if partMap, ok := p.(map[string]any); ok {
 				var part ContentPart
 				if b, err := json.Marshal(partMap); err == nil {
-					if err := json.Unmarshal(b, &part); err == nil {
+					err := json.Unmarshal(b, &part)
+					if err == nil {
 						result = append(result, part)
 					}
 				}
 			}
 		}
+
 		return result
 	}
 
@@ -402,6 +453,7 @@ func (m *Message) ContentString() string {
 	if s, ok := m.Content.(string); ok {
 		return s
 	}
+
 	return ""
 }
 

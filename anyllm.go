@@ -26,6 +26,7 @@ import (
 // Message roles.
 const (
 	RoleAssistant = providers.RoleAssistant
+	RoleDeveloper = providers.RoleDeveloper
 	RoleSystem    = providers.RoleSystem
 	RoleTool      = providers.RoleTool
 	RoleUser      = providers.RoleUser
@@ -53,11 +54,14 @@ const (
 
 // ReasoningEffort levels.
 const (
-	ReasoningEffortAuto   = providers.ReasoningEffortAuto
-	ReasoningEffortHigh   = providers.ReasoningEffortHigh
-	ReasoningEffortLow    = providers.ReasoningEffortLow
-	ReasoningEffortMedium = providers.ReasoningEffortMedium
-	ReasoningEffortNone   = providers.ReasoningEffortNone
+	ReasoningEffortAuto    = providers.ReasoningEffortAuto
+	ReasoningEffortHigh    = providers.ReasoningEffortHigh
+	ReasoningEffortLow     = providers.ReasoningEffortLow
+	ReasoningEffortMax     = providers.ReasoningEffortMax
+	ReasoningEffortMedium  = providers.ReasoningEffortMedium
+	ReasoningEffortMinimal = providers.ReasoningEffortMinimal
+	ReasoningEffortNone    = providers.ReasoningEffortNone
+	ReasoningEffortXHigh   = providers.ReasoningEffortXHigh
 )
 
 // Provider types.
@@ -86,23 +90,27 @@ type (
 
 // Request/Response types.
 type (
-	ChatCompletion      = providers.ChatCompletion
-	ChatCompletionChunk = providers.ChatCompletionChunk
-	Choice              = providers.Choice
-	ChunkChoice         = providers.ChunkChoice
-	ChunkDelta          = providers.ChunkDelta
-	CompletionParams    = providers.CompletionParams
-	EmbeddingParams     = providers.EmbeddingParams
-	EmbeddingResponse   = providers.EmbeddingResponse
-	ModelsResponse      = providers.ModelsResponse
-	ModerationParams    = providers.ModerationParams
-	ModerationResponse  = providers.ModerationResponse
-	ModerationResult    = providers.ModerationResult
+	ChatCompletion             = providers.ChatCompletion
+	ChatCompletionChunk        = providers.ChatCompletionChunk
+	ChatCompletionLogprobs     = providers.ChatCompletionLogprobs
+	ChatCompletionTokenLogprob = providers.ChatCompletionTokenLogprob
+	ChatCompletionTopLogprob   = providers.ChatCompletionTopLogprob
+	Choice                     = providers.Choice
+	ChunkChoice                = providers.ChunkChoice
+	ChunkDelta                 = providers.ChunkDelta
+	CompletionParams           = providers.CompletionParams
+	EmbeddingParams            = providers.EmbeddingParams
+	EmbeddingResponse          = providers.EmbeddingResponse
+	ModelsResponse             = providers.ModelsResponse
+	ModerationParams           = providers.ModerationParams
+	ModerationResponse         = providers.ModerationResponse
+	ModerationResult           = providers.ModerationResult
 )
 
 // Message types.
 type (
 	ContentPart = providers.ContentPart
+	FileContent = providers.FileContent
 	ImageURL    = providers.ImageURL
 	Message     = providers.Message
 	Reasoning   = providers.Reasoning
@@ -179,17 +187,17 @@ var (
 
 // Error types.
 type (
-	AuthenticationError           = errors.AuthenticationError
-	BaseError                     = errors.BaseError
-	ContentFilterError            = errors.ContentFilterError
-	ContextLengthError            = errors.ContextLengthError
-	InsufficientFundsError        = errors.InsufficientFundsError
-	InvalidRequestError           = errors.InvalidRequestError
-	MissingAPIKeyError            = errors.MissingAPIKeyError
-	ModelNotFoundError            = errors.ModelNotFoundError
-	ProviderError                 = errors.ProviderError
-	RateLimitError                = errors.RateLimitError
-	UnsupportedOperationError     = errors.UnsupportedOperationError
-	UnsupportedParamError         = errors.UnsupportedParamError
-	UnsupportedProviderError      = errors.UnsupportedProviderError
+	AuthenticationError       = errors.AuthenticationError
+	BaseError                 = errors.BaseError
+	ContentFilterError        = errors.ContentFilterError
+	ContextLengthError        = errors.ContextLengthError
+	InsufficientFundsError    = errors.InsufficientFundsError
+	InvalidRequestError       = errors.InvalidRequestError
+	MissingAPIKeyError        = errors.MissingAPIKeyError
+	ModelNotFoundError        = errors.ModelNotFoundError
+	ProviderError             = errors.ProviderError
+	RateLimitError            = errors.RateLimitError
+	UnsupportedOperationError = errors.UnsupportedOperationError
+	UnsupportedParamError     = errors.UnsupportedParamError
+	UnsupportedProviderError  = errors.UnsupportedProviderError
 )
