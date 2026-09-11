@@ -2,8 +2,11 @@ package ollama
 
 import (
 	"context"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +20,31 @@ import (
 	"github.com/mozilla-ai/any-llm-go/providers"
 )
 
-const testOllamaAvailabilityTimeout = 5 * time.Second
+const (
+	testOllamaAvailabilityTimeout = 5 * time.Second
+	// This fixture is independently derived from the current Chat OpenAPI and
+	// tool-calling guide, so it does not reuse the converter's assumptions.
+	documentedChatRequestJSON = `{
+		"model":"model",
+		"messages":[
+			{"role":"user","content":"look","images":["aGVsbG8="]},
+			{
+				"role":"assistant",
+				"content":"",
+				"thinking":"thought",
+				"tool_calls":[{
+					"function":{
+						"index":0,
+						"name":"weather",
+						"arguments":{"city":"Paris"}
+					}
+				}]
+			},
+			{"role":"tool","content":"sunny","tool_name":"weather"}
+		],
+		"options":{"num_ctx":32000}
+	}`
+)
 
 func TestNew(t *testing.T) {
 	// Note: Not using t.Parallel() here because child test uses t.Setenv.
@@ -66,6 +93,124 @@ func TestCapabilities(t *testing.T) {
 	require.True(t, caps.ListModels)
 }
 
+func TestCompletionSendsEstablishedContextDefault(t *testing.T) {
+	t.Parallel()
+
+	requestBody := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		requestBody <- body
+		w.Header().Set("Content-Type", "application/json")
+		_, err := fmt.Fprintln(w, `{"model":"test","message":{"role":"assistant","content":"ok"},"done":true}`)
+		require.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+
+	provider, err := New(config.WithBaseURL(server.URL))
+	require.NoError(t, err)
+	_, err = provider.Completion(t.Context(), providers.CompletionParams{
+		Model:    "test",
+		Messages: []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
+	})
+	require.NoError(t, err)
+
+	body := <-requestBody
+	options, ok := body["options"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(32000), options["num_ctx"])
+}
+
+func TestConvertParamsPreservesDocumentedReasoningControls(t *testing.T) {
+	t.Parallel()
+
+	provider := &Provider{}
+	none, err := provider.convertParams(providers.CompletionParams{ReasoningEffort: providers.ReasoningEffortNone})
+	require.NoError(t, err)
+	require.Equal(t, false, none.Think.Value)
+
+	// These wire values match Ollama's MIT-licensed api/types_test.go fixtures.
+	for _, testCase := range []struct {
+		name   string
+		effort providers.ReasoningEffort
+		want   string
+	}{
+		{name: "low", effort: providers.ReasoningEffortLow, want: "low"},
+		{name: "medium", effort: providers.ReasoningEffortMedium, want: "medium"},
+		{name: "high", effort: providers.ReasoningEffortHigh, want: "high"},
+		{name: "max", effort: providers.ReasoningEffort("max"), want: "max"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			converted, convertErr := provider.convertParams(providers.CompletionParams{
+				ReasoningEffort: testCase.effort,
+			})
+			require.NoError(t, convertErr)
+			require.Equal(t, testCase.want, converted.Think.Value)
+		})
+	}
+
+	req, err := provider.convertParams(providers.CompletionParams{ReasoningEffort: providers.ReasoningEffortAuto})
+	require.NoError(t, err)
+	require.Nil(t, req.Think)
+
+	_, err = provider.convertParams(providers.CompletionParams{ReasoningEffort: providers.ReasoningEffort("xhigh")})
+	require.ErrorIs(t, err, errors.ErrUnsupportedParam)
+}
+
+func TestConvertParamsRejectsUnsupportedFields(t *testing.T) {
+	t.Parallel()
+
+	provider := &Provider{}
+	for _, params := range []providers.CompletionParams{
+		{StreamOptions: &providers.StreamOptions{}},
+		{ToolChoice: "auto"},
+		{ParallelToolCalls: new(false)},
+		{User: "user-1"},
+		{Extra: map[string]any{"unknown": true}},
+	} {
+		_, err := provider.convertParams(params)
+		require.ErrorIs(t, err, errors.ErrUnsupportedParam)
+	}
+}
+
+func TestConvertParamsMatchesDocumentedMessageWire(t *testing.T) {
+	t.Parallel()
+
+	provider := &Provider{}
+	req, err := provider.convertParams(providers.CompletionParams{
+		Model: "model",
+		Messages: []providers.Message{
+			{
+				Role: providers.RoleUser,
+				Content: []providers.ContentPart{
+					{Type: contentTypeText, Text: "look"},
+					{Type: contentTypeImageURL, ImageURL: &providers.ImageURL{URL: "data:image/png;base64,aGVsbG8="}},
+				},
+			},
+			{
+				Role:      providers.RoleAssistant,
+				Reasoning: &providers.Reasoning{Content: "thought"},
+				ToolCalls: []providers.ToolCall{{
+					ID:   "call_1",
+					Type: toolTypeFunction,
+					Function: providers.FunctionCall{
+						Name:      "weather",
+						Arguments: `{"city":"Paris"}`,
+					},
+				}},
+			},
+			{Role: providers.RoleTool, Content: "sunny", ToolCallID: "call_1"},
+		},
+	})
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(req)
+	require.NoError(t, err)
+	require.JSONEq(t, documentedChatRequestJSON, string(encoded))
+}
+
 func TestConvertMessages(t *testing.T) {
 	t.Parallel()
 
@@ -76,7 +221,8 @@ func TestConvertMessages(t *testing.T) {
 			{Role: providers.RoleSystem, Content: "You are a helpful assistant."},
 		}
 
-		result := convertMessages(messages)
+		result, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Len(t, result, 1)
 		require.Equal(t, providers.RoleSystem, result[0].Role)
@@ -90,7 +236,8 @@ func TestConvertMessages(t *testing.T) {
 			{Role: providers.RoleUser, Content: "Hello"},
 		}
 
-		result := convertMessages(messages)
+		result, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Len(t, result, 1)
 		require.Equal(t, providers.RoleUser, result[0].Role)
@@ -104,24 +251,28 @@ func TestConvertMessages(t *testing.T) {
 			{Role: providers.RoleAssistant, Content: "Hi there!"},
 		}
 
-		result := convertMessages(messages)
+		result, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Len(t, result, 1)
 		require.Equal(t, providers.RoleAssistant, result[0].Role)
 		require.Equal(t, "Hi there!", result[0].Content)
 	})
 
-	t.Run("converts tool message to user message", func(t *testing.T) {
+	t.Run("converts tool message", func(t *testing.T) {
 		t.Parallel()
 
 		messages := []providers.Message{
-			{Role: providers.RoleTool, Content: "sunny, 22°C", ToolCallID: "call_123"},
+			{Role: providers.RoleTool, Content: "sunny, 22°C", Name: "get_weather", ToolCallID: "call_123"},
 		}
 
-		result := convertMessages(messages)
+		result, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Len(t, result, 1)
-		require.Equal(t, providers.RoleUser, result[0].Role) // Ollama uses user for tool results.
+		require.Equal(t, providers.RoleTool, result[0].Role)
+		require.Equal(t, "get_weather", result[0].ToolName)
+		require.Empty(t, result[0].ToolCallID)
 	})
 
 	t.Run("converts assistant message with tool calls", func(t *testing.T) {
@@ -144,12 +295,25 @@ func TestConvertMessages(t *testing.T) {
 			},
 		}
 
-		result := convertMessages(messages)
+		result, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Len(t, result, 1)
 		require.Equal(t, providers.RoleAssistant, result[0].Role)
 		require.Len(t, result[0].ToolCalls, 1)
+		require.Empty(t, result[0].ToolCalls[0].ID)
 		require.Equal(t, "get_weather", result[0].ToolCalls[0].Function.Name)
+	})
+
+	t.Run("rejects an unidentified tool result", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := convertMessages([]providers.Message{{
+			Role:       providers.RoleTool,
+			Content:    "result",
+			ToolCallID: "missing",
+		}})
+		require.ErrorIs(t, err, errors.ErrInvalidRequest)
 	})
 }
 
@@ -179,7 +343,7 @@ func TestConvertDoneReason(t *testing.T) {
 		{
 			name:     "unknown reason",
 			reason:   "unknown",
-			expected: providers.FinishReasonStop,
+			expected: "unknown",
 		},
 	}
 
@@ -193,7 +357,7 @@ func TestConvertDoneReason(t *testing.T) {
 	}
 }
 
-func TestExtractImages(t *testing.T) {
+func TestConvertMessageContent(t *testing.T) {
 	t.Parallel()
 
 	t.Run("extracts base64 image", func(t *testing.T) {
@@ -206,19 +370,21 @@ func TestExtractImages(t *testing.T) {
 				{
 					Type: "image_url",
 					ImageURL: &providers.ImageURL{
-						URL: "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+						URL: "data:image/jpeg;base64,aGVsbG8=",
 					},
 				},
 			},
 		}
 
-		images := extractImages(msg)
+		content, images, err := convertMessageContent(msg)
+		require.NoError(t, err)
 
+		require.Equal(t, "What's in this image?", content)
 		require.Len(t, images, 1)
-		require.Equal(t, "/9j/4AAQSkZJRg==", string(images[0]))
+		require.Equal(t, "hello", string(images[0]))
 	})
 
-	t.Run("ignores non-data URLs", func(t *testing.T) {
+	t.Run("rejects non-data URLs", func(t *testing.T) {
 		t.Parallel()
 
 		msg := providers.Message{
@@ -233,9 +399,10 @@ func TestExtractImages(t *testing.T) {
 			},
 		}
 
-		images := extractImages(msg)
+		_, images, err := convertMessageContent(msg)
 
 		require.Empty(t, images)
+		require.ErrorIs(t, err, errors.ErrUnsupportedParam)
 	})
 }
 
@@ -262,13 +429,85 @@ func TestConvertTools(t *testing.T) {
 		},
 	}
 
-	result := convertTools(tools)
+	result, err := convertTools(tools)
+	require.NoError(t, err)
 
 	require.Len(t, result, 1)
 	require.Equal(t, toolTypeFunction, result[0].Type)
 	require.Equal(t, "get_weather", result[0].Function.Name)
 	require.Equal(t, "Get the current weather", result[0].Function.Description)
 	require.Contains(t, result[0].Function.Parameters.Required, "location")
+	require.Equal(t, "The city name", result[0].Function.Parameters.Properties.ToMap()["location"].Description)
+
+	for _, test := range []struct {
+		parameters     map[string]any
+		wantProperties bool
+	}{
+		{parameters: nil},
+		{parameters: map[string]any{}},
+		{parameters: map[string]any{schemaKeyType: schemaTypeObject}},
+		{parameters: map[string]any{schemaKeyType: schemaTypeObject, schemaKeyProperties: map[string]any{}, schemaKeyRequired: []any{}}, wantProperties: true},
+		{parameters: map[string]any{schemaKeyType: schemaTypeObject, schemaKeyProperties: map[string]any{"city": map[string]any{
+			schemaKeyType: "string", schemaKeyDescription: "",
+		}}}, wantProperties: true},
+	} {
+		parameters := test.parameters
+		before, marshalErr := json.Marshal(parameters)
+		require.NoError(t, marshalErr)
+
+		converted, convertErr := convertToolParameters(parameters)
+		require.NoError(t, convertErr)
+		require.Equal(t, schemaTypeObject, converted.Type)
+		require.Equal(t, test.wantProperties, converted.Properties != nil)
+
+		after, marshalErr := json.Marshal(parameters)
+		require.NoError(t, marshalErr)
+		require.JSONEq(t, string(before), string(after))
+	}
+
+	_, err = convertTools([]providers.Tool{{Type: "custom"}})
+	require.ErrorIs(t, err, errors.ErrUnsupportedParam)
+
+	_, err = convertTools([]providers.Tool{{
+		Type: toolTypeFunction,
+		Function: providers.Function{
+			Parameters: map[string]any{
+				schemaKeyType:          schemaTypeObject,
+				"additionalProperties": false,
+			},
+		},
+	}})
+	require.ErrorIs(t, err, errors.ErrUnsupportedParam)
+
+	for _, minimum := range []json.Number{"7", "9007199254740993"} {
+		_, err = convertTools([]providers.Tool{{
+			Type: toolTypeFunction,
+			Function: providers.Function{
+				Parameters: map[string]any{
+					schemaKeyType: schemaTypeObject,
+					schemaKeyProperties: map[string]any{
+						"count": map[string]any{schemaKeyType: "integer", "minimum": minimum},
+					},
+				},
+			},
+		}})
+		require.ErrorIs(t, err, errors.ErrUnsupportedParam)
+	}
+
+	_, err = convertTools([]providers.Tool{{
+		Type: toolTypeFunction,
+		Function: providers.Function{
+			Name:        "",
+			Description: "",
+			Parameters: map[string]any{
+				schemaKeyType: schemaTypeObject,
+				"$defs": map[string]any{
+					"large": map[string]any{schemaKeyType: "integer", "minimum": json.Number("9007199254740993")},
+				},
+			},
+		},
+	}})
+	require.ErrorIs(t, err, errors.ErrUnsupportedParam)
 }
 
 func TestConvertToolCalls(t *testing.T) {
@@ -279,20 +518,69 @@ func TestConvertToolCalls(t *testing.T) {
 
 	toolCalls := []api.ToolCall{
 		{
+			ID: "provider-call-id",
 			Function: api.ToolCallFunction{
 				Name:      "get_weather",
 				Arguments: args,
 			},
 		},
+		{Function: api.ToolCallFunction{Name: "no_id", Arguments: args}},
 	}
 
 	result := convertToolCalls(toolCalls)
 
-	require.Len(t, result, 1)
-	require.Equal(t, "call_0", result[0].ID)
+	require.Len(t, result, 2)
+	require.Equal(t, "provider-call-id", result[0].ID)
 	require.Equal(t, toolTypeFunction, result[0].Type)
 	require.Equal(t, "get_weather", result[0].Function.Name)
 	require.Contains(t, result[0].Function.Arguments, "Paris")
+	require.Equal(t, "call_1", result[1].ID)
+}
+
+func TestConvertResponsePreservesThinking(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name      string
+		content   string
+		thinking  string
+		want      string
+		reasoning *providers.Reasoning
+	}{
+		{
+			name: "native thinking takes precedence", content: "<think>tagged</think>answer", thinking: "native",
+			want: "<think>tagged</think>answer", reasoning: &providers.Reasoning{Content: "native"},
+		},
+		{
+			name: "legacy tags", content: "<think>private chain</think>public answer",
+			want: "public answer", reasoning: &providers.Reasoning{Content: "private chain"},
+		},
+		{
+			name: "surrounding content", content: "  before<think>reason</think>after  ",
+			want: "beforeafter", reasoning: &providers.Reasoning{Content: "reason"},
+		},
+		{
+			name: "first complete block", content: "<think>first</think><think>second</think>answer",
+			want: "<think>second</think>answer", reasoning: &providers.Reasoning{Content: "first"},
+		},
+		{
+			name: "empty tagged thinking", content: "<think></think>answer",
+			want: "answer", reasoning: &providers.Reasoning{},
+		},
+		{name: "plain content", content: "  public answer  ", want: "  public answer  "},
+		{name: "unclosed tag", content: "<think>unfinished", want: "<think>unfinished"},
+		{name: "unopened tag", content: "answer</think>", want: "answer</think>"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := convertResponse(&api.ChatResponse{
+				Message: api.Message{Content: testCase.content, Thinking: testCase.thinking},
+			})
+			require.Equal(t, testCase.want, result.Choices[0].Message.Content)
+			require.Equal(t, testCase.reasoning, result.Choices[0].Message.Reasoning)
+		})
+	}
 }
 
 func TestConvertResponseFormat(t *testing.T) {
@@ -301,7 +589,8 @@ func TestConvertResponseFormat(t *testing.T) {
 	t.Run("nil format returns nil", func(t *testing.T) {
 		t.Parallel()
 
-		result := convertResponseFormat(nil)
+		result, err := convertResponseFormat(nil)
+		require.NoError(t, err)
 		require.Nil(t, result)
 	})
 
@@ -309,7 +598,8 @@ func TestConvertResponseFormat(t *testing.T) {
 		t.Parallel()
 
 		format := &providers.ResponseFormat{Type: responseFormatJSON}
-		result := convertResponseFormat(format)
+		result, err := convertResponseFormat(format)
+		require.NoError(t, err)
 
 		require.NotNil(t, result)
 		require.Equal(t, `"json"`, string(result))
@@ -330,50 +620,182 @@ func TestConvertResponseFormat(t *testing.T) {
 				},
 			},
 		}
-		result := convertResponseFormat(format)
+		result, err := convertResponseFormat(format)
+		require.NoError(t, err)
 
 		require.NotNil(t, result)
 		require.Contains(t, string(result), schemaKeyProperties)
 	})
+
+	t.Run("rejects missing json schema", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := convertResponseFormat(&providers.ResponseFormat{Type: responseFormatSchema})
+		require.ErrorIs(t, err, errors.ErrInvalidRequest)
+	})
+
+	t.Run("rejects unencodable json schema", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := convertResponseFormat(&providers.ResponseFormat{
+			Type: responseFormatSchema,
+			JSONSchema: &providers.JSONSchema{
+				Schema: map[string]any{"value": make(chan int)},
+			},
+		})
+		require.ErrorIs(t, err, errors.ErrInvalidRequest)
+	})
+
+	t.Run("accepts explicit non-strict json schema", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := convertResponseFormat(&providers.ResponseFormat{
+			Type: responseFormatSchema,
+			JSONSchema: &providers.JSONSchema{
+				Schema: map[string]any{"type": "object"},
+				Strict: new(false),
+			},
+		})
+		require.NoError(t, err)
+		require.JSONEq(t, `{"type":"object"}`, string(result))
+	})
+
+	t.Run("rejects strict json schema", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := convertResponseFormat(&providers.ResponseFormat{
+			Type:       responseFormatSchema,
+			JSONSchema: &providers.JSONSchema{Schema: map[string]any{}, Strict: new(true)},
+		})
+		require.ErrorIs(t, err, errors.ErrUnsupportedParam)
+	})
+
+	t.Run("rejects unknown format", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := convertResponseFormat(&providers.ResponseFormat{Type: "yaml"})
+		require.ErrorIs(t, err, errors.ErrUnsupportedParam)
+	})
 }
 
-func TestConvertMessage(t *testing.T) {
+func TestConvertMessageRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name         string
-		msg          providers.Message
-		expectedRole string
+	for _, testCase := range []struct {
+		name     string
+		message  providers.Message
+		sentinel error
 	}{
 		{
-			name:         "user message",
-			msg:          providers.Message{Role: providers.RoleUser, Content: "Hello"},
-			expectedRole: providers.RoleUser,
+			name:     "unknown role",
+			message:  providers.Message{Role: "developer", Content: "content"},
+			sentinel: errors.ErrInvalidRequest,
 		},
 		{
-			name:         "assistant message",
-			msg:          providers.Message{Role: providers.RoleAssistant, Content: "Hi"},
-			expectedRole: providers.RoleAssistant,
+			name:     "name on user message",
+			message:  providers.Message{Role: providers.RoleUser, Content: "content", Name: "name"},
+			sentinel: errors.ErrUnsupportedParam,
 		},
 		{
-			name:         "system message",
-			msg:          providers.Message{Role: providers.RoleSystem, Content: "You are helpful"},
-			expectedRole: providers.RoleSystem,
+			name: "tool call on user message",
+			message: providers.Message{
+				Role:      providers.RoleUser,
+				Content:   "content",
+				ToolCalls: []providers.ToolCall{{Type: toolTypeFunction}},
+			},
+			sentinel: errors.ErrUnsupportedParam,
 		},
 		{
-			name:         "tool message becomes user",
-			msg:          providers.Message{Role: providers.RoleTool, Content: "result", ToolCallID: "123"},
-			expectedRole: providers.RoleUser,
+			name: "reasoning on user message",
+			message: providers.Message{
+				Role:      providers.RoleUser,
+				Content:   "content",
+				Reasoning: &providers.Reasoning{Content: "thought"},
+			},
+			sentinel: errors.ErrUnsupportedParam,
 		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+		{
+			name: "unsupported tool-call type",
+			message: providers.Message{
+				Role: providers.RoleAssistant,
+				ToolCalls: []providers.ToolCall{{
+					Type:     "custom",
+					Function: providers.FunctionCall{Name: "tool", Arguments: `{}`},
+				}},
+			},
+			sentinel: errors.ErrUnsupportedParam,
+		},
+		{
+			name: "invalid tool arguments",
+			message: providers.Message{
+				Role: providers.RoleAssistant,
+				ToolCalls: []providers.ToolCall{{
+					Type:     toolTypeFunction,
+					Function: providers.FunctionCall{Name: "tool", Arguments: "["},
+				}},
+			},
+			sentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name: "non-object tool arguments",
+			message: providers.Message{
+				Role: providers.RoleAssistant,
+				ToolCalls: []providers.ToolCall{{
+					Type:     toolTypeFunction,
+					Function: providers.FunctionCall{Name: "tool", Arguments: `[]`},
+				}},
+			},
+			sentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name:     "unparseable content part",
+			message:  providers.Message{Role: providers.RoleUser, Content: []any{"content"}},
+			sentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name:     "unsupported content representation",
+			message:  providers.Message{Role: providers.RoleUser, Content: 42},
+			sentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name:     "unknown content type",
+			message:  providers.Message{Role: providers.RoleUser, Content: []providers.ContentPart{{Type: "audio"}}},
+			sentinel: errors.ErrUnsupportedParam,
+		},
+		{
+			name: "text with image field",
+			message: providers.Message{
+				Role: providers.RoleUser,
+				Content: []providers.ContentPart{{
+					Type:     contentTypeText,
+					Text:     "content",
+					ImageURL: &providers.ImageURL{URL: "data:image/png;base64,aGVsbG8="},
+				}},
+			},
+			sentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name:     "missing image URL",
+			message:  providers.Message{Role: providers.RoleUser, Content: []providers.ContentPart{{Type: contentTypeImageURL}}},
+			sentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name: "invalid image base64",
+			message: providers.Message{
+				Role: providers.RoleUser,
+				Content: []providers.ContentPart{{
+					Type:     contentTypeImageURL,
+					ImageURL: &providers.ImageURL{URL: "data:image/png;base64,%%%"},
+				}},
+			},
+			sentinel: errors.ErrInvalidRequest,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := convertMessage(tc.msg)
-			require.NotNil(t, result)
-			require.Equal(t, tc.expectedRole, result.Role)
+			_, err := convertMessage(testCase.message)
+			require.ErrorIs(t, err, testCase.sentinel)
 		})
 	}
 }
@@ -384,7 +806,7 @@ func TestNewStreamState(t *testing.T) {
 	state := newStreamState()
 	require.NotNil(t, state)
 	require.NotEmpty(t, state.id)
-	require.Greater(t, state.created, int64(0))
+	require.Positive(t, state.created)
 	require.Empty(t, state.model)
 }
 
@@ -427,7 +849,6 @@ func TestStreamStateHandleChunk(t *testing.T) {
 		require.Equal(t, "llama3.2", chunk.Model)
 		require.Len(t, chunk.Choices, 1)
 		require.Equal(t, "Hello ", chunk.Choices[0].Delta.Content)
-		require.Equal(t, "Hello ", state.content.String())
 	})
 
 	t.Run("handles thinking chunk", func(t *testing.T) {
@@ -445,7 +866,6 @@ func TestStreamStateHandleChunk(t *testing.T) {
 
 		require.NotNil(t, chunk.Choices[0].Delta.Reasoning)
 		require.Equal(t, "Let me think...", chunk.Choices[0].Delta.Reasoning.Content)
-		require.Equal(t, "Let me think...", state.reasoning.String())
 	})
 
 	t.Run("handles done chunk with usage", func(t *testing.T) {
@@ -498,39 +918,6 @@ func TestStreamStateHandleChunk(t *testing.T) {
 	})
 }
 
-func TestExtractThinking(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns dedicated thinking content", func(t *testing.T) {
-		t.Parallel()
-
-		content, reasoning := extractThinking("Hello", "I'm thinking...")
-
-		require.Equal(t, "Hello", content)
-		require.NotNil(t, reasoning)
-		require.Equal(t, "I'm thinking...", reasoning.Content)
-	})
-
-	t.Run("parses think tags from content", func(t *testing.T) {
-		t.Parallel()
-
-		content, reasoning := extractThinking("<think>Let me think</think>Hello world", "")
-
-		require.Equal(t, "Hello world", content)
-		require.NotNil(t, reasoning)
-		require.Equal(t, "Let me think", reasoning.Content)
-	})
-
-	t.Run("returns nil reasoning when no thinking", func(t *testing.T) {
-		t.Parallel()
-
-		content, reasoning := extractThinking("Hello world", "")
-
-		require.Equal(t, "Hello world", content)
-		require.Nil(t, reasoning)
-	})
-}
-
 func TestConvertError(t *testing.T) {
 	t.Parallel()
 
@@ -547,7 +934,7 @@ func TestConvertError(t *testing.T) {
 		},
 		{
 			name:         "connection refused becomes ProviderError",
-			err:          fmt.Errorf("connection refused"),
+			err:          stderrors.New("connection refused"),
 			wantSentinel: errors.ErrProvider,
 		},
 		{
@@ -582,7 +969,12 @@ func TestConvertError(t *testing.T) {
 		},
 		{
 			name:         "generic error becomes ProviderError",
-			err:          fmt.Errorf("some other error"),
+			err:          stderrors.New("some other error"),
+			wantSentinel: errors.ErrProvider,
+		},
+		{
+			name:         "StatusError 500 becomes ProviderError",
+			err:          api.StatusError{StatusCode: 500, ErrorMessage: "internal error"},
 			wantSentinel: errors.ErrProvider,
 		},
 	}
@@ -595,12 +987,13 @@ func TestConvertError(t *testing.T) {
 			result := p.ConvertError(tc.err)
 
 			if tc.wantNil {
-				require.Nil(t, result)
+				require.NoError(t, result)
 				return
 			}
 
-			require.NotNil(t, result)
-			require.True(t, stderrors.Is(result, tc.wantSentinel))
+			require.Error(t, result)
+			require.ErrorIs(t, result, tc.wantSentinel)
+			require.ErrorContains(t, result, tc.err.Error())
 		})
 	}
 }
@@ -615,6 +1008,137 @@ func TestGenerateID(t *testing.T) {
 	require.NotEmpty(t, id2)
 	require.True(t, strings.HasPrefix(id1, "chatcmpl-"))
 	require.NotEqual(t, id1, id2) // IDs should be unique.
+}
+
+func newTestProvider(t *testing.T, handler http.Handler) *Provider {
+	t.Helper()
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	provider, err := New(config.WithBaseURL(server.URL))
+	require.NoError(t, err)
+
+	return provider
+}
+
+func TestCompletionRequiresTerminalResponse(t *testing.T) {
+	t.Parallel()
+
+	provider := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = fmt.Fprintln(w, `{"model":"test","message":{"role":"assistant","content":"partial"},"done":false}`)
+	}))
+
+	_, err := provider.Completion(t.Context(), providers.CompletionParams{Model: "test"})
+	require.ErrorIs(t, err, errors.ErrProvider)
+}
+
+func TestCompletionAcceptsUnknownResponseFields(t *testing.T) {
+	t.Parallel()
+
+	provider := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = fmt.Fprintln(
+			w,
+			`{"model":"test","message":{"role":"assistant","content":"done","future":"value"},"done":true,"future":"value"}`,
+		)
+	}))
+
+	response, err := provider.Completion(t.Context(), providers.CompletionParams{Model: "test"})
+	require.NoError(t, err)
+	require.Equal(t, "done", response.Choices[0].Message.Content)
+}
+
+func TestCompletionPreservesCallerTimeout(t *testing.T) {
+	t.Parallel()
+
+	releaseHandler := make(chan struct{})
+	defer close(releaseHandler)
+
+	provider := newTestProvider(t, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-releaseHandler
+	}))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := provider.Completion(ctx, providers.CompletionParams{Model: "test"})
+	require.ErrorIs(t, err, errors.ErrProvider)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestCompletionStreamRequiresTerminalResponse(t *testing.T) {
+	t.Parallel()
+
+	provider := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = fmt.Fprintln(w, `{"model":"test","message":{"role":"assistant","content":"partial"},"done":false}`)
+	}))
+
+	chunks, errs := provider.CompletionStream(t.Context(), providers.CompletionParams{Model: "test"})
+
+	chunkCount := 0
+	for range chunks {
+		chunkCount++
+	}
+
+	require.Equal(t, 1, chunkCount)
+	require.ErrorIs(t, <-errs, errors.ErrProvider)
+}
+
+func TestCompletionStreamReturnsMidstreamError(t *testing.T) {
+	t.Parallel()
+
+	provider := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = fmt.Fprintln(w, `{"model":"test","message":{"role":"assistant","content":"partial"},"done":false}`)
+		_, _ = fmt.Fprintln(w, `{"error":"generation failed"}`)
+	}))
+
+	chunks, errs := provider.CompletionStream(t.Context(), providers.CompletionParams{Model: "test"})
+
+	count := 0
+	for range chunks {
+		count++
+	}
+
+	require.Equal(t, 1, count)
+	require.ErrorIs(t, <-errs, errors.ErrProvider)
+}
+
+func TestCompletionStreamCancellationUnblocksAnUnreadConsumer(t *testing.T) {
+	t.Parallel()
+
+	wroteChunk := make(chan struct{})
+	provider := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = fmt.Fprintln(w, `{"model":"test","message":{"role":"assistant","content":"partial"},"done":false}`)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
+
+		flusher.Flush()
+		close(wroteChunk)
+		<-request.Context().Done()
+	}))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	chunks, errs := provider.CompletionStream(ctx, providers.CompletionParams{Model: "test"})
+
+	<-wroteChunk
+	cancel()
+
+	select {
+	case err := <-errs:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop after cancellation")
+	}
+
+	_, open := <-chunks
+	require.False(t, open)
 }
 
 // Integration tests - only run if Ollama is available.
@@ -706,7 +1230,7 @@ func TestIntegrationCompletionStream(t *testing.T) {
 	err = <-errs
 	require.NoError(t, err)
 
-	require.Greater(t, chunkCount, 0)
+	require.Positive(t, chunkCount)
 	require.NotEmpty(t, content.String())
 }
 
