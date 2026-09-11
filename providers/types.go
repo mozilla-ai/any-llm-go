@@ -16,11 +16,14 @@ const (
 
 // Reasoning effort levels for extended thinking.
 const (
-	ReasoningEffortAuto   ReasoningEffort = "auto"
-	ReasoningEffortHigh   ReasoningEffort = "high"
-	ReasoningEffortLow    ReasoningEffort = "low"
-	ReasoningEffortMedium ReasoningEffort = "medium"
-	ReasoningEffortNone   ReasoningEffort = "none"
+	ReasoningEffortAuto    ReasoningEffort = "auto"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMax     ReasoningEffort = "max"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortNone    ReasoningEffort = "none"
+	ReasoningEffortXHigh   ReasoningEffort = "xhigh"
 )
 
 // Message roles.
@@ -95,7 +98,7 @@ type Capabilities struct {
 	CompletionImage     bool
 	CompletionPDF       bool
 	CompletionReasoning bool
-	CompletionStreaming  bool
+	CompletionStreaming bool
 	CompletionTools     bool
 	Embedding           bool
 	ListModels          bool
@@ -300,7 +303,9 @@ type Message struct {
 	Name       string     `json:"name,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Reasoning  *Reasoning `json:"reasoning,omitempty"`
+	// ToolResultIsError tells providers that a tool message reports a failed execution.
+	ToolResultIsError bool       `json:"is_error,omitzero"`
+	Reasoning         *Reasoning `json:"reasoning,omitempty"`
 }
 
 // Model represents a model from the list models API.
@@ -320,6 +325,12 @@ type ModelsResponse struct {
 // Reasoning represents extended thinking/reasoning content.
 type Reasoning struct {
 	Content string `json:"content,omitempty"`
+	// Provider identifies the producer whose adapter may replay ProviderRaw.
+	Provider string `json:"provider,omitempty"`
+	// ProviderRaw retains provider-native blocks that Content cannot represent.
+	// Streaming fragments are not necessarily replayable; replay requires a
+	// complete snapshot under the provider's reasoning contract.
+	ProviderRaw json.RawMessage `json:"provider_raw,omitempty"`
 }
 
 // ResponseFormat specifies the format of the response.

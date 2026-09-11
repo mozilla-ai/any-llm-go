@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,6 +17,11 @@ import (
 	"github.com/mozilla-ai/any-llm-go/errors"
 	"github.com/mozilla-ai/any-llm-go/internal/testutil"
 	"github.com/mozilla-ai/any-llm-go/providers"
+)
+
+const (
+	imagePartType = "image_url"
+	testImageURL  = "https://example.com/image.png"
 )
 
 func TestNew(t *testing.T) {
@@ -66,6 +72,107 @@ func TestCapabilities(t *testing.T) {
 	require.False(t, caps.ListModels)
 }
 
+func TestConvertParamsNormalizesSystemMessages(t *testing.T) {
+	t.Parallel()
+
+	request, err := new(Provider).convertParams(providers.CompletionParams{
+		Model: "claude-opus-5",
+		Messages: []providers.Message{
+			{Role: providers.RoleSystem, Content: "global instruction"},
+			{Role: providers.RoleUser, Content: "start"},
+			{Role: providers.RoleSystem, Content: "instruction from this point"},
+		},
+	})
+	require.NoError(t, err)
+
+	body, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"model": "claude-opus-5",
+		"max_tokens": 4096,
+		"system": [{"type": "text", "text": "global instruction\ninstruction from this point"}],
+		"messages": [
+			{"role": "user", "content": [{"type": "text", "text": "start"}]}
+		]
+	}`, string(body))
+}
+
+func TestCompletionSerializesSupportedImageSources(t *testing.T) {
+	t.Parallel()
+
+	request, err := new(Provider).convertParams(providers.CompletionParams{
+		Model: "claude-opus-5",
+		Messages: []providers.Message{{
+			Role: providers.RoleUser,
+			Content: []providers.ContentPart{
+				{Type: imagePartType, ImageURL: new(providers.ImageURL{URL: testImageURL})},
+				{Type: imagePartType, ImageURL: new(providers.ImageURL{URL: "data:image/png;base64,aGVsbG8="})},
+				{Type: "text", Text: "Compare the images."},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	body, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"model": "claude-opus-5",
+		"max_tokens": 4096,
+		"messages": [{
+			"role": "user",
+			"content": [
+				{"type": "image", "source": {"type": "url", "url": "https://example.com/image.png"}},
+				{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aGVsbG8="}},
+				{"type": "text", "text": "Compare the images."}
+			]
+		}]
+	}`, string(body))
+}
+
+func TestCompletionRejectsInvalidImageContent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		image    *providers.ImageURL
+		sentinel error
+	}{
+		{
+			name:     "image without source",
+			image:    nil,
+			sentinel: errors.ErrInvalidRequest,
+		},
+		{
+			name:     "image detail",
+			image:    new(providers.ImageURL{URL: testImageURL, Detail: "high"}),
+			sentinel: errors.ErrUnsupportedParam,
+		},
+		{
+			name:     "data URL without base64 marker",
+			image:    new(providers.ImageURL{URL: "data:image/png,aGVsbG8="}),
+			sentinel: errors.ErrInvalidRequest,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := new(Provider).convertParams(providers.CompletionParams{
+				Model: "claude-opus-5",
+				Messages: []providers.Message{{
+					Role: providers.RoleUser,
+					Content: []providers.ContentPart{{
+						Type:     imagePartType,
+						ImageURL: testCase.image,
+					}},
+				}},
+			})
+			require.ErrorIs(t, err, testCase.sentinel)
+		})
+	}
+}
+
 func TestConvertMessages(t *testing.T) {
 	t.Parallel()
 
@@ -77,7 +184,8 @@ func TestConvertMessages(t *testing.T) {
 			{Role: providers.RoleUser, Content: "Hello"},
 		}
 
-		result, system := convertMessages(messages)
+		result, system, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Equal(t, "You are a helpful assistant.", system)
 		require.Len(t, result, 1) // Only user message.
@@ -92,7 +200,8 @@ func TestConvertMessages(t *testing.T) {
 			{Role: providers.RoleUser, Content: "Hello"},
 		}
 
-		result, system := convertMessages(messages)
+		result, system, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Equal(t, "First part.\nSecond part.", system)
 		require.Len(t, result, 1)
@@ -105,7 +214,8 @@ func TestConvertMessages(t *testing.T) {
 			{Role: providers.RoleUser, Content: "Hello"},
 		}
 
-		result, system := convertMessages(messages)
+		result, system, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Empty(t, system)
 		require.Len(t, result, 1)
@@ -119,7 +229,8 @@ func TestConvertMessages(t *testing.T) {
 			{Role: providers.RoleAssistant, Content: "Hi there!"},
 		}
 
-		result, system := convertMessages(messages)
+		result, system, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Empty(t, system)
 		require.Len(t, result, 2)
@@ -146,7 +257,8 @@ func TestConvertMessages(t *testing.T) {
 			},
 		}
 
-		result, _ := convertMessages(messages)
+		result, _, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Len(t, result, 2)
 	})
@@ -170,30 +282,52 @@ func TestConvertMessages(t *testing.T) {
 			{Role: providers.RoleTool, Content: "sunny, 22°C", ToolCallID: "call_123"},
 		}
 
-		result, _ := convertMessages(messages)
+		result, _, err := convertMessages(messages)
+		require.NoError(t, err)
 
 		require.Len(t, result, 3)
 	})
+
+	t.Run("preserves tool result errors", func(t *testing.T) {
+		t.Parallel()
+
+		message, err := convertToolMessage(providers.Message{
+			Role:              providers.RoleTool,
+			Content:           "weather service unavailable",
+			ToolCallID:        "call_123",
+			ToolResultIsError: true,
+		})
+		require.NoError(t, err)
+		body, err := json.Marshal(message)
+
+		require.NoError(t, err)
+		require.JSONEq(t, `{
+			"role": "user",
+			"content": [{
+				"type": "tool_result",
+				"tool_use_id": "call_123",
+				"content": [{"type": "text", "text": "weather service unavailable"}],
+				"is_error": true
+			}]
+		}`, string(body))
+	})
 }
 
-func TestConvertImagePart(t *testing.T) {
+func TestConvertMessagesRejectsUnrepresentableContent(t *testing.T) {
 	t.Parallel()
 
-	t.Run("converts URL image", func(t *testing.T) {
-		t.Parallel()
-
-		img := &providers.ImageURL{URL: "https://example.com/image.png"}
-		result := convertImagePart(img)
-		require.NotNil(t, result)
-	})
-
-	t.Run("converts base64 image", func(t *testing.T) {
-		t.Parallel()
-
-		img := &providers.ImageURL{URL: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}
-		result := convertImagePart(img)
-		require.NotNil(t, result)
-	})
+	for _, message := range []providers.Message{
+		{Role: "unknown", Content: "hello"},
+		{Role: providers.RoleTool, Content: "result"},
+		{Role: providers.RoleUser, Content: []providers.ContentPart{{Type: "audio"}}},
+		{Role: providers.RoleUser, Content: []providers.ContentPart{{Type: "image_url"}}},
+		{Role: providers.RoleAssistant, ToolCalls: []providers.ToolCall{
+			{ID: "call_1", Function: providers.FunctionCall{Name: "lookup", Arguments: "null"}},
+		}},
+	} {
+		_, _, err := convertMessages([]providers.Message{message})
+		require.Error(t, err, "%+v", message)
+	}
 }
 
 func TestConvertStopReason(t *testing.T) {
@@ -241,21 +375,10 @@ func TestConvertStopReason(t *testing.T) {
 	}
 }
 
-func TestNewStreamState(t *testing.T) {
-	t.Parallel()
-
-	state := newStreamState()
-	require.NotNil(t, state)
-	require.Equal(t, -1, state.currentToolIdx)
-	require.Empty(t, state.messageID)
-	require.Empty(t, state.model)
-	require.Nil(t, state.toolCalls)
-}
-
 func TestStreamStateHandleTextDelta(t *testing.T) {
 	t.Parallel()
 
-	state := newStreamState()
+	var state streamState
 	state.messageID = "msg_123"
 	state.model = "claude-3"
 
@@ -266,18 +389,13 @@ func TestStreamStateHandleTextDelta(t *testing.T) {
 	require.Equal(t, "chat.completion.chunk", chunk.Object)
 	require.Len(t, chunk.Choices, 1)
 	require.Equal(t, "Hello ", chunk.Choices[0].Delta.Content)
-
-	// Verify content is accumulated.
-	chunk2 := state.handleTextDelta("world!")
-	require.NotNil(t, chunk2)
-	require.Equal(t, "world!", chunk2.Choices[0].Delta.Content)
-	require.Equal(t, "Hello world!", state.content.String())
 }
 
 func TestStreamStateHandleThinkingDelta(t *testing.T) {
 	t.Parallel()
 
-	state := newStreamState()
+	var state streamState
+
 	state.messageID = "msg_123"
 	state.model = "claude-3"
 
@@ -287,9 +405,6 @@ func TestStreamStateHandleThinkingDelta(t *testing.T) {
 	require.Len(t, chunk.Choices, 1)
 	require.NotNil(t, chunk.Choices[0].Delta.Reasoning)
 	require.Equal(t, "Let me think...", chunk.Choices[0].Delta.Reasoning.Content)
-
-	// Verify reasoning is accumulated.
-	require.Equal(t, "Let me think...", state.reasoning.String())
 }
 
 func TestStreamStateHandleInputJSONDelta(t *testing.T) {
@@ -298,41 +413,27 @@ func TestStreamStateHandleInputJSONDelta(t *testing.T) {
 	t.Run("returns nil when no tool calls", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState()
-		chunk := state.handleInputJSONDelta(`{"key":`)
+		var state streamState
+
+		chunk := state.handleInputJSONDelta("", `{"key":`)
 		require.Nil(t, chunk)
 	})
 
-	t.Run("returns nil when tool index out of bounds", func(t *testing.T) {
+	t.Run("emits only the current fragment", func(t *testing.T) {
 		t.Parallel()
 
-		state := newStreamState()
-		state.currentToolIdx = 5 // Out of bounds.
-		state.toolCalls = []providers.ToolCall{
-			{ID: "call_1", Type: "function", Function: providers.FunctionCall{Name: "get_weather", Arguments: ""}},
-		}
-		chunk := state.handleInputJSONDelta(`{"key":`)
-		require.Nil(t, chunk)
-	})
+		var state streamState
 
-	t.Run("appends to current tool call arguments", func(t *testing.T) {
-		t.Parallel()
-
-		state := newStreamState()
 		state.messageID = "msg_123"
 		state.model = "claude-3"
-		state.currentToolIdx = 0
-		state.toolCalls = []providers.ToolCall{
-			{ID: "call_1", Type: "function", Function: providers.FunctionCall{Name: "get_weather", Arguments: ""}},
-		}
 
-		chunk := state.handleInputJSONDelta(`{"location":`)
+		chunk := state.handleInputJSONDelta("call_1", `{"location":`)
 		require.NotNil(t, chunk)
-		require.Equal(t, `{"location":`, state.toolCalls[0].Function.Arguments)
+		require.Equal(t, `{"location":`, chunk.Choices[0].Delta.ToolCalls[0].Function.Arguments)
 
-		chunk2 := state.handleInputJSONDelta(`"Paris"}`)
+		chunk2 := state.handleInputJSONDelta("call_1", `"Paris"}`)
 		require.NotNil(t, chunk2)
-		require.Equal(t, `{"location":"Paris"}`, state.toolCalls[0].Function.Arguments)
+		require.Equal(t, `"Paris"}`, chunk2.Choices[0].Delta.ToolCalls[0].Function.Arguments)
 	})
 }
 
@@ -340,60 +441,94 @@ func TestApplyThinking(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name              string
-		effort            providers.ReasoningEffort
-		initialMaxTokens  int64
-		expectedMaxTokens int64
-		expectThinking    bool
+		name             string
+		model            string
+		effort           providers.ReasoningEffort
+		maxTokens        int64
+		expectedThinking string
+		expectedEffort   string
+		expectedMax      int64
+		wantError        bool
 	}{
 		{
-			name:              "empty effort does nothing",
-			effort:            "",
-			initialMaxTokens:  1000,
-			expectedMaxTokens: 1000,
-			expectThinking:    false,
+			name:        "omitted effort remains omitted",
+			effort:      "",
+			expectedMax: 1000,
 		},
 		{
-			name:              "ReasoningEffortNone does nothing",
-			effort:            providers.ReasoningEffortNone,
-			initialMaxTokens:  1000,
-			expectedMaxTokens: 1000,
-			expectThinking:    false,
+			name:             "none disables thinking explicitly",
+			effort:           providers.ReasoningEffortNone,
+			expectedThinking: `{"type":"disabled"}`,
+			expectedMax:      1000,
 		},
 		{
-			name:              "invalid effort does nothing",
-			effort:            "invalid",
-			initialMaxTokens:  1000,
-			expectedMaxTokens: 1000,
-			expectThinking:    false,
+			name:        "auto preserves the model default",
+			effort:      providers.ReasoningEffortAuto,
+			expectedMax: 1000,
 		},
 		{
-			name:              "low effort increases tokens when insufficient",
-			effort:            providers.ReasoningEffortLow,
-			initialMaxTokens:  1000,
-			expectedMaxTokens: 2048, // budget=1024, min=2048
-			expectThinking:    true,
+			name:             "adaptive minimal maps to low effort and enables thinking",
+			model:            "claude-sonnet-4-6",
+			effort:           "minimal",
+			expectedThinking: `{"type":"adaptive"}`,
+			expectedEffort:   `{"effort":"low"}`,
+			expectedMax:      1000,
 		},
 		{
-			name:              "low effort preserves tokens when sufficient",
-			effort:            providers.ReasoningEffortLow,
-			initialMaxTokens:  10000,
-			expectedMaxTokens: 10000,
-			expectThinking:    true,
+			name:             "legacy low enables extended thinking",
+			model:            "claude-sonnet-4-5",
+			effort:           providers.ReasoningEffortLow,
+			expectedThinking: `{"type":"enabled","budget_tokens":1024}`,
+			expectedMax:      2048,
 		},
 		{
-			name:              "medium effort increases tokens when insufficient",
-			effort:            providers.ReasoningEffortMedium,
-			initialMaxTokens:  1000,
-			expectedMaxTokens: 8192, // budget=4096, min=8192
-			expectThinking:    true,
+			name:             "legacy medium preserves larger caller max",
+			model:            "claude-haiku-4-5-20251001",
+			effort:           providers.ReasoningEffortMedium,
+			maxTokens:        9000,
+			expectedThinking: `{"type":"enabled","budget_tokens":4096}`,
+			expectedMax:      9000,
 		},
 		{
-			name:              "high effort increases tokens when insufficient",
-			effort:            providers.ReasoningEffortHigh,
-			initialMaxTokens:  1000,
-			expectedMaxTokens: 32768, // budget=16384, min=32768
-			expectThinking:    true,
+			name:             "unknown alias retains legacy high behavior",
+			model:            "bedrock-custom-alias",
+			effort:           providers.ReasoningEffortHigh,
+			expectedThinking: `{"type":"enabled","budget_tokens":16384}`,
+			expectedMax:      32768,
+		},
+		{
+			name:             "adaptive xhigh remains xhigh",
+			model:            "claude-opus-4-7-20260901",
+			effort:           "xhigh",
+			expectedThinking: `{"type":"adaptive"}`,
+			expectedEffort:   `{"effort":"xhigh"}`,
+			expectedMax:      1000,
+		},
+		{
+			name:             "Opus 4.5 uses extended thinking with effort",
+			model:            "claude-opus-4-5",
+			effort:           providers.ReasoningEffortLow,
+			expectedThinking: `{"type":"enabled","budget_tokens":1024}`,
+			expectedEffort:   `{"effort":"low"}`,
+			expectedMax:      2048,
+		},
+		{
+			name:      "legacy max is rejected",
+			model:     "claude-sonnet-4-5",
+			effort:    "max",
+			wantError: true,
+		},
+		{
+			name:             "similar version is not classified as adaptive",
+			model:            "claude-sonnet-4-60",
+			effort:           providers.ReasoningEffortLow,
+			expectedThinking: `{"type":"enabled","budget_tokens":1024}`,
+			expectedMax:      2048,
+		},
+		{
+			name:      "unknown effort is rejected",
+			effort:    "invalid",
+			wantError: true,
 		},
 	}
 
@@ -401,11 +536,38 @@ func TestApplyThinking(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			req := &anthropic.MessageNewParams{MaxTokens: tc.initialMaxTokens}
-			applyThinking(req, tc.effort, tc.initialMaxTokens)
-			require.Equal(t, tc.expectedMaxTokens, req.MaxTokens)
-			if tc.expectThinking {
-				require.NotNil(t, req.Thinking)
+			req := new(anthropic.MessageNewParams)
+			req.MaxTokens = tc.maxTokens
+			if req.MaxTokens == 0 {
+				req.MaxTokens = 1000
+			}
+			err := applyThinking(req, tc.effort, tc.model)
+
+			if tc.wantError {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedMax, req.MaxTokens)
+
+			body, err := json.Marshal(req)
+			require.NoError(t, err)
+
+			var wire map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(body, &wire))
+
+			if tc.expectedThinking == "" {
+				require.NotContains(t, wire, "thinking")
+			} else {
+				require.JSONEq(t, tc.expectedThinking, string(wire["thinking"]))
+			}
+
+			if tc.expectedEffort == "" {
+				require.NotContains(t, wire, "output_config")
+			} else {
+				require.JSONEq(t, tc.expectedEffort, string(wire["output_config"]))
 			}
 		})
 	}
@@ -450,10 +612,12 @@ func TestConvertMessage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := convertMessage(tc.msg)
+			result, err := convertMessage(tc.msg)
 			if tc.expectNil {
+				require.Error(t, err)
 				require.Nil(t, result)
 			} else {
+				require.NoError(t, err)
 				require.NotNil(t, result)
 			}
 		})
@@ -463,69 +627,125 @@ func TestConvertMessage(t *testing.T) {
 func TestConvertToolCall(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name        string
-		toolCall    providers.ToolCall
-		expectInput bool
-	}{
-		{
-			name: "valid JSON arguments",
-			toolCall: providers.ToolCall{
-				ID:   "call_123",
-				Type: "function",
-				Function: providers.FunctionCall{
-					Name:      "get_weather",
-					Arguments: `{"location": "Paris"}`,
-				},
-			},
-			expectInput: true,
-		},
-		{
-			name: "invalid JSON arguments results in nil input",
-			toolCall: providers.ToolCall{
-				ID:   "call_456",
-				Type: "function",
-				Function: providers.FunctionCall{
-					Name:      "get_weather",
-					Arguments: `{invalid json`,
-				},
-			},
-			expectInput: false,
-		},
-		{
-			name: "empty arguments results in nil input",
-			toolCall: providers.ToolCall{
-				ID:   "call_789",
-				Type: "function",
-				Function: providers.FunctionCall{
-					Name:      "get_weather",
-					Arguments: "",
-				},
-			},
-			expectInput: false,
+	toolCall := providers.ToolCall{
+		ID:   "call_123",
+		Type: "function",
+		Function: providers.FunctionCall{
+			Name:      "get_weather",
+			Arguments: `{"location": "Paris"}`,
 		},
 	}
 
-	for _, tc := range tests {
+	result, err := convertToolCall(toolCall)
+	require.NoError(t, err)
+	require.NotNil(t, result.OfToolUse)
+	require.Equal(t, toolCall.ID, result.OfToolUse.ID)
+	require.Equal(t, toolCall.Function.Name, result.OfToolUse.Name)
+	require.Equal(t, "tool_use", string(result.OfToolUse.Type))
+	require.NotNil(t, result.OfToolUse.Input)
+}
+
+func TestParallelToolsWithoutExplicitChoice(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		parallel *bool
+		want     string
+		noTools  bool
+	}{
+		{name: "omitted", want: ""},
+		{name: "disabled", parallel: new(false), want: `{"type":"auto","disable_parallel_tool_use":true}`},
+		{name: "enabled", parallel: new(true), want: `{"type":"auto","disable_parallel_tool_use":false}`},
+		{name: "no tools", parallel: new(false), noTools: true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := convertToolCall(tc.toolCall)
-			require.NotNil(t, result.OfToolUse)
-			require.Equal(t, tc.toolCall.ID, result.OfToolUse.ID)
-			require.Equal(t, tc.toolCall.Function.Name, result.OfToolUse.Name)
-			require.Equal(t, "tool_use", string(result.OfToolUse.Type))
-			if tc.expectInput {
-				require.NotNil(t, result.OfToolUse.Input)
-			} else {
-				require.Nil(t, result.OfToolUse.Input)
+			tools := []providers.Tool{testutil.DateTool()}
+			if tc.noTools {
+				tools = nil
 			}
+
+			request, err := new(Provider).convertParams(providers.CompletionParams{
+				Tools: tools, ParallelToolCalls: tc.parallel,
+			})
+			require.NoError(t, err)
+			encoded, err := json.Marshal(request)
+			require.NoError(t, err)
+
+			var body map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(encoded, &body))
+
+			if tc.want == "" {
+				require.NotContains(t, body, "tool_choice")
+
+				return
+			}
+
+			require.JSONEq(t, tc.want, string(body["tool_choice"]))
 		})
 	}
 }
 
 func TestConvertTool(t *testing.T) {
 	t.Parallel()
+
+	t.Run("preserves complete schema on the wire", func(t *testing.T) {
+		t.Parallel()
+
+		const schema = `{"type":"object","properties":{},"required":[],"additionalProperties":false,` +
+			`"$defs":{"id":{"type":"integer"}},"x-future":9007199254740993}`
+
+		var parameters map[string]any
+
+		decoder := json.NewDecoder(strings.NewReader(schema))
+		decoder.UseNumber()
+		require.NoError(t, decoder.Decode(&parameters))
+		tool, err := convertTool(providers.Tool{
+			Type:     "function",
+			Function: providers.Function{Name: "lookup", Parameters: parameters},
+		})
+		require.NoError(t, err)
+		encoded, err := json.Marshal(tool)
+		require.NoError(t, err)
+
+		var wire struct {
+			InputSchema json.RawMessage `json:"input_schema"`
+		}
+		require.NoError(t, json.Unmarshal(encoded, &wire))
+		require.JSONEq(t, schema, string(wire.InputSchema))
+		require.Contains(t, string(wire.InputSchema), "9007199254740993")
+
+		unchanged, err := json.Marshal(parameters)
+		require.NoError(t, err)
+		require.JSONEq(t, schema, string(unchanged))
+	})
+
+	t.Run("defaults missing type without mutating parameters", func(t *testing.T) {
+		t.Parallel()
+
+		for _, parameters := range []map[string]any{nil, {"properties": map[string]any{}}} {
+			tool, err := convertTool(providers.Tool{Function: providers.Function{Parameters: parameters}})
+			require.NoError(t, err)
+			encoded, err := json.Marshal(tool.OfTool.InputSchema)
+			require.NoError(t, err)
+			require.Contains(t, string(encoded), `"type":"object"`)
+			require.NotContains(t, parameters, "type")
+		}
+	})
+
+	t.Run("reports non-JSON schema values", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := convertTool(providers.Tool{Function: providers.Function{
+			Name: "invalid", Parameters: map[string]any{"extension": make(chan int)},
+		}})
+
+		var unsupported *json.UnsupportedTypeError
+		require.ErrorAs(t, err, &unsupported)
+		require.Contains(t, err.Error(), "tool invalid: encode input schema")
+	})
 
 	t.Run("converts tool with properties and required fields", func(t *testing.T) {
 		t.Parallel()
@@ -537,20 +757,11 @@ func TestConvertTool(t *testing.T) {
 		require.NotNil(t, result.OfTool)
 		require.Equal(t, "get_weather", result.OfTool.Name)
 		require.Equal(t, "Get the current weather for a location.", result.OfTool.Description.Value)
-		require.Equal(t, "object", string(result.OfTool.InputSchema.Type))
-
-		// Verify properties are preserved.
-		props, ok := result.OfTool.InputSchema.Properties.(map[string]any)
-		require.True(t, ok, "properties should be a map")
-		require.Contains(t, props, "location")
-
-		locationProp, ok := props["location"].(map[string]any)
-		require.True(t, ok, "location property should be a map")
-		require.Equal(t, "string", locationProp["type"])
-		require.Equal(t, "The city name, e.g. 'Paris, France'", locationProp["description"])
-
-		// Verify required fields are preserved.
-		require.Contains(t, result.OfTool.InputSchema.Required, "location")
+		encoded, err := json.Marshal(result.OfTool.InputSchema)
+		require.NoError(t, err)
+		expected, err := json.Marshal(tool.Function.Parameters)
+		require.NoError(t, err)
+		require.JSONEq(t, string(expected), string(encoded))
 	})
 
 	t.Run("converts tool with multiple parameters", func(t *testing.T) {
@@ -562,66 +773,11 @@ func TestConvertTool(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result.OfTool)
 		require.Equal(t, "calculate", result.OfTool.Name)
-		require.Equal(t, "object", string(result.OfTool.InputSchema.Type))
-
-		// Verify all properties are preserved.
-		props, ok := result.OfTool.InputSchema.Properties.(map[string]any)
-		require.True(t, ok, "properties should be a map")
-		require.Contains(t, props, "a")
-		require.Contains(t, props, "b")
-		require.Contains(t, props, "operation")
-
-		// Verify property types.
-		aProp, ok := props["a"].(map[string]any)
-		require.True(t, ok)
-		require.Equal(t, "number", aProp["type"])
-
-		bProp, ok := props["b"].(map[string]any)
-		require.True(t, ok)
-		require.Equal(t, "number", bProp["type"])
-
-		opProp, ok := props["operation"].(map[string]any)
-		require.True(t, ok)
-		require.Equal(t, "string", opProp["type"])
-
-		// Verify enum values are preserved.
-		enum, ok := opProp["enum"].([]string)
-		require.True(t, ok, "enum should be a string slice")
-		require.ElementsMatch(t, []string{"add", "subtract", "multiply", "divide"}, enum)
-
-		// Verify all required fields are preserved.
-		require.Len(t, result.OfTool.InputSchema.Required, 3)
-		require.Contains(t, result.OfTool.InputSchema.Required, "a")
-		require.Contains(t, result.OfTool.InputSchema.Required, "b")
-		require.Contains(t, result.OfTool.InputSchema.Required, "operation")
-	})
-
-	t.Run("converts tool with no required fields", func(t *testing.T) {
-		t.Parallel()
-
-		tool := providers.Tool{
-			Type: "function",
-			Function: providers.Function{
-				Name:        "optional_params",
-				Description: "A tool with optional parameters.",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"optional_field": map[string]any{
-							"type":        "string",
-							"description": "An optional field",
-						},
-					},
-					// No "required" field.
-				},
-			},
-		}
-		result, err := convertTool(tool)
-
+		encoded, err := json.Marshal(result.OfTool.InputSchema)
 		require.NoError(t, err)
-		require.NotNil(t, result.OfTool)
-		require.Equal(t, "optional_params", result.OfTool.Name)
-		require.Empty(t, result.OfTool.InputSchema.Required)
+		expected, err := json.Marshal(tool.Function.Parameters)
+		require.NoError(t, err)
+		require.JSONEq(t, string(expected), string(encoded))
 	})
 
 	t.Run("converts tool with empty parameters", func(t *testing.T) {
@@ -633,7 +789,9 @@ func TestConvertTool(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result.OfTool)
 		require.Equal(t, "get_current_date", result.OfTool.Name)
-		require.Equal(t, "object", string(result.OfTool.InputSchema.Type))
+		encoded, err := json.Marshal(result.OfTool.InputSchema)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"type":"object","properties":{}}`, string(encoded))
 	})
 
 	t.Run("returns error for invalid required field type", func(t *testing.T) {
@@ -679,58 +837,6 @@ func TestConvertTool(t *testing.T) {
 		require.Contains(t, err.Error(), "mixed_required")
 		require.Contains(t, err.Error(), "element 1")
 	})
-}
-
-func TestThinkingBudget(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		effort   providers.ReasoningEffort
-		expected int64
-		ok       bool
-	}{
-		{
-			name:     "low effort",
-			effort:   providers.ReasoningEffortLow,
-			expected: 1024,
-			ok:       true,
-		},
-		{
-			name:     "medium effort",
-			effort:   providers.ReasoningEffortMedium,
-			expected: 4096,
-			ok:       true,
-		},
-		{
-			name:     "high effort",
-			effort:   providers.ReasoningEffortHigh,
-			expected: 16384,
-			ok:       true,
-		},
-		{
-			name:     "none effort",
-			effort:   providers.ReasoningEffortNone,
-			expected: 0,
-			ok:       false,
-		},
-		{
-			name:     "invalid effort",
-			effort:   "invalid",
-			expected: 0,
-			ok:       false,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			budget, ok := thinkingBudget(tc.effort)
-			require.Equal(t, tc.ok, ok)
-			require.Equal(t, tc.expected, budget)
-		})
-	}
 }
 
 func TestToStringSlice(t *testing.T) {
@@ -825,7 +931,7 @@ func TestIntegrationCompletion(t *testing.T) {
 	require.NotEmpty(t, resp.Choices[0].Message.Content)
 	require.Equal(t, providers.RoleAssistant, resp.Choices[0].Message.Role)
 	require.NotNil(t, resp.Usage)
-	require.Greater(t, resp.Usage.TotalTokens, 0)
+	require.Positive(t, resp.Usage.TotalTokens)
 }
 
 func TestIntegrationCompletionWithSystemMessage(t *testing.T) {
@@ -885,7 +991,7 @@ func TestIntegrationCompletionStream(t *testing.T) {
 	err = <-errs
 	require.NoError(t, err)
 
-	require.Greater(t, chunkCount, 0)
+	require.Positive(t, chunkCount)
 	require.NotEmpty(t, content.String())
 }
 
@@ -1062,8 +1168,8 @@ func TestIntegrationAgentLoopMultipleParams(t *testing.T) {
 	require.NoError(t, err, "tool arguments should be valid JSON")
 
 	// Verify the parameters - this catches "wrong order" bugs.
-	require.Equal(t, 15.0, args.A, "first operand should be 15")
-	require.Equal(t, 27.0, args.B, "second operand should be 27")
+	require.InDelta(t, 15.0, args.A, 0, "first operand should be 15")
+	require.InDelta(t, 27.0, args.B, 0, "second operand should be 27")
 	require.Equal(t, "add", args.Operation, "operation should be 'add'")
 
 	// Complete the agent loop with tool result.
@@ -1277,38 +1383,48 @@ func TestConvertError(t *testing.T) {
 			wantSentinel: errors.ErrProvider,
 		},
 		{
-			name:         "401 status becomes AuthenticationError",
-			err:          newTestAPIError(t, 401),
+			name:         "authentication type becomes AuthenticationError",
+			err:          newTestAPIError(t, http.StatusUnauthorized, "authentication_error"),
 			wantSentinel: errors.ErrAuthentication,
 		},
 		{
-			name:         "429 status becomes RateLimitError",
-			err:          newTestAPIError(t, 429),
+			name:         "rate-limit type becomes RateLimitError",
+			err:          newTestAPIError(t, http.StatusTooManyRequests, "rate_limit_error"),
 			wantSentinel: errors.ErrRateLimit,
 		},
 		{
-			name:         "404 status becomes ModelNotFoundError",
-			err:          newTestAPIError(t, 404),
-			wantSentinel: errors.ErrModelNotFound,
+			name:         "billing type becomes InsufficientFundsError",
+			err:          newTestAPIError(t, http.StatusPaymentRequired, "billing_error"),
+			wantSentinel: errors.ErrInsufficientFunds,
 		},
 		{
-			name:         "400 status becomes InvalidRequestError",
-			err:          newTestAPIError(t, 400),
-			wantSentinel: errors.ErrInvalidRequest,
+			name:         "invalid-request context message preserves ContextLengthError",
+			err:          newTestAPIError(t, http.StatusBadRequest, "invalid_request_error"),
+			wantSentinel: errors.ErrContextLength,
 		},
 		{
-			name:         "403 status becomes AuthenticationError",
-			err:          newTestAPIError(t, 403),
-			wantSentinel: errors.ErrAuthentication,
-		},
-		{
-			name:         "500 status becomes ProviderError",
-			err:          newTestAPIError(t, 500),
+			name:         "permission type remains ProviderError",
+			err:          newTestAPIError(t, http.StatusForbidden, "permission_error"),
 			wantSentinel: errors.ErrProvider,
 		},
 		{
-			name:         "502 status becomes ProviderError",
-			err:          newTestAPIError(t, 502),
+			name:         "not-found type preserves ModelNotFoundError",
+			err:          newTestAPIError(t, http.StatusNotFound, "not_found_error"),
+			wantSentinel: errors.ErrModelNotFound,
+		},
+		{
+			name:         "unknown 404 body preserves ModelNotFoundError",
+			err:          newTestAPIError(t, http.StatusNotFound, "future_error"),
+			wantSentinel: errors.ErrModelNotFound,
+		},
+		{
+			name:         "request-too-large status remains ProviderError",
+			err:          newTestAPIError(t, http.StatusRequestEntityTooLarge, "request_too_large"),
+			wantSentinel: errors.ErrProvider,
+		},
+		{
+			name:         "overloaded type becomes ProviderError",
+			err:          newTestAPIError(t, 529, "overloaded_error"),
 			wantSentinel: errors.ErrProvider,
 		},
 	}
@@ -1321,17 +1437,47 @@ func TestConvertError(t *testing.T) {
 			result := p.ConvertError(tc.err)
 
 			if tc.wantSentinel == nil {
-				require.Nil(t, result)
+				require.NoError(t, result)
 				return
 			}
 
-			require.NotNil(t, result)
-			require.True(t, stderrors.Is(result, tc.wantSentinel), "expected error to match %v", tc.wantSentinel)
+			require.Error(t, result)
+			require.ErrorIs(t, result, tc.wantSentinel, "expected error to match %v", tc.wantSentinel)
 
 			// Verify the provider name is set in the error message.
 			require.Contains(t, result.Error(), "["+providerName+"]")
 		})
 	}
+}
+
+func TestInvalidRequestClassificationPreservesContextLengthCompatibility(t *testing.T) {
+	t.Parallel()
+
+	for _, message := range []string{"context_length exceeded", "prompt is too long: 201 tokens > 200 maximum"} {
+		body := fmt.Sprintf(`{"type":"error","error":{"type":"invalid_request_error","message":%q}}`, message)
+
+		var apiErr anthropic.Error
+		require.NoError(t, json.Unmarshal([]byte(body), &apiErr))
+		apiErr.StatusCode = http.StatusBadRequest
+		converted := new(Provider).ConvertError(&apiErr)
+		require.ErrorIs(t, converted, errors.ErrContextLength)
+
+		var original *anthropic.Error
+		require.ErrorAs(t, converted, &original)
+		require.Same(t, &apiErr, original)
+	}
+}
+
+func TestConvertErrorPreservesRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	apiErr := newTestAPIError(t, http.StatusTooManyRequests, "rate_limit_error")
+	apiErr.Response.Header.Set("Retry-After", "17")
+
+	converted := new(Provider).ConvertError(apiErr)
+	rateLimitErr, ok := stderrors.AsType[*errors.RateLimitError](converted)
+	require.True(t, ok)
+	require.Equal(t, 17, rateLimitErr.RetryAfter)
 }
 
 func TestConvertParams_ResponseFormat(t *testing.T) {
@@ -1352,7 +1498,7 @@ func TestConvertParams_ResponseFormat(t *testing.T) {
 		return providers.CompletionParams{
 			Model: "claude-3-5-haiku-20241022",
 			Messages: []providers.Message{
-				{Role: providers.RoleUser, Content: []providers.ContentPart{{Text: "hello"}}},
+				{Role: providers.RoleUser, Content: []providers.ContentPart{{Type: "text", Text: "hello"}}},
 			},
 		}
 	}
@@ -1407,6 +1553,27 @@ func TestConvertParams_ResponseFormat(t *testing.T) {
 		require.Equal(t, schema, result.OutputConfig.Format.Schema)
 	})
 
+	t.Run("adaptive effort preserves the structured output format", func(t *testing.T) {
+		t.Parallel()
+
+		params := baseParams()
+		params.Model = "claude-sonnet-4-6"
+		params.ReasoningEffort = providers.ReasoningEffortHigh
+		params.ResponseFormat = &providers.ResponseFormat{
+			Type: responseFormatJSONSchema,
+			JSONSchema: &providers.JSONSchema{
+				Name:   "answer_schema",
+				Schema: schema,
+			},
+		}
+
+		result, err := p.convertParams(params)
+		require.NoError(t, err)
+		require.Equal(t, schema, result.OutputConfig.Format.Schema)
+		require.Equal(t, anthropic.OutputConfigEffortHigh, result.OutputConfig.Effort)
+		require.NotNil(t, result.Thinking.OfAdaptive)
+	})
+
 	t.Run("unsupported JSONSchema fields are not forwarded", func(t *testing.T) {
 		t.Parallel()
 
@@ -1449,16 +1616,24 @@ func TestConvertParams_ResponseFormat(t *testing.T) {
 	})
 }
 
-// newTestAPIError creates an Anthropic API error for testing.
-// Note: The raw JSON field is unexported, so we can only test status code based conversion.
-func newTestAPIError(t *testing.T, statusCode int) *anthropic.Error {
+func newTestAPIError(t *testing.T, statusCode int, errorType string) *anthropic.Error {
 	t.Helper()
 
-	testURL, _ := url.Parse("https://api.anthropic.com/v1/messages")
-	return &anthropic.Error{
-		StatusCode: statusCode,
-		RequestID:  "req_test123",
-		Request:    &http.Request{Method: "POST", URL: testURL},
-		Response:   &http.Response{StatusCode: statusCode},
-	}
+	var apiErr anthropic.Error
+
+	body := fmt.Sprintf(
+		`{"type":"error","error":{"type":%q,"message":"token and safety content"}}`,
+		errorType,
+	)
+	require.NoError(t, json.Unmarshal([]byte(body), &apiErr))
+
+	testURL, err := url.Parse("https://api.anthropic.com/v1/messages")
+	require.NoError(t, err)
+
+	apiErr.StatusCode = statusCode
+	apiErr.RequestID = "req_test123"
+	apiErr.Request = &http.Request{Method: http.MethodPost, URL: testURL}
+	apiErr.Response = &http.Response{StatusCode: statusCode, Header: make(http.Header)}
+
+	return &apiErr
 }

@@ -53,6 +53,11 @@ provider, err := anthropic.New(anyllm.WithAPIKey("sk-ant-..."))
 
 **Extended Thinking:**
 
+`ReasoningEffortNone` sends an explicit request to disable thinking. Models with
+[always-on thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)
+reject that request; the provider returns the API error. Leave the effort unset
+or use `ReasoningEffortAuto` to retain the model's default instead.
+
 Anthropic's Claude models support extended thinking for complex reasoning tasks:
 
 ```go
