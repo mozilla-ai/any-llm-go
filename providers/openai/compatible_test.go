@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -108,6 +109,19 @@ func TestNewCompatible(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, provider)
 	})
+
+	t.Run("adds provider context to base URL errors", func(t *testing.T) {
+		t.Setenv("TEST_BASE_URL", "://invalid")
+
+		provider, err := NewCompatible(CompatibleConfig{
+			Name:          "test-provider",
+			BaseURLEnvVar: "TEST_BASE_URL",
+			DefaultAPIKey: "test-key",
+		})
+		require.Nil(t, provider)
+		require.ErrorContains(t, err, "resolving test-provider base URL")
+		require.ErrorContains(t, err, "invalid base URL")
+	})
 }
 
 func TestNewCompatibleRequireBaseURL(t *testing.T) {
@@ -213,6 +227,20 @@ func TestCompatibleProviderCapabilities(t *testing.T) {
 	require.Equal(t, expectedCaps, caps)
 }
 
+func TestCompatibleProviderRejectsUnsupportedFileManagement(t *testing.T) {
+	t.Parallel()
+
+	provider, err := NewCompatible(CompatibleConfig{Name: "test-provider"})
+	require.NoError(t, err)
+
+	_, err = provider.UploadFile(t.Context(), providers.UploadFileParams{})
+	require.ErrorIs(t, err, errors.ErrUnsupported)
+
+	var unsupported *errors.UnsupportedOperationError
+	require.ErrorAs(t, err, &unsupported)
+	require.Equal(t, "upload file", unsupported.Operation)
+}
+
 func TestValidateCompletionParams(t *testing.T) {
 	t.Parallel()
 
@@ -315,62 +343,40 @@ func TestConvertResponseFormat(t *testing.T) {
 	})
 }
 
-func TestConvertEmbeddingParams(t *testing.T) {
+func TestConvertToolsPreservesStrict(t *testing.T) {
 	t.Parallel()
 
-	t.Run("converts string input", func(t *testing.T) {
-		t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		strict *bool
+	}{
+		{name: "omitted"},
+		{name: "false", strict: new(false)},
+		{name: "true", strict: new(true)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-		params := providers.EmbeddingParams{
-			Model: "text-embedding-3-small",
-			Input: "Hello, world!",
-		}
+			tools := convertTools([]providers.Tool{{
+				Type: "function",
+				Function: providers.Function{
+					Name:       "lookup",
+					Parameters: map[string]any{"type": "object"},
+					Strict:     tc.strict,
+				},
+			}})
+			body, err := json.Marshal(tools)
+			require.NoError(t, err)
 
-		result := convertEmbeddingParams(params)
-		require.NotNil(t, result.Input.OfString)
-	})
-
-	t.Run("converts string array input", func(t *testing.T) {
-		t.Parallel()
-
-		params := providers.EmbeddingParams{
-			Model: "text-embedding-3-small",
-			Input: []string{"Hello", "World"},
-		}
-
-		result := convertEmbeddingParams(params)
-		require.NotNil(t, result.Input.OfArrayOfStrings)
-	})
-
-	t.Run("handles unknown input type", func(t *testing.T) {
-		t.Parallel()
-
-		params := providers.EmbeddingParams{
-			Model: "text-embedding-3-small",
-			Input: 12345, // Unsupported type.
-		}
-
-		result := convertEmbeddingParams(params)
-		// Should convert to string representation.
-		require.NotNil(t, result.Input.OfString)
-	})
-
-	t.Run("includes optional parameters", func(t *testing.T) {
-		t.Parallel()
-
-		dims := 256
-		params := providers.EmbeddingParams{
-			Model:          "text-embedding-3-small",
-			Input:          "Hello",
-			EncodingFormat: "float",
-			Dimensions:     &dims,
-			User:           "test-user",
-		}
-
-		result := convertEmbeddingParams(params)
-		require.Equal(t, int64(256), result.Dimensions.Value)
-		require.Equal(t, "test-user", result.User.Value)
-	})
+			var wire []struct {
+				Function struct {
+					Strict *bool `json:"strict"`
+				} `json:"function"`
+			}
+			require.NoError(t, json.Unmarshal(body, &wire))
+			require.Equal(t, tc.strict, wire[0].Function.Strict)
+		})
+	}
 }
 
 func TestStreamingContextCancellation(t *testing.T) {
