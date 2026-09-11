@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"slices"
 
-	oaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/packages/param"
+	oaisdk "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
 
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/providers"
@@ -138,33 +138,16 @@ func preprocessParams(params providers.CompletionParams) providers.CompletionPar
 	}
 
 	// Return modified params with json_object format.
-	return providers.CompletionParams{
-		Model:             params.Model,
-		Messages:          modifiedMessages,
-		Temperature:       params.Temperature,
-		TopP:              params.TopP,
-		MaxTokens:         params.MaxTokens,
-		Stop:              params.Stop,
-		Stream:            params.Stream,
-		StreamOptions:     params.StreamOptions,
-		Tools:             params.Tools,
-		ToolChoice:        params.ToolChoice,
-		ParallelToolCalls: params.ParallelToolCalls,
-		ResponseFormat: &providers.ResponseFormat{
-			Type: responseFormatJSONObject,
-		},
-		ReasoningEffort: params.ReasoningEffort,
-		Seed:            params.Seed,
-		User:            params.User,
-		Extra:           params.Extra,
-	}
+	params.Messages = modifiedMessages
+	params.ResponseFormat = &providers.ResponseFormat{Type: responseFormatJSONObject}
+	return params
 }
 
 // transformRequest adjusts the OpenAI SDK request for DeepSeek's API.
 // DeepSeek uses max_tokens, not max_completion_tokens.
 // If both are set, MaxCompletionTokens takes precedence over MaxTokens.
 // See: https://api-docs.deepseek.com/api/create-chat-completion
-func transformRequest(req *oaisdk.ChatCompletionNewParams) {
+func transformRequest(_ providers.CompletionParams, req *oaisdk.ChatCompletionNewParams) error {
 	if req.MaxCompletionTokens.Valid() {
 		// Set max_tokens using max_completion_tokens value.
 		req.MaxTokens = oaisdk.Int(req.MaxCompletionTokens.Value)
@@ -172,6 +155,8 @@ func transformRequest(req *oaisdk.ChatCompletionNewParams) {
 
 	// Clear unsupported fields from the request.
 	req.MaxCompletionTokens = param.Opt[int64]{}
+
+	return nil
 }
 
 // preprocessMessagesForJSONSchema injects the JSON schema into the last user message.
@@ -223,14 +208,8 @@ Return the JSON object only, no other text, do not wrap it in `+"```json"+` or `
 	result := slices.Clone(messages)
 
 	// Update the message, preserving all fields from the original.
-	result[lastUserIdx] = providers.Message{
-		Content:    modifiedContent,
-		Name:       targetMsg.Name,
-		Reasoning:  targetMsg.Reasoning,
-		Role:       targetMsg.Role,
-		ToolCallID: targetMsg.ToolCallID,
-		ToolCalls:  targetMsg.ToolCalls,
-	}
+	targetMsg.Content = modifiedContent
+	result[lastUserIdx] = targetMsg
 
 	return result, true
 }

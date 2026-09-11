@@ -6,8 +6,8 @@ import (
 	"context"
 	"slices"
 
-	oaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/packages/param"
+	oaisdk "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
 
 	"github.com/mozilla-ai/any-llm-go/config"
 	"github.com/mozilla-ai/any-llm-go/providers"
@@ -145,7 +145,7 @@ func patchMessageParams(params providers.CompletionParams) providers.CompletionP
 // Mistral uses max_tokens (not max_completion_tokens) and does not accept user or reasoning_effort fields.
 // If both are set, MaxCompletionTokens takes precedence over MaxTokens.
 // See: https://docs.mistral.ai/api/#tag/chat/operation/chat_completion_v1_chat_completions_post
-func transformRequest(req *oaisdk.ChatCompletionNewParams) {
+func transformRequest(_ providers.CompletionParams, req *oaisdk.ChatCompletionNewParams) error {
 	if req.MaxCompletionTokens.Valid() {
 		// Set max_tokens using max_completion_tokens value.
 		req.MaxTokens = oaisdk.Int(req.MaxCompletionTokens.Value)
@@ -155,4 +155,6 @@ func transformRequest(req *oaisdk.ChatCompletionNewParams) {
 	req.MaxCompletionTokens = param.Opt[int64]{}
 	req.User = param.Opt[string]{}
 	req.ReasoningEffort = ""
+
+	return nil
 }

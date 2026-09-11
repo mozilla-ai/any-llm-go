@@ -3,6 +3,9 @@ package deepseek
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -352,6 +355,71 @@ func TestPreprocessMessagesForJSONSchema(t *testing.T) {
 		require.NotNil(t, result[0].Reasoning)
 		require.Equal(t, "thinking...", result[0].Reasoning.Content)
 	})
+}
+
+func TestCompletionPreservesLogprobsAndCallerParams(t *testing.T) {
+	t.Parallel()
+
+	for _, stream := range []bool{false, true} {
+		for _, schema := range []bool{false, true} {
+			t.Run(fmt.Sprintf("stream=%t/schema=%t", stream, schema), func(t *testing.T) {
+				t.Parallel()
+
+				requestBody := make(chan map[string]any, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var body map[string]any
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+					requestBody <- body
+					if stream {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, err := fmt.Fprint(w, "data: [DONE]\n\n")
+						require.NoError(t, err)
+						return
+					}
+
+					w.Header().Set("Content-Type", "application/json")
+					_, err := fmt.Fprint(
+						w,
+						`{"id":"completion","object":"chat.completion","model":"deepseek-chat","choices":[{"index":0,"message":{"role":"assistant","content":"{}"},"finish_reason":"stop"}]}`,
+					)
+					require.NoError(t, err)
+				}))
+				t.Cleanup(server.Close)
+
+				params := providers.CompletionParams{
+					Model:       "deepseek-chat",
+					Messages:    []providers.Message{{Role: providers.RoleUser, Content: "hello"}},
+					Logprobs:    new(true),
+					TopLogprobs: new(2),
+				}
+				if schema {
+					params.ResponseFormat = &providers.ResponseFormat{
+						Type:       responseFormatJSONSchema,
+						JSONSchema: &providers.JSONSchema{Schema: map[string]any{"type": "object"}},
+					}
+				}
+				original := params
+				original.Messages = append([]providers.Message(nil), params.Messages...)
+
+				provider, err := New(config.WithAPIKey("test-key"), config.WithBaseURL(server.URL))
+				require.NoError(t, err)
+				if stream {
+					chunks, errs := provider.CompletionStream(t.Context(), params)
+					for range chunks {
+					}
+					require.NoError(t, <-errs)
+				} else {
+					_, err = provider.Completion(t.Context(), params)
+					require.NoError(t, err)
+				}
+
+				body := <-requestBody
+				require.Equal(t, true, body["logprobs"])
+				require.Equal(t, float64(2), body["top_logprobs"])
+				require.Equal(t, original, params)
+			})
+		}
+	}
 }
 
 func TestCompletionSendsMaxTokensOnWire(t *testing.T) {

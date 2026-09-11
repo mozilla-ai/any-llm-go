@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mozilla-ai/any-llm-go/config"
@@ -32,6 +32,21 @@ func TestNew(t *testing.T) {
 		provider, err := New()
 		require.NoError(t, err)
 		require.NotNil(t, provider)
+	})
+
+	t.Run("reads OPENAI_BASE_URL", func(t *testing.T) {
+		serverURL, _ := testutil.FakeCompletionServer(t)
+		t.Setenv("OPENAI_API_KEY", "env-api-key")
+		t.Setenv("OPENAI_BASE_URL", serverURL)
+
+		provider, err := New()
+		require.NoError(t, err)
+
+		_, err = provider.Completion(t.Context(), providers.CompletionParams{
+			Model:    "test-model",
+			Messages: testutil.SimpleMessages(),
+		})
+		require.NoError(t, err)
 	})
 
 	t.Run("returns error when API key is missing", func(t *testing.T) {
@@ -65,6 +80,13 @@ func TestCapabilities(t *testing.T) {
 	require.True(t, caps.ListModels)
 }
 
+func checkedParams(t *testing.T, params providers.CompletionParams) openai.ChatCompletionNewParams {
+	t.Helper()
+	messages, err := validateCompletionParamsWith(params, convertOpenAIMessage)
+	require.NoError(t, err)
+	return convertParamsWith(params, messages)
+}
+
 func TestConvertParams(t *testing.T) {
 	t.Parallel()
 
@@ -77,9 +99,9 @@ func TestConvertParams(t *testing.T) {
 			},
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
-		require.Equal(t, "gpt-4", string(req.Model))
+		require.Equal(t, "gpt-4", req.Model)
 		require.Len(t, req.Messages, 1)
 	})
 
@@ -95,13 +117,13 @@ func TestConvertParams(t *testing.T) {
 			TopP:        &topP,
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
 		require.Equal(t, 0.7, req.Temperature.Value)
 		require.Equal(t, 0.9, req.TopP.Value)
 	})
 
-	t.Run("converts max_tokens", func(t *testing.T) {
+	t.Run("maps token limit to max_completion_tokens", func(t *testing.T) {
 		t.Parallel()
 
 		maxTokens := 100
@@ -111,8 +133,9 @@ func TestConvertParams(t *testing.T) {
 			MaxTokens: &maxTokens,
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
+		require.False(t, req.MaxTokens.Valid())
 		require.Equal(t, int64(100), req.MaxCompletionTokens.Value)
 	})
 
@@ -125,7 +148,7 @@ func TestConvertParams(t *testing.T) {
 			Stop:     []string{"END", "STOP"},
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
 		require.NotNil(t, req.Stop)
 	})
@@ -139,7 +162,7 @@ func TestConvertParams(t *testing.T) {
 			Tools:    []providers.Tool{testutil.WeatherTool()},
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
 		require.Len(t, req.Tools, 1)
 	})
@@ -154,7 +177,7 @@ func TestConvertParams(t *testing.T) {
 			ToolChoice: "auto",
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
 		require.NotNil(t, req.ToolChoice)
 	})
@@ -169,7 +192,7 @@ func TestConvertParams(t *testing.T) {
 			ToolChoice: "required",
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
 		require.NotNil(t, req.ToolChoice)
 	})
@@ -187,7 +210,7 @@ func TestConvertParams(t *testing.T) {
 			},
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
 		require.NotNil(t, req.ToolChoice)
 	})
@@ -203,23 +226,48 @@ func TestConvertParams(t *testing.T) {
 			},
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
 		require.NotNil(t, req.ResponseFormat)
 	})
 
-	t.Run("converts reasoning_effort", func(t *testing.T) {
+	t.Run("preserves current reasoning_effort values", func(t *testing.T) {
+		t.Parallel()
+
+		efforts := []providers.ReasoningEffort{
+			providers.ReasoningEffortNone,
+			providers.ReasoningEffortMinimal,
+			providers.ReasoningEffortLow,
+			providers.ReasoningEffortMedium,
+			providers.ReasoningEffortHigh,
+			providers.ReasoningEffortXHigh,
+			providers.ReasoningEffortMax,
+		}
+		for _, effort := range efforts {
+			params := providers.CompletionParams{
+				Model:           "test-model",
+				Messages:        testutil.SimpleMessages(),
+				ReasoningEffort: effort,
+			}
+
+			req := checkedParams(t, params)
+
+			require.Equal(t, string(effort), string(req.ReasoningEffort))
+		}
+	})
+
+	t.Run("omits automatic reasoning_effort sentinel", func(t *testing.T) {
 		t.Parallel()
 
 		params := providers.CompletionParams{
-			Model:           "o1-mini",
+			Model:           "test-model",
 			Messages:        testutil.SimpleMessages(),
-			ReasoningEffort: providers.ReasoningEffortHigh,
+			ReasoningEffort: providers.ReasoningEffortAuto,
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
-		require.NotNil(t, req.ReasoningEffort)
+		require.Empty(t, req.ReasoningEffort)
 	})
 
 	t.Run("converts seed", func(t *testing.T) {
@@ -232,7 +280,7 @@ func TestConvertParams(t *testing.T) {
 			Seed:     &seed,
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
 		require.Equal(t, int64(42), req.Seed.Value)
 	})
@@ -246,99 +294,9 @@ func TestConvertParams(t *testing.T) {
 			User:     "test-user",
 		}
 
-		req := convertParams(params)
+		req := checkedParams(t, params)
 
 		require.Equal(t, "test-user", req.User.Value)
-	})
-}
-
-func TestConvertMessage(t *testing.T) {
-	t.Parallel()
-
-	t.Run("converts system message", func(t *testing.T) {
-		t.Parallel()
-
-		msg := providers.Message{Role: providers.RoleSystem, Content: "You are helpful"}
-		result, err := convertMessage(msg)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-	})
-
-	t.Run("converts user message", func(t *testing.T) {
-		t.Parallel()
-
-		msg := providers.Message{Role: providers.RoleUser, Content: "Hello"}
-		result, err := convertMessage(msg)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-	})
-
-	t.Run("converts assistant message", func(t *testing.T) {
-		t.Parallel()
-
-		msg := providers.Message{Role: providers.RoleAssistant, Content: "Hi there!"}
-		result, err := convertMessage(msg)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-	})
-
-	t.Run("converts assistant message with tool calls", func(t *testing.T) {
-		t.Parallel()
-
-		msg := providers.Message{
-			Role:    providers.RoleAssistant,
-			Content: "",
-			ToolCalls: []providers.ToolCall{
-				{
-					ID:   "call_123",
-					Type: "function",
-					Function: providers.FunctionCall{
-						Name:      "get_weather",
-						Arguments: `{"location": "Paris"}`,
-					},
-				},
-			},
-		}
-		result, err := convertMessage(msg)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-	})
-
-	t.Run("converts tool result message", func(t *testing.T) {
-		t.Parallel()
-
-		msg := providers.Message{
-			Role:       providers.RoleTool,
-			Content:    "sunny, 22°C",
-			ToolCallID: "call_123",
-		}
-		result, err := convertMessage(msg)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-	})
-
-	t.Run("converts multimodal user message", func(t *testing.T) {
-		t.Parallel()
-
-		msg := providers.Message{
-			Role: providers.RoleUser,
-			Content: []providers.ContentPart{
-				{Type: "text", Text: "What's in this image?"},
-				{Type: "image_url", ImageURL: &providers.ImageURL{URL: "https://example.com/image.png"}},
-			},
-		}
-		result, err := convertMessage(msg)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-	})
-
-	t.Run("returns error for unknown role", func(t *testing.T) {
-		t.Parallel()
-
-		msg := providers.Message{Role: "unknown_role", Content: "Hello"}
-		_, err := convertMessage(msg)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "unknown message role")
 	})
 }
 
@@ -362,11 +320,16 @@ func TestConvertTools(t *testing.T) {
 		result := convertTools(tools)
 
 		require.Len(t, result, 1)
-		require.Equal(t, "get_weather", result[0].Function.Name)
-		require.Equal(t, "Get the current weather for a location.", result[0].Function.Description.Value)
+		require.NotNil(t, result[0].OfFunction)
+		require.Equal(t, "get_weather", result[0].OfFunction.Function.Name)
+		require.Equal(
+			t,
+			"Get the current weather for a location.",
+			result[0].OfFunction.Function.Description.Value,
+		)
 
 		// FunctionParameters is map[string]any - access directly.
-		params := result[0].Function.Parameters
+		params := result[0].OfFunction.Function.Parameters
 		require.Equal(t, "object", params["type"])
 
 		props, ok := params["properties"].(map[string]any)
@@ -391,10 +354,11 @@ func TestConvertTools(t *testing.T) {
 		result := convertTools(tools)
 
 		require.Len(t, result, 1)
-		require.Equal(t, "calculate", result[0].Function.Name)
+		require.NotNil(t, result[0].OfFunction)
+		require.Equal(t, "calculate", result[0].OfFunction.Function.Name)
 
 		// FunctionParameters is map[string]any - access directly.
-		params := result[0].Function.Parameters
+		params := result[0].OfFunction.Function.Parameters
 
 		props, ok := params["properties"].(map[string]any)
 		require.True(t, ok)
@@ -436,8 +400,10 @@ func TestConvertTools(t *testing.T) {
 		result := convertTools(tools)
 
 		require.Len(t, result, 2)
-		require.Equal(t, "get_weather", result[0].Function.Name)
-		require.Equal(t, "get_current_date", result[1].Function.Name)
+		require.NotNil(t, result[0].OfFunction)
+		require.NotNil(t, result[1].OfFunction)
+		require.Equal(t, "get_weather", result[0].OfFunction.Function.Name)
+		require.Equal(t, "get_current_date", result[1].OfFunction.Function.Name)
 	})
 }
 
@@ -468,6 +434,30 @@ func TestCompletionSendsMaxCompletionTokensOnWire(t *testing.T) {
 	require.Contains(t, body, "max_completion_tokens")
 	require.NotContains(t, body, "max_tokens")
 	require.Equal(t, float64(1024), body["max_completion_tokens"])
+}
+
+func TestCompletionPreservesReasoningEffortOnWire(t *testing.T) {
+	t.Parallel()
+
+	serverURL, capturedBody := testutil.FakeCompletionServer(t)
+
+	provider, err := New(
+		config.WithAPIKey("test-key"),
+		config.WithBaseURL(serverURL),
+	)
+	require.NoError(t, err)
+
+	params := providers.CompletionParams{
+		Model:           "test-model",
+		Messages:        testutil.SimpleMessages(),
+		ReasoningEffort: providers.ReasoningEffortNone,
+	}
+
+	_, err = provider.Completion(context.Background(), params)
+	require.NoError(t, err)
+
+	body := capturedBody()
+	require.Equal(t, "none", body["reasoning_effort"])
 }
 
 func TestCompletionStreamSendsMaxCompletionTokensOnWire(t *testing.T) {
@@ -530,7 +520,7 @@ func TestIntegrationCompletion(t *testing.T) {
 	require.NotEmpty(t, resp.Choices[0].Message.Content)
 	require.Equal(t, providers.RoleAssistant, resp.Choices[0].Message.Role)
 	require.NotNil(t, resp.Usage)
-	require.Greater(t, resp.Usage.TotalTokens, 0)
+	require.Positive(t, resp.Usage.TotalTokens)
 }
 
 func TestIntegrationCompletionStream(t *testing.T) {
@@ -566,7 +556,7 @@ func TestIntegrationCompletionStream(t *testing.T) {
 	err = <-errs
 	require.NoError(t, err)
 
-	require.Greater(t, chunkCount, 0)
+	require.Positive(t, chunkCount)
 	require.NotEmpty(t, content.String())
 }
 
@@ -788,7 +778,7 @@ func TestIntegrationEmbedding(t *testing.T) {
 
 	require.Equal(t, "list", resp.Object)
 	require.Len(t, resp.Data, 1)
-	require.Greater(t, len(resp.Data[0].Embedding), 0)
+	require.NotEmpty(t, resp.Data[0].Embedding)
 	require.NotNil(t, resp.Usage)
 }
 
@@ -807,7 +797,7 @@ func TestIntegrationListModels(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, "list", resp.Object)
-	require.Greater(t, len(resp.Data), 0)
+	require.NotEmpty(t, resp.Data)
 
 	// Check that some expected models are present.
 	modelIDs := make([]string, len(resp.Data))
@@ -929,12 +919,12 @@ func TestConvertError(t *testing.T) {
 			result := p.ConvertError(tc.err)
 
 			if tc.wantSentinel == nil {
-				require.Nil(t, result)
+				require.NoError(t, result)
 				return
 			}
 
-			require.NotNil(t, result)
-			require.True(t, stderrors.Is(result, tc.wantSentinel), "expected error to match %v", tc.wantSentinel)
+			require.Error(t, result)
+			require.ErrorIs(t, result, tc.wantSentinel)
 
 			// Verify the provider name is set in the error message.
 			require.Contains(t, result.Error(), "["+providerName+"]")
@@ -952,7 +942,7 @@ func newTestAPIError(t *testing.T, statusCode int, code string) *openai.Error {
 		Code:       code,
 		Message:    "test error message",
 		Type:       "error",
-		Request:    &http.Request{Method: "POST", URL: testURL},
+		Request:    &http.Request{Method: http.MethodPost, URL: testURL},
 		Response:   &http.Response{StatusCode: statusCode},
 	}
 }
