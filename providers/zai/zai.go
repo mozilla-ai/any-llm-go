@@ -372,7 +372,7 @@ func (p *Provider) handleErrorResponse(resp *http.Response) error {
 	case 400:
 		return errors.NewInvalidRequestError(providerName, fmt.Errorf("%s", msg))
 	default:
-		return errors.NewProviderError(providerName, fmt.Errorf("%s", msg))
+		return errors.NewProviderErrorWithStatus(providerName, resp.StatusCode, fmt.Errorf("%s", msg))
 	}
 }
 

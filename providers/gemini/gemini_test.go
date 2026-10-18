@@ -1598,3 +1598,14 @@ func TestIntegrationListModels(t *testing.T) {
 		require.Equal(t, "google", model.OwnedBy)
 	}
 }
+
+func TestConvertErrorKeepsStatus(t *testing.T) {
+	t.Parallel()
+
+	p := &Provider{}
+	for _, status := range []int{422, 500, 503} {
+		var pe *errors.ProviderError
+		require.True(t, stderrors.As(p.ConvertError(&genai.APIError{Code: status, Message: "boom"}), &pe))
+		require.Equal(t, status, pe.StatusCode)
+	}
+}

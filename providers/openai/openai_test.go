@@ -956,3 +956,18 @@ func newTestAPIError(t *testing.T, statusCode int, code string) *openai.Error {
 		Response:   &http.Response{StatusCode: statusCode},
 	}
 }
+
+func TestConvertErrorKeepsStatus(t *testing.T) {
+	t.Parallel()
+
+	p := &CompatibleProvider{compatibleConfig: CompatibleConfig{Name: providerName}}
+	for _, status := range []int{422, 500, 503} {
+		var pe *errors.ProviderError
+		require.True(t, stderrors.As(p.ConvertError(newTestAPIError(t, status, "unknown")), &pe))
+		require.Equal(t, status, pe.StatusCode)
+	}
+
+	var pe *errors.ProviderError
+	require.True(t, stderrors.As(p.ConvertError(stderrors.New("network timeout")), &pe))
+	require.Zero(t, pe.StatusCode)
+}

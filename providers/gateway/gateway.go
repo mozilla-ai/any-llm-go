@@ -707,7 +707,7 @@ func (p *Provider) handleRerankErrorResponse(resp *http.Response) error {
 	case http.StatusGatewayTimeout:
 		return &TimeoutError{BaseError: errors.New(errCodeTimeout, providerName, fmt.Errorf("%s", msg), ErrTimeout)}
 	default:
-		return errors.NewProviderError(providerName, fmt.Errorf("%s", msg))
+		return errors.NewProviderErrorWithStatus(providerName, resp.StatusCode, fmt.Errorf("%s", msg))
 	}
 }
 
@@ -994,7 +994,7 @@ func (p *Provider) handleBatchError(resp *http.Response, batchID string) error {
 		return errors.NewAuthenticationError(providerName,
 			fmt.Errorf("unauthorized: %s", detail.message()))
 	case http.StatusNotFound:
-		return errors.NewProviderError(providerName,
+		return errors.NewProviderErrorWithStatus(providerName, resp.StatusCode,
 			stderrors.New("this gateway does not support batch operations; upgrade your gateway"))
 	case http.StatusConflict:
 		// For 409 the Status field matters (it tells the caller why the
@@ -1007,16 +1007,16 @@ func (p *Provider) handleBatchError(resp *http.Response, batchID string) error {
 		}
 		return newBatchNotCompleteError(batchID, detail.Status, detail.toError())
 	case http.StatusUnprocessableEntity:
-		return errors.NewProviderError(providerName,
+		return errors.NewProviderErrorWithStatus(providerName, resp.StatusCode,
 			fmt.Errorf("unprocessable request: %s", detail.message()))
 	case http.StatusTooManyRequests:
 		return errors.NewRateLimitError(providerName,
 			fmt.Errorf("rate limit: %s", detail.message()))
 	case http.StatusBadGateway:
-		return errors.NewProviderError(providerName,
+		return errors.NewProviderErrorWithStatus(providerName, resp.StatusCode,
 			fmt.Errorf("upstream provider error: %s", detail.message()))
 	default:
-		return errors.NewProviderError(providerName,
+		return errors.NewProviderErrorWithStatus(providerName, resp.StatusCode,
 			fmt.Errorf("HTTP %d: %s", resp.StatusCode, detail.message()))
 	}
 }

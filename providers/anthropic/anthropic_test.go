@@ -1462,3 +1462,14 @@ func newTestAPIError(t *testing.T, statusCode int) *anthropic.Error {
 		Response:   &http.Response{StatusCode: statusCode},
 	}
 }
+
+func TestConvertErrorKeepsStatus(t *testing.T) {
+	t.Parallel()
+
+	p := &Provider{}
+	for _, status := range []int{422, 500, 529} {
+		var pe *errors.ProviderError
+		require.True(t, stderrors.As(p.ConvertError(newTestAPIError(t, status)), &pe))
+		require.Equal(t, status, pe.StatusCode)
+	}
+}

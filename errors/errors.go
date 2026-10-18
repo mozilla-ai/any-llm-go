@@ -258,6 +258,15 @@ func NewProviderError(provider string, err error) *ProviderError {
 	}
 }
 
+// NewProviderErrorWithStatus creates a new ProviderError carrying the HTTP
+// status code the provider returned, so callers can tell a server error, worth
+// retrying, from a client error that won't succeed on retry.
+func NewProviderErrorWithStatus(provider string, statusCode int, err error) *ProviderError {
+	e := NewProviderError(provider, err)
+	e.StatusCode = statusCode
+	return e
+}
+
 // NewMissingAPIKeyError creates a new MissingAPIKeyError.
 func NewMissingAPIKeyError(provider string, envVar string) *MissingAPIKeyError {
 	return &MissingAPIKeyError{

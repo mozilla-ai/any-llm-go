@@ -228,6 +228,8 @@ func (p *Provider) ConvertError(err error) error {
 				return errors.NewContextLengthError(providerName, err)
 			}
 			return errors.NewInvalidRequestError(providerName, err)
+		default:
+			return errors.NewProviderErrorWithStatus(providerName, statusErr.StatusCode, err)
 		}
 	}
 

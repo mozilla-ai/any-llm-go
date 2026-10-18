@@ -267,7 +267,7 @@ func (p *Provider) ConvertError(err error) error {
 		}
 		return errors.NewInvalidRequestError(providerName, err)
 	default:
-		return errors.NewProviderError(providerName, err)
+		return errors.NewProviderErrorWithStatus(providerName, apiErr.Code, err)
 	}
 }
 

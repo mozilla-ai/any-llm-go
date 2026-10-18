@@ -322,7 +322,7 @@ func convertAPIError(name string, apiErr *openai.Error, originalErr error) error
 		return errors.NewRateLimitError(name, originalErr)
 	}
 
-	return errors.NewProviderError(name, originalErr)
+	return errors.NewProviderErrorWithStatus(name, apiErr.StatusCode, originalErr)
 }
 
 // convertAssistantMessage converts an assistant message to OpenAI format.

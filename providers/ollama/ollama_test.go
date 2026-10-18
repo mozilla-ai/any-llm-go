@@ -873,3 +873,18 @@ func skipTestIfOllamaUnavailable(t *testing.T, model string) {
 
 	t.Skipf("Ollama model %q not available (install with: ollama pull %s)", model, model)
 }
+
+func TestConvertErrorKeepsStatus(t *testing.T) {
+	t.Parallel()
+
+	p := &Provider{}
+	for _, status := range []int{422, 500, 503} {
+		var pe *errors.ProviderError
+		require.True(t, stderrors.As(p.ConvertError(api.StatusError{StatusCode: status, ErrorMessage: "boom"}), &pe))
+		require.Equal(t, status, pe.StatusCode)
+	}
+
+	var pe *errors.ProviderError
+	require.True(t, stderrors.As(p.ConvertError(stderrors.New("connection refused")), &pe))
+	require.Zero(t, pe.StatusCode)
+}

@@ -309,3 +309,16 @@ func TestErrorAs(t *testing.T) {
 		require.True(t, stderrors.Is(err, ErrUnsupported))
 	})
 }
+
+func TestNewProviderErrorWithStatus(t *testing.T) {
+	t.Parallel()
+
+	originalErr := stderrors.New("bad gateway")
+	err := NewProviderErrorWithStatus("openai", 502, originalErr)
+
+	require.Equal(t, 502, err.StatusCode)
+	require.True(t, stderrors.Is(err, ErrProvider))
+	require.True(t, stderrors.Is(err, originalErr))
+	require.Equal(t, "[openai] provider_error: bad gateway", err.Error())
+	require.Equal(t, 0, NewProviderError("openai", originalErr).StatusCode)
+}

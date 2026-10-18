@@ -87,6 +87,10 @@ if errors.As(err, &ctxErr) {
 
 ### ProviderError
 
+`StatusCode` is the HTTP status the provider returned, or 0 when the request
+got no HTTP response, such as a network error. A 5xx is worth retrying; a
+4xx usually isn't.
+
 ```go
 var providerErr *anyllm.ProviderError
 if errors.As(err, &providerErr) {

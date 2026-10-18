@@ -773,6 +773,6 @@ func (p *Provider) ConvertError(err error) error {
 		}
 		return errors.NewAuthenticationError(providerName, err)
 	default:
-		return errors.NewProviderError(providerName, err)
+		return errors.NewProviderErrorWithStatus(providerName, apiErr.StatusCode, err)
 	}
 }
