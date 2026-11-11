@@ -2,6 +2,8 @@ package ollama
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"strings"
@@ -199,6 +201,11 @@ func TestExtractImages(t *testing.T) {
 	t.Run("extracts base64 image", func(t *testing.T) {
 		t.Parallel()
 
+		// api.ImageData is a []byte that the Ollama SDK re-encodes as
+		// base64 on the wire, so extractImages must return the decoded
+		// image bytes, not the base64 text of the data URL.
+		raw := []byte("\xff\xd8\xff\xe0JFIF") // JPEG header
+
 		msg := providers.Message{
 			Role: providers.RoleUser,
 			Content: []providers.ContentPart{
@@ -206,7 +213,7 @@ func TestExtractImages(t *testing.T) {
 				{
 					Type: "image_url",
 					ImageURL: &providers.ImageURL{
-						URL: "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+						URL: "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(raw),
 					},
 				},
 			},
@@ -215,7 +222,54 @@ func TestExtractImages(t *testing.T) {
 		images := extractImages(msg)
 
 		require.Len(t, images, 1)
-		require.Equal(t, "/9j/4AAQSkZJRg==", string(images[0]))
+		require.Equal(t, raw, []byte(images[0]))
+	})
+
+	t.Run("does not double-encode on the wire", func(t *testing.T) {
+		t.Parallel()
+
+		// The exact image bytes must reach Ollama. Because api.ImageData
+		// is marshalled to base64 by the SDK, storing the decoded bytes
+		// yields a single base64 layer on the wire; storing the base64
+		// text would yield two, and Ollama would receive text, not an
+		// image.
+		raw := []byte("\x89PNG\r\n\x1a\n")
+		dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw)
+
+		msg := providers.Message{
+			Role: providers.RoleUser,
+			Content: []providers.ContentPart{
+				{Type: "image_url", ImageURL: &providers.ImageURL{URL: dataURL}},
+			},
+		}
+
+		wire, err := json.Marshal(api.Message{Images: extractImages(msg)})
+		require.NoError(t, err)
+
+		var decoded struct {
+			Images []string `json:"images"`
+		}
+		require.NoError(t, json.Unmarshal(wire, &decoded))
+		require.Len(t, decoded.Images, 1)
+		require.Equal(t, base64.StdEncoding.EncodeToString(raw), decoded.Images[0])
+	})
+
+	t.Run("skips invalid base64", func(t *testing.T) {
+		t.Parallel()
+
+		msg := providers.Message{
+			Role: providers.RoleUser,
+			Content: []providers.ContentPart{
+				{
+					Type: "image_url",
+					ImageURL: &providers.ImageURL{
+						URL: "data:image/png;base64,not valid base64!!",
+					},
+				},
+			},
+		}
+
+		require.Empty(t, extractImages(msg))
 	})
 
 	t.Run("ignores non-data URLs", func(t *testing.T) {
