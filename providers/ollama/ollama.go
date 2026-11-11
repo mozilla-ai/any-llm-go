@@ -4,6 +4,7 @@ package ollama
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	stderrors "errors"
@@ -690,7 +691,11 @@ func convertUserMessage(msg providers.Message) *api.Message {
 	return ollamaMsg
 }
 
-// extractImages extracts base64 image data from a multi-modal message.
+// extractImages returns the raw image bytes of a multi-modal message,
+// decoding the base64 payload of each data URL. api.ImageData is a []byte
+// that the Ollama SDK re-encodes as base64 on the wire, so returning the
+// decoded bytes (not the base64 text) avoids encoding the image a second
+// time, which would make Ollama receive text instead of an image.
 func extractImages(msg providers.Message) []api.ImageData {
 	var images []api.ImageData
 
@@ -710,7 +715,12 @@ func extractImages(msg providers.Message) []api.ImageData {
 			continue
 		}
 
-		images = append(images, api.ImageData(parts[1]))
+		data, err := base64.StdEncoding.DecodeString(parts[1])
+		if err != nil {
+			continue
+		}
+
+		images = append(images, api.ImageData(data))
 	}
 
 	return images
