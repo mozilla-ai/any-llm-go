@@ -908,6 +908,16 @@ func TestConvertErrorNilPassthrough(t *testing.T) {
 	require.Nil(t, provider.ConvertError(nil))
 }
 
+func TestConvertErrorContextPassthrough(t *testing.T) {
+	t.Parallel()
+
+	provider, err := New(config.WithBaseURL("http://localhost:8000/v1"))
+	require.NoError(t, err)
+
+	require.Equal(t, context.Canceled, provider.ConvertError(context.Canceled))
+	require.Equal(t, context.DeadlineExceeded, provider.ConvertError(context.DeadlineExceeded))
+}
+
 // --- Batch tests ---
 
 func TestCreateBatchSuccess(t *testing.T) {
