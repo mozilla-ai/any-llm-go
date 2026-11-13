@@ -451,6 +451,11 @@ func (p *Provider) ConvertError(err error) error {
 		return nil
 	}
 
+	// Caller cancellation is not a provider error.
+	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+
 	// Check for gateway-specific HTTP status codes.
 	var apiErr *openai.Error
 	if stderrors.As(err, &apiErr) {
