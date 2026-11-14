@@ -80,6 +80,7 @@ const (
 // Content part constants.
 const (
 	contentTypeImageURL = "image_url"
+	contentTypeText     = "text"
 	dataImagePrefix     = "data:image/"
 )
 
@@ -679,15 +680,27 @@ func convertUserMessage(msg providers.Message) *api.Message {
 		Content: msg.ContentString(),
 	}
 
-	// Handle multi-modal messages with images.
+	// Multi-modal content keeps its text in parts, not in Content.
+	// Ollama carries that text in Content and the images separately.
 	if msg.IsMultiModal() {
-		images := extractImages(msg)
-		if len(images) > 0 {
+		ollamaMsg.Content = extractText(msg)
+		if images := extractImages(msg); len(images) > 0 {
 			ollamaMsg.Images = images
 		}
 	}
 
 	return ollamaMsg
+}
+
+// extractText joins the text parts of a multi-modal message.
+func extractText(msg providers.Message) string {
+	var b strings.Builder
+	for _, part := range msg.ContentParts() {
+		if part.Type == contentTypeText {
+			b.WriteString(part.Text)
+		}
+	}
+	return b.String()
 }
 
 // extractImages extracts base64 image data from a multi-modal message.
