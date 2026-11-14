@@ -2,6 +2,7 @@ package ollama
 
 import (
 	"context"
+	"encoding/base64"
 	stderrors "errors"
 	"fmt"
 	"strings"
@@ -122,6 +123,27 @@ func TestConvertMessages(t *testing.T) {
 
 		require.Len(t, result, 1)
 		require.Equal(t, providers.RoleUser, result[0].Role) // Ollama uses user for tool results.
+	})
+
+	t.Run("keeps text and image of a multi-modal user message", func(t *testing.T) {
+		t.Parallel()
+
+		messages := []providers.Message{{
+			Role: providers.RoleUser,
+			Content: []providers.ContentPart{
+				{Type: "text", Text: "What is in this photo?"},
+				{Type: "image_url", ImageURL: &providers.ImageURL{
+					URL: "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("img")),
+				}},
+			},
+		}}
+
+		result := convertMessages(messages)
+
+		require.Len(t, result, 1)
+		require.Equal(t, providers.RoleUser, result[0].Role)
+		require.Equal(t, "What is in this photo?", result[0].Content)
+		require.Len(t, result[0].Images, 1)
 	})
 
 	t.Run("converts assistant message with tool calls", func(t *testing.T) {
