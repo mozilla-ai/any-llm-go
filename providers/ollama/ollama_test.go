@@ -271,6 +271,29 @@ func TestConvertTools(t *testing.T) {
 	require.Contains(t, result[0].Function.Parameters.Required, "location")
 }
 
+func TestConvertToolsRequiredStringSlice(t *testing.T) {
+	t.Parallel()
+
+	// A schema built in Go uses []string for required, not []any.
+	tools := []providers.Tool{
+		{
+			Type: toolTypeFunction,
+			Function: providers.Function{
+				Name: "get_weather",
+				Parameters: map[string]any{
+					schemaKeyType:     schemaTypeObject,
+					schemaKeyRequired: []string{"location"},
+				},
+			},
+		},
+	}
+
+	result := convertTools(tools)
+
+	require.Len(t, result, 1)
+	require.Equal(t, []string{"location"}, result[0].Function.Parameters.Required)
+}
+
 func TestConvertToolCalls(t *testing.T) {
 	t.Parallel()
 
