@@ -614,10 +614,13 @@ func convertToolCalls(toolCalls []api.ToolCall) []providers.ToolCall {
 
 // convertToolMessage converts a tool message to Ollama format.
 func convertToolMessage(msg providers.Message) *api.Message {
-	// Ollama uses user role for tool results.
+	// Ollama has a dedicated tool role. ToolName and ToolCallID let the
+	// model tie the result back to the call it made.
 	return &api.Message{
-		Role:    providers.RoleUser,
-		Content: msg.ContentString(),
+		Role:       providers.RoleTool,
+		Content:    msg.ContentString(),
+		ToolName:   msg.Name,
+		ToolCallID: msg.ToolCallID,
 	}
 }
 

@@ -111,17 +111,20 @@ func TestConvertMessages(t *testing.T) {
 		require.Equal(t, "Hi there!", result[0].Content)
 	})
 
-	t.Run("converts tool message to user message", func(t *testing.T) {
+	t.Run("converts tool message with tool role", func(t *testing.T) {
 		t.Parallel()
 
 		messages := []providers.Message{
-			{Role: providers.RoleTool, Content: "sunny, 22°C", ToolCallID: "call_123"},
+			{Role: providers.RoleTool, Name: "meteo", Content: "sunny, 22°C", ToolCallID: "call_123"},
 		}
 
 		result := convertMessages(messages)
 
 		require.Len(t, result, 1)
-		require.Equal(t, providers.RoleUser, result[0].Role) // Ollama uses user for tool results.
+		require.Equal(t, providers.RoleTool, result[0].Role)
+		require.Equal(t, "sunny, 22°C", result[0].Content)
+		require.Equal(t, "meteo", result[0].ToolName)
+		require.Equal(t, "call_123", result[0].ToolCallID)
 	})
 
 	t.Run("converts assistant message with tool calls", func(t *testing.T) {
@@ -361,9 +364,9 @@ func TestConvertMessage(t *testing.T) {
 			expectedRole: providers.RoleSystem,
 		},
 		{
-			name:         "tool message becomes user",
+			name:         "tool message",
 			msg:          providers.Message{Role: providers.RoleTool, Content: "result", ToolCallID: "123"},
-			expectedRole: providers.RoleUser,
+			expectedRole: providers.RoleTool,
 		},
 	}
 
