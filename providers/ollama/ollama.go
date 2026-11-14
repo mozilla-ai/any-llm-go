@@ -648,8 +648,12 @@ func convertTools(tools []providers.Tool) api.Tools {
 			params.Properties = propsMap
 		}
 
-		// Convert required fields.
-		if req, ok := tool.Function.Parameters[schemaKeyRequired].([]any); ok {
+		// Convert required fields. Accept both []string (a schema built
+		// in Go) and []any (a schema decoded from JSON).
+		switch req := tool.Function.Parameters[schemaKeyRequired].(type) {
+		case []string:
+			params.Required = append(params.Required, req...)
+		case []any:
 			for _, r := range req {
 				if s, ok := r.(string); ok {
 					params.Required = append(params.Required, s)
